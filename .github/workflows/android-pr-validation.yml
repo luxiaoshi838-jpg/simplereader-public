@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   validate:
-    name: Compile and unit test without permanent signing
+    name: Full compile, tests and immutable-source check
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout source
@@ -36,13 +36,31 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Run unit tests and build debug APK
-        run: ./gradlew clean testDebugUnitTest assembleDebug --stacktrace --console=plain
+      - name: Generate test version
+        shell: bash
+        run: |
+          echo "SIMPLE_READER_VERSION_CODE=$((2026300000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.22.complete.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      - name: Upload debug APK for manual preview
+      - name: Run debug and release tests and builds
+        run: ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Verify build does not rewrite committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            app/src/main \
+            app/scripts \
+            app/build.gradle.kts \
+            settings.gradle.kts
+
+      - name: Upload preview and unsigned release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-public-preview-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: SimpleReader-complete-fix-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
