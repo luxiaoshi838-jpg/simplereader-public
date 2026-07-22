@@ -18,10 +18,6 @@
         </activity>
 
         <activity
-            android:name=".ui.GroupBooksActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".ui.ReaderActivity"
             android:exported="false" />
 

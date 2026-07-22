@@ -19,6 +19,9 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
+import com.simplereader.app.data.backup.LocalLibraryScanner
+import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
+import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.BookGroup
@@ -47,11 +50,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bookGroupRepository: BookGroupRepository
     private lateinit var shelfGrid: GridLayout
     private lateinit var readingStatsTextView: TextView
+    private lateinit var shelfTabTextView: TextView
     private var books = emptyList<ShelfBookItem>()
     private var groups = emptyList<BookGroup>()
     private var showingHistory = false
     private var shelfSearchQuery = ""
-    private var pendingBackupRestoreSummary: String? = null
+    private var selectedGroupId: Long? = null
+    private var pendingBackup: SimpleReaderBackupDecoder.DecodedBackup? = null
 
     private val openFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -92,32 +97,34 @@ class MainActivity : AppCompatActivity() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             }
-            importReaderData(uri)
+            prepareBackupRestore(uri)
         }
     }
 
-    private val relinkRestoredDataLauncher = registerForActivityResult(
+    private val backupRootLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
+        val backup = pendingBackup
+        pendingBackup = null
+        if (backup == null) {
+            return@registerForActivityResult
+        }
         if (uri == null) {
-            pendingBackupRestoreSummary?.let { summary ->
-                AlertDialog.Builder(this)
-                    .setTitle("数据已恢复，原书尚未关联")
-                    .setMessage(
-                        "$summary\n\nAndroid 要求重新授权原书目录。" +
-                            "之后可在“导入与恢复”中选择“补充关联未找到的书籍”。"
-                    )
-                    .setPositiveButton("确定", null)
-                    .show()
-            }
+            Toast.makeText(this, "已取消恢复，未写入任何备份数据", Toast.LENGTH_LONG).show()
+            return@registerForActivityResult
+        }
+
+        val permissionStatus = persistReadPermission(uri)
+        val root = DocumentFile.fromTreeUri(this, uri)
+        if (root == null) {
+            Toast.makeText(this, "无法读取所选原书总文件夹，未写入任何备份数据", Toast.LENGTH_LONG).show()
         } else {
-            val permissionStatus = persistReadPermission(uri)
-            val root = DocumentFile.fromTreeUri(this, uri)
-            if (root == null) {
-                Toast.makeText(this, "无法读取所选文件夹", Toast.LENGTH_LONG).show()
-            } else {
-                relinkRestoredBooks(root, uri.toString(), permissionStatus)
-            }
+            restoreBackupFromRoot(
+                backup = backup,
+                root = root,
+                sourceTreeUri = uri.toString(),
+                permissionStatus = permissionStatus
+            )
         }
     }
 
@@ -132,11 +139,13 @@ class MainActivity : AppCompatActivity() {
         bookGroupRepository = BookGroupRepository(database.bookGroupDao())
         shelfGrid = findViewById(R.id.shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
+        shelfTabTextView = findViewById(R.id.shelfTabTextView)
 
-        findViewById<TextView>(R.id.shelfTabTextView).apply {
+        shelfTabTextView.apply {
             text = "书架"
             setOnClickListener {
                 showingHistory = false
+                selectedGroupId = null
                 updateUI()
             }
         }
@@ -144,6 +153,7 @@ class MainActivity : AppCompatActivity() {
             text = "阅读历史"
             setOnClickListener {
                 showingHistory = true
+                selectedGroupId = null
                 updateUI()
             }
         }
@@ -177,6 +187,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: android.view.Menu?): Boolean = false
 
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (selectedGroupId != null) {
+            selectedGroupId = null
+            shelfSearchQuery = ""
+            updateUI()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     private fun loadBooks() {
         lifecycleScope.launch {
             combine(
@@ -202,6 +223,21 @@ class MainActivity : AppCompatActivity() {
         } else {
             filteredBooks
         }.sortedByDescending(::activityTime)
+
+        val activeGroup = selectedGroupId?.let { id -> groups.firstOrNull { it.id == id } }
+        if (selectedGroupId != null && activeGroup == null) {
+            selectedGroupId = null
+        }
+        shelfTabTextView.text = if (selectedGroupId == null) "书架" else "‹ 全部书架"
+
+        if (!showingHistory && selectedGroupId != null) {
+            val group = groups.firstOrNull { it.id == selectedGroupId }
+            val groupBooks = visibleBooks.filter { it.groupId == selectedGroupId }
+            readingStatsTextView.text = "${group?.displayName?.ifBlank { group.name } ?: "分组"} · ${groupBooks.size} 本"
+            groupBooks.forEach { addBookCard(it) }
+            if (groupBooks.isEmpty()) addEmptyText("该分组暂无书籍")
+            return
+        }
 
         readingStatsTextView.text = "累计导入 ${books.size} 本"
 
@@ -772,20 +808,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
-        val intent = Intent(this, GroupBooksActivity::class.java)
-            .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
-            .putExtra(
-                GroupBooksActivity.EXTRA_GROUP_NAME,
-                group.displayName.ifBlank { group.name }
-            )
-        runCatching { startActivity(intent) }
-            .onFailure { error ->
-                Toast.makeText(
-                    this,
-                    "打开分组失败：${error.message ?: error.javaClass.simpleName}",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+        if (groupBooks.isEmpty()) {
+            Toast.makeText(this, "该分组暂无书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+        showingHistory = false
+        shelfSearchQuery = ""
+        selectedGroupId = group.id
+        updateUI()
     }
 
     private fun showBookActionsV2(book: ShelfBookItem) {
@@ -1020,7 +1050,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun importReaderData(sourceUri: Uri) {
+    private fun prepareBackupRestore(sourceUri: Uri) {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -1028,324 +1058,30 @@ class MainActivity : AppCompatActivity() {
                         ?.bufferedReader(Charsets.UTF_8)
                         ?.use { it.readText() }
                         ?: error("无法读取所选备份文件")
-                    val summary = restoreReaderBackup(org.json.JSONObject(text))
-                    val missingCount = bookRepository.getAllBooks().first().count { book ->
-                        book.fileStatus == "MISSING" || book.filePath.startsWith("backup://missing/")
-                    }
-                    summary to missingCount
+                    SimpleReaderBackupDecoder.decode(text)
                 }
             }
-            result.onSuccess { (summary, missingCount) ->
-                if (missingCount == 0) {
-                    pendingBackupRestoreSummary = null
-                    Toast.makeText(
-                        this@MainActivity,
-                        "$summary\n原书文件已自动关联，可直接阅读。",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    pendingBackupRestoreSummary = summary
-                    Toast.makeText(
-                        this@MainActivity,
-                        "数据已恢复，请选择一次原书总文件夹，系统将自动关联全部书籍。",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    relinkRestoredDataLauncher.launch(null)
-                }
-            }.onFailure { error ->
+            result.onSuccess { backup ->
+                pendingBackup = backup
                 Toast.makeText(
                     this@MainActivity,
-                    "导入过往数据失败：${error.message ?: "未知错误"}",
+                    "备份已完整识别。请选择一次原书总文件夹；选择完成前不会写入任何数据。",
+                    Toast.LENGTH_LONG
+                ).show()
+                backupRootLauncher.launch(null)
+            }.onFailure { error ->
+                pendingBackup = null
+                Toast.makeText(
+                    this@MainActivity,
+                    "备份识别失败：${error.message ?: "未知错误"}",
                     Toast.LENGTH_LONG
                 ).show()
             }
         }
     }
 
-    private suspend fun restoreReaderBackup(root: org.json.JSONObject): String {
-        val manifest = root.optJSONObject("manifest") ?: error("不是有效的简阅备份文件")
-        if (manifest.optString("format") != "SimpleReaderBackup") {
-            error("备份格式不受支持")
-        }
-        val schemaVersion = manifest.optInt("schemaVersion", -1)
-        if (schemaVersion !in 1..BACKUP_SCHEMA_VERSION) {
-            error("备份版本 $schemaVersion 暂不受支持")
-        }
-        val tables = root.optJSONObject("tables") ?: error("备份文件缺少数据表")
-        val groupRows = tables.optJSONArray("book_groups") ?: org.json.JSONArray()
-        val bookRows = tables.optJSONArray("books") ?: org.json.JSONArray()
-        val bookmarkRows = tables.optJSONArray("bookmarks") ?: org.json.JSONArray()
-        val progressRows = tables.optJSONArray("read_progress") ?: org.json.JSONArray()
-
-        var insertedGroups = 0
-        var insertedBooks = 0
-        var matchedBooks = 0
-        var insertedBookmarks = 0
-        var restoredProgress = 0
-
-        database.withTransaction {
-            val db = database.openHelper.writableDatabase
-            val groupIdMap = mutableMapOf<Long, Long>()
-            val bookIdMap = mutableMapOf<Long, Long>()
-
-            for (index in 0 until groupRows.length()) {
-                val row = groupRows.getJSONObject(index)
-                val oldId = row.optLong("id", -1L)
-                val name = row.stringOrNull("name") ?: "未命名分组"
-                val displayName = row.stringOrNull("displayName") ?: name
-                val originalKey = row.stringOrNull("sourceKey")
-                val sourceKey = originalKey?.takeIf { it.isNotBlank() }
-                    ?: "backup:$oldId:${displayName.lowercase()}"
-
-                var resolvedId = queryLong(
-                    db,
-                    "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
-                    arrayOf(sourceKey)
-                )
-                if (resolvedId == null) {
-                    resolvedId = queryLong(
-                        db,
-                        "SELECT id FROM book_groups WHERE LOWER(displayName) = LOWER(?) OR LOWER(name) = LOWER(?) LIMIT 1",
-                        arrayOf(displayName, name)
-                    )
-                }
-                if (resolvedId == null) {
-                    db.execSQL(
-                        """
-                        INSERT OR IGNORE INTO book_groups
-                        (name, createTime, displayName, sourceTreeUri, relativePath, sourceKey, sortOrder, isExpanded)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        arrayOf(
-                            name,
-                            row.optLong("createTime", System.currentTimeMillis()),
-                            displayName,
-                            row.stringOrNull("sourceTreeUri"),
-                            row.stringOrNull("relativePath"),
-                            sourceKey,
-                            row.optInt("sortOrder", 0),
-                            if (row.optBoolean("isExpanded", true)) 1 else 0
-                        )
-                    )
-                    resolvedId = queryLong(
-                        db,
-                        "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
-                        arrayOf(sourceKey)
-                    )
-                    if (resolvedId != null) insertedGroups++
-                }
-                if (oldId >= 0L && resolvedId != null) groupIdMap[oldId] = resolvedId
-            }
-
-            for (index in 0 until bookRows.length()) {
-                val row = bookRows.getJSONObject(index)
-                val oldBookId = row.optLong("id", -1L)
-                val title = row.stringOrNull("title") ?: "未命名书籍"
-                val format = row.stringOrNull("format") ?: "TXT"
-                val fileName = row.stringOrNull("fileName") ?: title
-                val fileSize = row.longOrNull("fileSize")
-                val sourceTreeUri = row.stringOrNull("sourceTreeUri")
-                val relativePath = row.stringOrNull("relativePath")
-                val originalFilePath = row.stringOrNull("filePath")
-                val filePath = originalFilePath?.takeIf { it.isNotBlank() }
-                    ?: "backup://missing/$oldBookId/${android.net.Uri.encode(fileName)}"
-
-                var resolvedBookId = findExistingBookId(
-                    db = db,
-                    filePath = filePath,
-                    fileName = fileName,
-                    fileSize = fileSize,
-                    sourceTreeUri = sourceTreeUri,
-                    relativePath = relativePath,
-                    title = title,
-                    format = format
-                )
-                val oldGroupId = row.longOrNull("groupId")
-                val resolvedGroupId = oldGroupId?.let(groupIdMap::get)
-
-                if (resolvedBookId == null) {
-                    val restoredFileStatus = if (canReadRestoredBookUri(filePath)) {
-                        "AVAILABLE"
-                    } else {
-                        "MISSING"
-                    }
-                    db.execSQL(
-                        """
-                        INSERT OR IGNORE INTO books
-                        (title, author, filePath, format, groupId, lastReadTime, addTime, cover,
-                         fileName, fileSize, lastModified, sourceTreeUri, relativePath, fileStatus, txtCharset)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        arrayOf(
-                            title,
-                            row.stringOrNull("author") ?: "",
-                            filePath,
-                            format,
-                            resolvedGroupId,
-                            row.optLong("lastReadTime", 0L),
-                            row.optLong("addTime", System.currentTimeMillis()),
-                            row.stringOrNull("cover"),
-                            fileName,
-                            fileSize,
-                            row.longOrNull("lastModified"),
-                            sourceTreeUri,
-                            relativePath,
-                            restoredFileStatus,
-                            row.stringOrNull("txtCharset")
-                        )
-                    )
-                    resolvedBookId = findExistingBookId(
-                        db,
-                        filePath,
-                        fileName,
-                        fileSize,
-                        sourceTreeUri,
-                        relativePath,
-                        title,
-                        format
-                    )
-                    if (resolvedBookId != null) insertedBooks++
-                } else {
-                    matchedBooks++
-                    if (resolvedGroupId != null) {
-                        db.execSQL(
-                            "UPDATE books SET groupId = ? WHERE id = ?",
-                            arrayOf(resolvedGroupId, resolvedBookId)
-                        )
-                    }
-                }
-                if (oldBookId >= 0L && resolvedBookId != null) bookIdMap[oldBookId] = resolvedBookId
-            }
-
-            for (index in 0 until progressRows.length()) {
-                val row = progressRows.getJSONObject(index)
-                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
-                val backupUpdateTime = row.optLong("updateTime", 0L)
-                val currentUpdateTime = queryLong(
-                    db,
-                    "SELECT updateTime FROM read_progress WHERE bookId = ? LIMIT 1",
-                    arrayOf(mappedBookId)
-                )
-                if (currentUpdateTime == null || backupUpdateTime >= currentUpdateTime) {
-                    db.execSQL(
-                        """
-                        INSERT OR REPLACE INTO read_progress
-                        (bookId, position, locatorType, txtCharOffset, txtTotalLength, epubSpineIndex,
-                         epubChapterHref, epubChapterOffset, epubProgressFraction, updateTime)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        arrayOf(
-                            mappedBookId,
-                            row.stringOrNull("position") ?: "0",
-                            row.stringOrNull("locatorType") ?: "TXT",
-                            row.longOrNull("txtCharOffset"),
-                            row.longOrNull("txtTotalLength"),
-                            row.longOrNull("epubSpineIndex"),
-                            row.stringOrNull("epubChapterHref"),
-                            row.longOrNull("epubChapterOffset"),
-                            row.doubleOrNull("epubProgressFraction"),
-                            backupUpdateTime
-                        )
-                    )
-                    restoredProgress++
-                }
-            }
-
-            for (index in 0 until bookmarkRows.length()) {
-                val row = bookmarkRows.getJSONObject(index)
-                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
-                val position = row.stringOrNull("position") ?: "0"
-                val content = row.stringOrNull("content") ?: ""
-                val existingBookmark = queryLong(
-                    db,
-                    "SELECT id FROM bookmarks WHERE bookId = ? AND position = ? AND content = ? LIMIT 1",
-                    arrayOf(mappedBookId, position, content)
-                )
-                if (existingBookmark == null) {
-                    db.execSQL(
-                        "INSERT INTO bookmarks (bookId, position, content, createTime) VALUES (?, ?, ?, ?)",
-                        arrayOf(
-                            mappedBookId,
-                            position,
-                            content,
-                            row.optLong("createTime", System.currentTimeMillis())
-                        )
-                    )
-                    insertedBookmarks++
-                }
-            }
-        }
-
-        return "过往数据导入完成：新增书籍 $insertedBooks 本，匹配去重 $matchedBooks 本，" +
-            "新增分组 $insertedGroups 个，恢复书签 $insertedBookmarks 条，恢复进度 $restoredProgress 条"
-    }
-
-    private fun findExistingBookId(
-        db: androidx.sqlite.db.SupportSQLiteDatabase,
-        filePath: String,
-        fileName: String,
-        fileSize: Long?,
-        sourceTreeUri: String?,
-        relativePath: String?,
-        title: String,
-        format: String
-    ): Long? {
-        queryLong(db, "SELECT id FROM books WHERE filePath = ? LIMIT 1", arrayOf(filePath))?.let { return it }
-        if (!sourceTreeUri.isNullOrBlank() && !relativePath.isNullOrBlank()) {
-            queryLong(
-                db,
-                "SELECT id FROM books WHERE sourceTreeUri = ? AND relativePath = ? AND LOWER(fileName) = LOWER(?) LIMIT 1",
-                arrayOf(sourceTreeUri, relativePath, fileName)
-            )?.let { return it }
-        }
-        if (fileSize != null && fileName.isNotBlank()) {
-            queryLong(
-                db,
-                "SELECT id FROM books WHERE LOWER(fileName) = LOWER(?) AND fileSize = ? LIMIT 1",
-                arrayOf(fileName, fileSize)
-            )?.let { return it }
-        }
-        return queryLong(
-            db,
-            "SELECT id FROM books WHERE LOWER(title) = LOWER(?) AND UPPER(format) = UPPER(?) AND COALESCE(relativePath, '') = COALESCE(?, '') LIMIT 1",
-            arrayOf(title, format, relativePath)
-        )
-    }
-
-    private fun queryLong(
-        db: androidx.sqlite.db.SupportSQLiteDatabase,
-        sql: String,
-        args: Array<out Any?>
-    ): Long? {
-        db.query(sql, args).use { cursor ->
-            return if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
-        }
-    }
-
-    private fun org.json.JSONObject.stringOrNull(key: String): String? {
-        if (!has(key) || isNull(key)) return null
-        return optString(key).takeIf { it.isNotBlank() }
-    }
-
-    private fun org.json.JSONObject.longOrNull(key: String): Long? {
-        if (!has(key) || isNull(key)) return null
-        return runCatching { getLong(key) }.getOrNull()
-    }
-
-    private fun org.json.JSONObject.doubleOrNull(key: String): Double? {
-        if (!has(key) || isNull(key)) return null
-        return runCatching { getDouble(key) }.getOrNull()
-    }
-
-    private fun canReadRestoredBookUri(filePath: String): Boolean {
-        val uri = runCatching { Uri.parse(filePath) }.getOrNull() ?: return false
-        if (uri.scheme != "content" && uri.scheme != "file") return false
-        return runCatching {
-            contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false
-        }.getOrDefault(false)
-    }
-
-    private fun relinkRestoredBooks(
+    private fun restoreBackupFromRoot(
+        backup: SimpleReaderBackupDecoder.DecodedBackup,
         root: DocumentFile,
         sourceTreeUri: String,
         permissionStatus: PermissionStatus
@@ -1353,65 +1089,31 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val candidates = mutableListOf<ImportCandidate>()
-                    collectFolderCandidates(
-                        folder = root,
+                    val scannedFiles = LocalLibraryScanner(FOLDER_IMPORT_LIMIT).scan(
+                        root = root,
                         sourceTreeUri = sourceTreeUri,
-                        relativePath = root.name ?: "原书文件夹",
-                        permissionStatus = permissionStatus,
-                        candidates = candidates
+                        permissionStatus = permissionStatus
                     )
-                    val restoredBooks = bookRepository.getAllBooks().first().filter { book ->
-                        book.fileStatus == "MISSING" || book.filePath.startsWith("backup://missing/")
-                    }
-                    val matches = com.simplereader.app.data.migration.BackupRelinkMatcher.match(
-                        restoredBooks = restoredBooks,
-                        candidates = candidates
+                    SimpleReaderBackupRestorer(
+                        context = this@MainActivity,
+                        database = database
+                    ).restore(
+                        backup = backup,
+                        scannedFiles = scannedFiles
                     )
-                    matches.forEach { match ->
-                        val candidate = match.candidate
-                        bookRepository.update(
-                            match.book.copy(
-                                filePath = candidate.uri,
-                                format = candidate.format,
-                                fileName = candidate.displayName,
-                                fileSize = candidate.size,
-                                lastModified = candidate.lastModified,
-                                sourceTreeUri = candidate.sourceTreeUri,
-                                relativePath = candidate.relativeParentPath,
-                                fileStatus = fileStatusFor(candidate.permissionStatus)
-                            )
-                        )
-                    }
-                    Triple(matches.size, restoredBooks.size - matches.size, candidates.size)
                 }
             }
-            result.onSuccess { (matched, remaining, scanned) ->
-                val restoreSummary = pendingBackupRestoreSummary
-                pendingBackupRestoreSummary = null
+            result.onSuccess { summary ->
+                selectedGroupId = null
                 AlertDialog.Builder(this@MainActivity)
-                    .setTitle("数据恢复与原书关联完成")
-                    .setMessage(
-                        buildString {
-                            if (!restoreSummary.isNullOrBlank()) {
-                                append(restoreSummary)
-                                append("\n\n")
-                            }
-                            append("扫描到 $scanned 个文件，自动关联 $matched 本书。")
-                            if (remaining > 0) {
-                                append("\n仍有 $remaining 本未找到；书架、分组、书签和进度均已保留。")
-                                append("可稍后选择其他总目录补充关联，不需要重新导入备份。")
-                            } else {
-                                append("\n全部书籍均已恢复读取权限，可直接打开阅读。")
-                            }
-                        }
-                    )
+                    .setTitle("旧备份恢复完成")
+                    .setMessage(summary.message())
                     .setPositiveButton("确定", null)
                     .show()
             }.onFailure { error ->
                 Toast.makeText(
                     this@MainActivity,
-                    "重新关联失败：${error.message ?: "未知错误"}",
+                    "恢复失败，数据库未完成写入：${error.message ?: "未知错误"}",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -1421,7 +1123,13 @@ class MainActivity : AppCompatActivity() {
     private fun showImportOptions() {
         AlertDialog.Builder(this)
             .setTitle("导入与恢复")
-            .setItems(arrayOf("选择按文件夹导入", "选择单个或多个文件", "导入备份并自动关联", "补充关联未找到的书籍")) { _, which ->
+            .setItems(
+                arrayOf(
+                    "选择按文件夹导入",
+                    "选择单个或多个文件",
+                    "从旧备份恢复（随后选择一次原书总文件夹）"
+                )
+            ) { _, which ->
                 when (which) {
                     0 -> openFolderLauncher.launch(null)
                     1 -> openFilesLauncher.launch(
@@ -1436,7 +1144,6 @@ class MainActivity : AppCompatActivity() {
                     2 -> importDataLauncher.launch(
                         arrayOf("application/json", "text/json", "application/octet-stream")
                     )
-                    3 -> relinkRestoredDataLauncher.launch(null)
                 }
             }
             .show()

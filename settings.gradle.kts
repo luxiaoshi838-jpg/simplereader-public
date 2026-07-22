@@ -15,15 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-gradle.beforeProject {
-    if (path == ":app") {
-        apply(from = file("scripts/reader_bookmark_continuous_scroll.gradle.kts"))
-        apply(from = file("scripts/bookshelf_format_preview.gradle.kts"))
-        apply(from = file("scripts/reader_scroll_resource_sanitize.gradle.kts"))
-        apply(from = file("scripts/reader_search_paging.gradle.kts"))
-        apply(from = file("scripts/release_stability_tests.gradle.kts"))
-    }
-}
-
 rootProject.name = "SimpleReader"
 include(":app")

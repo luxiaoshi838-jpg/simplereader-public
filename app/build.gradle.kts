@@ -4,163 +4,6 @@ plugins {
     id("kotlin-kapt")
 }
 
-val applyRuntimeUiPatches = tasks.register("applyRuntimeUiPatches") {
-    doLast {
-        val sourceFile = file("src/main/java/com/simplereader/app/ui/MainActivity.kt")
-        var source = sourceFile.readText()
-
-        if (!source.contains("private fun showGroupManagement(")) {
-            val oldActions = """            .setItems(arrayOf("打开分组", "重命名分组", "删除分组", "导入本地书籍")) { _, which ->
-                when (which) {
-                    0 -> showGroupBooksV2(group, groupBooks)
-                    1 -> showRenameGroupDialog(group)
-                    2 -> confirmDeleteGroup(group, groupBooks)
-                    3 -> showImportOptions()
-                }
-            }"""
-            val newActions = """            .setItems(arrayOf("打开分组", "管理分组", "重命名分组", "删除分组")) { _, which ->
-                when (which) {
-                    0 -> showGroupBooksV2(group, groupBooks)
-                    1 -> showGroupManagement(group, groupBooks)
-                    2 -> showRenameGroupDialog(group)
-                    3 -> confirmDeleteGroup(group, groupBooks)
-                }
-            }"""
-            check(source.contains(oldActions)) { "未找到分组操作代码，无法加入分组管理" }
-            source = source.replace(oldActions, newActions)
-
-            val renameMarker = "    private fun showRenameGroupDialog(group: BookGroup) {"
-            val managementSnippet = file("scripts/group_management_snippet.kt.txt").readText().trimEnd()
-            check(source.contains(renameMarker)) { "未找到分组重命名代码，无法插入分组管理" }
-            source = source.replace(renameMarker, "$managementSnippet\n\n$renameMarker")
-        }
-
-        if (!source.contains("private fun showBatchGroupManagement(")) {
-            val oldMoreButton = """        findViewById<TextView>(R.id.moreButton).apply {
-            text = "⋮"
-            setOnClickListener { showImportOptions() }
-        }"""
-            val newMoreButton = """        findViewById<TextView>(R.id.moreButton).apply {
-            text = "⋮"
-            contentDescription = "批量管理分组"
-            setOnClickListener { showBatchGroupManagement() }
-        }"""
-            check(source.contains(oldMoreButton)) { "未找到右上角更多按钮，无法恢复批量分组管理" }
-            source = source.replace(oldMoreButton, newMoreButton)
-
-            val renameMarker = "    private fun showRenameGroupDialog(group: BookGroup) {"
-            val batchSnippet = file("scripts/batch_group_management_snippet.kt.txt").readText().trimEnd()
-            check(source.contains(renameMarker)) { "未找到分组重命名代码，无法插入批量管理" }
-            source = source.replace(renameMarker, "$batchSnippet\n\n$renameMarker")
-        }
-
-        val renameStart = "    private fun showRenameGroupDialog(group: BookGroup) {"
-        val renameEnd = "    private fun confirmDeleteGroup("
-        val renameStartIndex = source.indexOf(renameStart)
-        val renameEndIndex = source.indexOf(renameEnd, renameStartIndex + renameStart.length)
-        check(renameStartIndex >= 0 && renameEndIndex > renameStartIndex) {
-            "未找到分组重命名代码，无法应用持久化修复"
-        }
-        val renameSnippet = file("scripts/rename_group_dialog_snippet.kt.txt").readText().trimEnd()
-        source = source.substring(0, renameStartIndex) +
-            renameSnippet + "\n\n" +
-            source.substring(renameEndIndex)
-
-        val deleteGroupStart = "    private fun confirmDeleteGroup("
-        val deleteGroupEnd = "    private fun showBookActions("
-        val deleteGroupStartIndex = source.indexOf(deleteGroupStart)
-        val deleteGroupEndIndex = source.indexOf(
-            deleteGroupEnd,
-            deleteGroupStartIndex + deleteGroupStart.length
-        )
-        check(deleteGroupStartIndex >= 0 && deleteGroupEndIndex > deleteGroupStartIndex) {
-            "未找到删除分组代码，无法恢复两种处理方式"
-        }
-        val deleteGroupSnippet = file("scripts/delete_group_dialog_snippet.kt.txt").readText().trimEnd()
-        source = source.substring(0, deleteGroupStartIndex) +
-            deleteGroupSnippet + "\n\n" +
-            source.substring(deleteGroupEndIndex)
-
-        val oldBookActions = """            .setItems(arrayOf("打开", "导入分组", "删除书架", "导入本地书籍")) { _, which ->
-                when (which) {
-                    0 -> openBook(book.id)
-                    1 -> showMoveBookToGroup(book)
-                    2 -> confirmDeleteBook(book)
-                    3 -> showImportOptions()
-                }
-            }"""
-        val newBookActions = """            .setItems(arrayOf("打开", "移入分组", "删除书架")) { _, which ->
-                when (which) {
-                    0 -> openBook(book.id)
-                    1 -> showMoveBookToGroup(book)
-                    2 -> confirmDeleteBook(book)
-                }
-            }"""
-        if (source.contains(oldBookActions)) {
-            source = source.replace(oldBookActions, newBookActions)
-        }
-
-        val groupBooksStart = "    private fun showGroupBooksV2("
-        val groupBooksEnd = "    private fun showBookActionsV2("
-        val groupBooksStartIndex = source.indexOf(groupBooksStart)
-        val groupBooksEndIndex = source.indexOf(
-            groupBooksEnd,
-            groupBooksStartIndex + groupBooksStart.length
-        )
-        check(groupBooksStartIndex >= 0 && groupBooksEndIndex > groupBooksStartIndex) {
-            "未找到分组书籍页面，无法应用分类页面替换"
-        }
-        val groupBooksSnippet = file("scripts/group_books_dialog_snippet.kt.txt").readText().trimEnd()
-        source = source.substring(0, groupBooksStartIndex) +
-            groupBooksSnippet + "\n\n" +
-            source.substring(groupBooksEndIndex)
-
-        val shelfCardStart = "    private fun createShelfCard(): LinearLayout {"
-        val shelfCardEnd = "    private fun addEmptyText("
-        val shelfCardStartIndex = source.indexOf(shelfCardStart)
-        val shelfCardEndIndex = source.indexOf(
-            shelfCardEnd,
-            shelfCardStartIndex + shelfCardStart.length
-        )
-        check(shelfCardStartIndex >= 0 && shelfCardEndIndex > shelfCardStartIndex) {
-            "未找到书架卡片布局，无法应用三列自适应修复"
-        }
-        val shelfCardSnippet = file("scripts/shelf_card_snippet.kt.txt").readText().trimEnd()
-        source = source.substring(0, shelfCardStartIndex) +
-            shelfCardSnippet + "\n\n" +
-            source.substring(shelfCardEndIndex)
-
-        val oldScrollView = ".setView(ScrollView(this).apply { addView(grid) })"
-        if (source.contains(oldScrollView)) {
-            val newScrollView = """.setView(ScrollView(this).apply {
-                  isVerticalScrollBarEnabled = true
-                  isScrollbarFadingEnabled = false
-                  scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_INSET
-                  addView(grid)
-              })"""
-            source = source.replace(oldScrollView, newScrollView)
-        }
-
-        val folderModeStart = "    private fun showFolderImportMode("
-        val folderModeEnd = "    private fun showFolderGroupingPreview("
-        val startIndex = source.indexOf(folderModeStart)
-        val endIndex = source.indexOf(folderModeEnd, startIndex + folderModeStart.length)
-        check(startIndex >= 0 && endIndex > startIndex) {
-            "未找到文件夹导入层级对话框，无法应用修复"
-        }
-        val folderModeSnippet = file("scripts/folder_import_mode_snippet.kt.txt").readText().trimEnd()
-        source = source.substring(0, startIndex) +
-            folderModeSnippet + "\n\n" +
-            source.substring(endIndex)
-
-        sourceFile.writeText(source)
-    }
-}
-
-tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn(applyRuntimeUiPatches)
-}
-
 val permanentKeystorePath = System.getenv("SIMPLEREADER_KEYSTORE_PATH")
 val permanentKeystorePassword = System.getenv("SIMPLEREADER_KEYSTORE_PASSWORD")
 val permanentKeyAlias = System.getenv("SIMPLEREADER_KEY_ALIAS")
@@ -252,6 +95,10 @@ android {
     }
 }
 
+configurations.configureEach {
+    exclude(group = "org.apache.tika")
+}
+
 dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
@@ -273,6 +120,7 @@ dependencies {
     // Public, established readers: Mozilla charset detection and pure-Java JChm.
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
+    implementation("com.sorrowblue.sevenzipjbinding:7-Zip-JBinding-4Android:16.02-2.4")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("androidx.test:core-ktx:1.6.1")
@@ -283,4 +131,3 @@ dependencies {
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
 
-apply(from = "scripts/feature_scroll_chm_export.gradle.kts")
