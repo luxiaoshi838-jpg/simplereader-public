@@ -45,6 +45,32 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/integrate_stable_source.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/scripts/feature_scroll_chm_export.gradle.kts')
+          source = path.read_text(encoding='utf-8')
+          old = '''        val chmMarker = "                            else -> LoadedContent(\"\")"
+          check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
+          val chmBranch = """                            "CHM" -> LoadedContent(
+                                      text = readChmTextIsolated(input)
+                                  )
+          """
+          readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+          '''.replace('          ', '')
+          new = '''        val chmMarker = "                            else -> LoadedContent(\"\")"
+          val chmBranch = """                            "CHM" -> LoadedContent(
+                                      text = readChmTextIsolated(input)
+                                  )
+          """
+          if (!readerSource.contains("\"CHM\" -> LoadedContent(")) {
+              check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
+              readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+          }
+          '''.replace('          ', '')
+          if old not in source:
+              raise SystemExit('CHM patch block changed unexpectedly')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
           git add -A
 
       - name: Run tests and release build
