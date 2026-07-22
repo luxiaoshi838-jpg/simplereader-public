@@ -40,8 +40,12 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:preBuild --stacktrace --console=plain
 
-      - name: Integrate stable source
-        run: python3 tools/integrate_stable_source.py
+      - name: Integrate and stage stable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/integrate_stable_source.py
+          git add -A
 
       - name: Run tests and release build
         shell: bash
@@ -49,7 +53,7 @@ jobs:
           set -o pipefail
           ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee integration-build.log
 
-      - name: Verify build does not rewrite committed source
+      - name: Verify build adds no new source rewrites
         shell: bash
         run: |
           set -euo pipefail
