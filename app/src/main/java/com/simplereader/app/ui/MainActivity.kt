@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private var groups = emptyList<BookGroup>()
     private var showingHistory = false
     private var shelfSearchQuery = ""
+    private var pendingBackupRestoreSummary: String? = null
 
     private val openFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -69,6 +70,54 @@ class MainActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) {
             val permissionByUri = uris.associateWith(::persistReadPermission)
             importSelectedFiles(permissionByUri)
+        }
+    }
+
+    private val exportDataLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            rememberBackupLocation(uri)
+            exportReaderData(uri)
+        }
+    }
+
+    private val importDataLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            importReaderData(uri)
+        }
+    }
+
+    private val relinkRestoredDataLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) {
+            pendingBackupRestoreSummary?.let { summary ->
+                AlertDialog.Builder(this)
+                    .setTitle("数据已恢复，原书尚未关联")
+                    .setMessage(
+                        "$summary\n\nAndroid 要求重新授权原书目录。" +
+                            "之后可在“导入与恢复”中选择“补充关联未找到的书籍”。"
+                    )
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
+        } else {
+            val permissionStatus = persistReadPermission(uri)
+            val root = DocumentFile.fromTreeUri(this, uri)
+            if (root == null) {
+                Toast.makeText(this, "无法读取所选文件夹", Toast.LENGTH_LONG).show()
+            } else {
+                relinkRestoredBooks(root, uri.toString(), permissionStatus)
+            }
         }
     }
 
@@ -98,6 +147,11 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
             }
         }
+        findViewById<TextView>(R.id.exportButton).apply {
+            text = "数据导出"
+            setOnClickListener { showDataExportOptions() }
+        }
+
         findViewById<TextView>(R.id.importButton).apply {
             text = "导入"
             setOnClickListener { showImportOptions() }
@@ -114,7 +168,8 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<TextView>(R.id.moreButton).apply {
             text = "⋮"
-            setOnClickListener { showImportOptions() }
+            contentDescription = "批量管理分组"
+            setOnClickListener { showBatchGroupManagement() }
         }
 
         loadBooks()
@@ -243,9 +298,9 @@ class MainActivity : AppCompatActivity() {
     private fun createBookCover(title: String, format: String, compact: Boolean): TextView {
         val cover = TextView(this).apply {
             text = if (compact) {
-                "${title.take(9)}\n\n${format.uppercase()}"
+                "${title.take(9)}"
             } else {
-                "${title.take(22)}\n\n\n${format.uppercase()}"
+                "${title.take(22)}"
             }
             setTextColor(Color.rgb(232, 238, 244))
             textSize = if (compact) 7.5f else 12f
@@ -272,14 +327,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createShelfCard(): LinearLayout {
-        val width = resources.displayMetrics.widthPixels
-        val cardWidth = ((width - dp(64)) / 3).coerceAtLeast(dp(92))
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            minimumWidth = 0
             layoutParams = GridLayout.LayoutParams().apply {
-                this.width = cardWidth
-                this.height = GridLayout.LayoutParams.WRAP_CONTENT
-                setMargins(0, 0, dp(12), dp(20))
+                width = 0
+                height = GridLayout.LayoutParams.WRAP_CONTENT
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, 1f)
+                setMargins(dp(3), 0, dp(3), dp(18))
             }
         }
     }
@@ -308,15 +363,287 @@ class MainActivity : AppCompatActivity() {
     private fun showGroupActions(group: BookGroup, groupBooks: List<ShelfBookItem>) {
         AlertDialog.Builder(this)
             .setTitle(group.displayName.ifBlank { group.name })
-            .setItems(arrayOf("打开分组", "重命名分组", "删除分组", "导入本地书籍")) { _, which ->
+            .setItems(arrayOf("打开分组", "管理分组", "重命名分组", "删除分组")) { _, which ->
                 when (which) {
                     0 -> showGroupBooksV2(group, groupBooks)
-                    1 -> showRenameGroupDialog(group)
-                    2 -> confirmDeleteGroup(group, groupBooks)
-                    3 -> showImportOptions()
+                    1 -> showGroupManagement(group, groupBooks)
+                    2 -> showRenameGroupDialog(group)
+                    3 -> confirmDeleteGroup(group, groupBooks)
                 }
             }
             .show()
+    }
+
+    private fun showGroupManagement(group: BookGroup, groupBooks: List<ShelfBookItem>) {
+        val sortedBooks = groupBooks.sortedByDescending(::activityTime)
+        val selected = BooleanArray(sortedBooks.size)
+        val labels = sortedBooks.map { book ->
+            "${book.title} · 已读 ${book.progressPercent()}%"
+        }.toTypedArray()
+
+        val titleBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(10), dp(10), dp(6))
+        }
+        val titleText = TextView(this).apply {
+            text = "分组管理 · ${group.displayName.ifBlank { group.name }}"
+            textSize = 20f
+            setTextColor(Color.rgb(30, 30, 30))
+            maxLines = 1
+        }
+        val selectAllButton = TextView(this).apply {
+            text = "全选"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(45, 105, 160))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            contentDescription = "全选分组书籍"
+        }
+        titleBar.addView(
+            titleText,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        titleBar.addView(
+            selectAllButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val dialog = AlertDialog.Builder(this)
+            .setCustomTitle(titleBar)
+            .setMultiChoiceItems(labels, selected) { _, which, isChecked ->
+                selected[which] = isChecked
+            }
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("移出分组", null)
+            .setPositiveButton("删除书架", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.listView.apply {
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_INSET
+            }
+            selectAllButton.setOnClickListener {
+                selected.indices.forEach { index ->
+                    selected[index] = true
+                    dialog.listView.setItemChecked(index, true)
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val selectedBooks = sortedBooks.filterIndexed { index, _ -> selected[index] }
+                if (selectedBooks.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "请先选择书籍", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        selectedBooks.forEach { book ->
+                            database.bookDao().getBook(book.id)?.let { entity ->
+                                bookRepository.update(entity.copy(groupId = null))
+                            }
+                        }
+                    }
+                    Toast.makeText(
+                        this@MainActivity,
+                        "已将 ${selectedBooks.size} 本书移到未分组",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    dialog.dismiss()
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selectedBooks = sortedBooks.filterIndexed { index, _ -> selected[index] }
+                if (selectedBooks.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "请先选择书籍", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("批量删除书架")
+                    .setMessage("将从书架移除 ${selectedBooks.size} 本书，不删除原文件。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除") { _, _ ->
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO) {
+                                selectedBooks.forEach { book ->
+                                    database.bookDao().deleteById(book.id)
+                                }
+                            }
+                            Toast.makeText(
+                                this@MainActivity,
+                                "已从书架移除 ${selectedBooks.size} 本书",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            dialog.dismiss()
+                        }
+                    }
+                    .show()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showBatchGroupManagement() {
+        val manageableGroups = groups.sortedBy { group ->
+            group.displayName.ifBlank { group.name }.lowercase()
+        }
+        if (manageableGroups.isEmpty()) {
+            Toast.makeText(this, "暂无可管理的分组", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val selected = BooleanArray(manageableGroups.size)
+        val bookCounts = books.groupingBy { it.groupId }.eachCount()
+        val labels = manageableGroups.map { group ->
+            val name = group.displayName.ifBlank { group.name }
+            "$name · ${bookCounts[group.id] ?: 0} 本"
+        }.toTypedArray()
+
+        val titleBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(10), dp(10), dp(6))
+        }
+        val titleText = TextView(this).apply {
+            text = "批量管理分组"
+            textSize = 20f
+            setTextColor(Color.rgb(30, 30, 30))
+            maxLines = 1
+        }
+        val selectAllButton = TextView(this).apply {
+            text = "全选"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(45, 105, 160))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            contentDescription = "全选分组"
+        }
+        titleBar.addView(
+            titleText,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        titleBar.addView(
+            selectAllButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val dialog = AlertDialog.Builder(this)
+            .setCustomTitle(titleBar)
+            .setMultiChoiceItems(labels, selected) { _, which, isChecked ->
+                selected[which] = isChecked
+            }
+            .setNegativeButton("关闭", null)
+            .setPositiveButton("删除分组", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.listView.apply {
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_INSET
+            }
+            selectAllButton.setOnClickListener {
+                selected.indices.forEach { index ->
+                    selected[index] = true
+                    dialog.listView.setItemChecked(index, true)
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selectedGroups = manageableGroups.filterIndexed { index, _ -> selected[index] }
+                if (selectedGroups.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "请先选择分组", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+
+                val selectedGroupIds = selectedGroups.map { it.id }.toSet()
+                val selectedBooks = books.filter { it.groupId in selectedGroupIds }
+                val choiceDialog = AlertDialog.Builder(this@MainActivity)
+                    .setTitle("批量删除 ${selectedGroups.size} 个分组")
+                    .setMessage(
+                        "请选择处理组内 ${selectedBooks.size} 本书的方式：\n\n" +
+                            "回归书架：只删除分组，书籍移到未分组。\n" +
+                            "全部删除：删除分组，并从书架移除这些书籍。\n\n" +
+                            "两种方式都不会删除手机中的原文件。"
+                    )
+                    .setNegativeButton("取消", null)
+                    .setNeutralButton("回归书架", null)
+                    .setPositiveButton("全部删除", null)
+                    .create()
+
+                choiceDialog.setOnShowListener {
+                    choiceDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                        lifecycleScope.launch {
+                            val error = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    database.withTransaction {
+                                        selectedGroups.forEach { group ->
+                                            database.bookDao().clearGroup(group.id)
+                                            database.bookGroupDao().deleteById(group.id)
+                                        }
+                                    }
+                                }.exceptionOrNull()
+                            }
+                            if (error == null) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "已删除 ${selectedGroups.size} 个分组，${selectedBooks.size} 本书已回归书架",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                choiceDialog.dismiss()
+                                dialog.dismiss()
+                            } else {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "删除分组失败：${error.message ?: "未知错误"}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+
+                    choiceDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        lifecycleScope.launch {
+                            val error = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    database.withTransaction {
+                                        selectedBooks.distinctBy { it.id }.forEach { book ->
+                                            database.bookDao().deleteById(book.id)
+                                        }
+                                        selectedGroups.forEach { group ->
+                                            database.bookGroupDao().deleteById(group.id)
+                                        }
+                                    }
+                                }.exceptionOrNull()
+                            }
+                            if (error == null) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "已删除 ${selectedGroups.size} 个分组及 ${selectedBooks.size} 本书",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                choiceDialog.dismiss()
+                                dialog.dismiss()
+                            } else {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "全部删除失败：${error.message ?: "未知错误"}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                }
+                choiceDialog.show()
+            }
+        }
+        dialog.show()
     }
 
     private fun showRenameGroupDialog(group: BookGroup) {
@@ -325,31 +652,63 @@ class MainActivity : AppCompatActivity() {
             setText(group.displayName.ifBlank { group.name })
             selectAll()
         }
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("重命名分组")
             .setView(input)
             .setNegativeButton("取消", null)
-            .setPositiveButton("保存") { _, _ ->
+            .setPositiveButton("保存", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val newName = input.text.toString().trim()
                 if (newName.isBlank()) {
-                    Toast.makeText(this, "分组名称不能为空", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
+                    input.error = "分组名称不能为空"
+                    return@setOnClickListener
                 }
                 lifecycleScope.launch {
-                    withContext(Dispatchers.IO) {
-                        bookGroupRepository.update(group.copy(name = newName, displayName = newName))
+                    val error = withContext(Dispatchers.IO) {
+                        runCatching {
+                            bookGroupRepository.rename(group.id, newName)
+                        }.exceptionOrNull()
+                    }
+                    if (error == null) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "分组已重命名为：$newName",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        dialog.dismiss()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "保存失败：${error.message ?: "未知错误"}",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun confirmDeleteGroup(group: BookGroup, groupBooks: List<ShelfBookItem>) {
-        AlertDialog.Builder(this)
-            .setTitle("删除分组")
-            .setMessage("分组内 ${groupBooks.size} 本书将移到未分组。不会删除书籍文件、阅读进度或书签。")
+        val groupName = group.displayName.ifBlank { group.name }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("删除分组 · $groupName")
+            .setMessage(
+                "请选择处理组内 ${groupBooks.size} 本书的方式：\n\n" +
+                    "回归书架：只删除分组，书籍移到未分组。\n" +
+                    "全部删除：删除分组，并从书架移除组内全部书籍。\n\n" +
+                    "两种方式都不会删除手机中的原文件。"
+            )
             .setNegativeButton("取消", null)
-            .setPositiveButton("删除分组") { _, _ ->
+            .setNeutralButton("回归书架", null)
+            .setPositiveButton("全部删除", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 lifecycleScope.launch {
                     val error = withContext(Dispatchers.IO) {
                         runCatching {
@@ -360,7 +719,12 @@ class MainActivity : AppCompatActivity() {
                         }.exceptionOrNull()
                     }
                     if (error == null) {
-                        Toast.makeText(this@MainActivity, "分组已删除，书籍已移到未分组", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "分组已删除，${groupBooks.size} 本书已回归书架",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        dialog.dismiss()
                     } else {
                         Toast.makeText(
                             this@MainActivity,
@@ -370,7 +734,37 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            .show()
+
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                lifecycleScope.launch {
+                    val error = withContext(Dispatchers.IO) {
+                        runCatching {
+                            database.withTransaction {
+                                groupBooks.forEach { book ->
+                                    database.bookDao().deleteById(book.id)
+                                }
+                                database.bookGroupDao().deleteById(group.id)
+                            }
+                        }.exceptionOrNull()
+                    }
+                    if (error == null) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "分组及 ${groupBooks.size} 本书已从书架删除",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        dialog.dismiss()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "全部删除失败：${error.message ?: "未知错误"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun showBookActions(book: ShelfBookItem) {
@@ -378,54 +772,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
-        val grid = GridLayout(this).apply {
-            columnCount = 3
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-        groupBooks.sortedByDescending(::activityTime).forEach { book ->
-            val card = createShelfCard()
-            val cover = TextView(this).apply {
-                text = "${book.title.take(14)}\n\n${book.format}"
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                gravity = Gravity.CENTER
-                setBackgroundColor(Color.rgb(58, 103, 146))
+        val intent = Intent(this, GroupBooksActivity::class.java)
+            .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
+            .putExtra(
+                GroupBooksActivity.EXTRA_GROUP_NAME,
+                group.displayName.ifBlank { group.name }
+            )
+        runCatching { startActivity(intent) }
+            .onFailure { error ->
+                Toast.makeText(
+                    this,
+                    "打开分组失败：${error.message ?: error.javaClass.simpleName}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-            card.addView(cover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112)))
-            card.addView(TextView(this).apply {
-                text = book.title
-                textSize = 17f
-                setTextColor(Color.rgb(30, 30, 30))
-                maxLines = 2
-            })
-            card.addView(TextView(this).apply {
-                text = "已读 ${book.progressPercent()}%"
-                textSize = 13f
-                setTextColor(Color.rgb(130, 126, 118))
-            })
-            card.setOnClickListener { openBook(book.id) }
-            card.setOnLongClickListener {
-                showBookActionsV2(book)
-                true
-            }
-            grid.addView(card)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(group.displayName.ifBlank { group.name })
-            .setView(ScrollView(this).apply { addView(grid) })
-            .setNegativeButton("关闭", null)
-            .show()
     }
 
     private fun showBookActionsV2(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
-            .setItems(arrayOf("打开", "导入分组", "删除书架", "导入本地书籍")) { _, which ->
+            .setItems(arrayOf("打开", "移入分组", "删除书架")) { _, which ->
                 when (which) {
                     0 -> openBook(book.id)
                     1 -> showMoveBookToGroup(book)
                     2 -> confirmDeleteBook(book)
-                    3 -> showImportOptions()
                 }
             }
             .show()
@@ -506,15 +876,567 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showDataExportOptions() {
+        AlertDialog.Builder(this)
+            .setTitle("数据导出")
+            .setItems(arrayOf("导出", "同步")) { _, which ->
+                when (which) {
+                    0 -> launchDataExport()
+                    1 -> syncDataExport()
+                }
+            }
+            .show()
+    }
+
+    private fun launchDataExport() {
+        val stamp = java.text.SimpleDateFormat(
+            "yyyyMMdd_HHmmss",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date())
+        exportDataLauncher.launch("简阅数据备份_${stamp}.json")
+    }
+
+    private fun syncDataExport() {
+        val savedUri = getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+            .getString(BACKUP_URI_KEY, null)
+        if (savedUri.isNullOrBlank()) {
+            Toast.makeText(this, "尚未选择过导出文件，请先执行一次导出", Toast.LENGTH_SHORT).show()
+            launchDataExport()
+            return
+        }
+        exportReaderData(Uri.parse(savedUri), isSync = true)
+    }
+
+    private fun rememberBackupLocation(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(BACKUP_URI_KEY, uri.toString())
+            .apply()
+    }
+
+    private fun exportReaderData(targetUri: Uri, isSync: Boolean = false) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = org.json.JSONObject()
+                    val manifest = org.json.JSONObject()
+                    val relationships = org.json.JSONObject()
+                    val tablesJson = org.json.JSONObject()
+                    val databaseHandle = database.openHelper.readableDatabase
+
+                    manifest.put("format", "SimpleReaderBackup")
+                    manifest.put("schemaVersion", BACKUP_SCHEMA_VERSION)
+                    manifest.put("minimumCompatibleSchemaVersion", 1)
+                    manifest.put("appPackage", packageName)
+                    manifest.put("databaseVersion", 2)
+                    manifest.put("exportedAtEpochMillis", System.currentTimeMillis())
+                    manifest.put("encoding", "UTF-8")
+                    manifest.put(
+                        "includedData",
+                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress"))
+                    )
+
+                    relationships.put("books.groupId", "book_groups.id")
+                    relationships.put("bookmarks.bookId", "books.id")
+                    relationships.put("read_progress.bookId", "books.id")
+                    relationships.put(
+                        "bookLocationFields",
+                        org.json.JSONArray(
+                            listOf(
+                                "books.filePath",
+                                "books.sourceTreeUri",
+                                "books.relativePath",
+                                "books.fileName",
+                                "books.format"
+                            )
+                        )
+                    )
+
+                    listOf("book_groups", "books", "bookmarks", "read_progress").forEach { table ->
+                        val rows = org.json.JSONArray()
+                        databaseHandle.query("SELECT * FROM $table").use { cursor ->
+                            while (cursor.moveToNext()) {
+                                val row = org.json.JSONObject()
+                                for (columnIndex in 0 until cursor.columnCount) {
+                                    val value: Any = when (cursor.getType(columnIndex)) {
+                                        android.database.Cursor.FIELD_TYPE_NULL -> org.json.JSONObject.NULL
+                                        android.database.Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(columnIndex)
+                                        android.database.Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(columnIndex)
+                                        android.database.Cursor.FIELD_TYPE_BLOB -> android.util.Base64.encodeToString(
+                                            cursor.getBlob(columnIndex),
+                                            android.util.Base64.NO_WRAP
+                                        )
+                                        else -> cursor.getString(columnIndex)
+                                    }
+                                    row.put(cursor.getColumnName(columnIndex), value)
+                                }
+                                rows.put(row)
+                            }
+                        }
+                        tablesJson.put(table, rows)
+                    }
+
+                    root.put("manifest", manifest)
+                    root.put("relationships", relationships)
+                    root.put("tables", tablesJson)
+
+                    val output = contentResolver.openOutputStream(targetUri, "wt")
+                        ?: error("无法打开所选保存位置")
+                    output.bufferedWriter(Charsets.UTF_8).use { writer ->
+                        writer.write(root.toString(2))
+                    }
+
+                    val bookCount = tablesJson.getJSONArray("books").length()
+                    val groupCount = tablesJson.getJSONArray("book_groups").length()
+                    val bookmarkCount = tablesJson.getJSONArray("bookmarks").length()
+                    val progressCount = tablesJson.getJSONArray("read_progress").length()
+                    val action = if (isSync) "同步" else "导出"
+                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条"
+                }
+            }
+
+            result.onSuccess { summary ->
+                rememberBackupLocation(targetUri)
+                Toast.makeText(this@MainActivity, summary, Toast.LENGTH_LONG).show()
+            }.onFailure { error ->
+                if (isSync) {
+                    getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+                        .edit()
+                        .remove(BACKUP_URI_KEY)
+                        .apply()
+                }
+                Toast.makeText(
+                    this@MainActivity,
+                    "数据${if (isSync) "同步" else "导出"}失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun importReaderData(sourceUri: Uri) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = contentResolver.openInputStream(sourceUri)
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { it.readText() }
+                        ?: error("无法读取所选备份文件")
+                    val summary = restoreReaderBackup(org.json.JSONObject(text))
+                    val missingCount = bookRepository.getAllBooks().first().count { book ->
+                        book.fileStatus == "MISSING" || book.filePath.startsWith("backup://missing/")
+                    }
+                    summary to missingCount
+                }
+            }
+            result.onSuccess { (summary, missingCount) ->
+                if (missingCount == 0) {
+                    pendingBackupRestoreSummary = null
+                    Toast.makeText(
+                        this@MainActivity,
+                        "$summary\n原书文件已自动关联，可直接阅读。",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    pendingBackupRestoreSummary = summary
+                    Toast.makeText(
+                        this@MainActivity,
+                        "数据已恢复，请选择一次原书总文件夹，系统将自动关联全部书籍。",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    relinkRestoredDataLauncher.launch(null)
+                }
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "导入过往数据失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private suspend fun restoreReaderBackup(root: org.json.JSONObject): String {
+        val manifest = root.optJSONObject("manifest") ?: error("不是有效的简阅备份文件")
+        if (manifest.optString("format") != "SimpleReaderBackup") {
+            error("备份格式不受支持")
+        }
+        val schemaVersion = manifest.optInt("schemaVersion", -1)
+        if (schemaVersion !in 1..BACKUP_SCHEMA_VERSION) {
+            error("备份版本 $schemaVersion 暂不受支持")
+        }
+        val tables = root.optJSONObject("tables") ?: error("备份文件缺少数据表")
+        val groupRows = tables.optJSONArray("book_groups") ?: org.json.JSONArray()
+        val bookRows = tables.optJSONArray("books") ?: org.json.JSONArray()
+        val bookmarkRows = tables.optJSONArray("bookmarks") ?: org.json.JSONArray()
+        val progressRows = tables.optJSONArray("read_progress") ?: org.json.JSONArray()
+
+        var insertedGroups = 0
+        var insertedBooks = 0
+        var matchedBooks = 0
+        var insertedBookmarks = 0
+        var restoredProgress = 0
+
+        database.withTransaction {
+            val db = database.openHelper.writableDatabase
+            val groupIdMap = mutableMapOf<Long, Long>()
+            val bookIdMap = mutableMapOf<Long, Long>()
+
+            for (index in 0 until groupRows.length()) {
+                val row = groupRows.getJSONObject(index)
+                val oldId = row.optLong("id", -1L)
+                val name = row.stringOrNull("name") ?: "未命名分组"
+                val displayName = row.stringOrNull("displayName") ?: name
+                val originalKey = row.stringOrNull("sourceKey")
+                val sourceKey = originalKey?.takeIf { it.isNotBlank() }
+                    ?: "backup:$oldId:${displayName.lowercase()}"
+
+                var resolvedId = queryLong(
+                    db,
+                    "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
+                    arrayOf(sourceKey)
+                )
+                if (resolvedId == null) {
+                    resolvedId = queryLong(
+                        db,
+                        "SELECT id FROM book_groups WHERE LOWER(displayName) = LOWER(?) OR LOWER(name) = LOWER(?) LIMIT 1",
+                        arrayOf(displayName, name)
+                    )
+                }
+                if (resolvedId == null) {
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO book_groups
+                        (name, createTime, displayName, sourceTreeUri, relativePath, sourceKey, sortOrder, isExpanded)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            name,
+                            row.optLong("createTime", System.currentTimeMillis()),
+                            displayName,
+                            row.stringOrNull("sourceTreeUri"),
+                            row.stringOrNull("relativePath"),
+                            sourceKey,
+                            row.optInt("sortOrder", 0),
+                            if (row.optBoolean("isExpanded", true)) 1 else 0
+                        )
+                    )
+                    resolvedId = queryLong(
+                        db,
+                        "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
+                        arrayOf(sourceKey)
+                    )
+                    if (resolvedId != null) insertedGroups++
+                }
+                if (oldId >= 0L && resolvedId != null) groupIdMap[oldId] = resolvedId
+            }
+
+            for (index in 0 until bookRows.length()) {
+                val row = bookRows.getJSONObject(index)
+                val oldBookId = row.optLong("id", -1L)
+                val title = row.stringOrNull("title") ?: "未命名书籍"
+                val format = row.stringOrNull("format") ?: "TXT"
+                val fileName = row.stringOrNull("fileName") ?: title
+                val fileSize = row.longOrNull("fileSize")
+                val sourceTreeUri = row.stringOrNull("sourceTreeUri")
+                val relativePath = row.stringOrNull("relativePath")
+                val originalFilePath = row.stringOrNull("filePath")
+                val filePath = originalFilePath?.takeIf { it.isNotBlank() }
+                    ?: "backup://missing/$oldBookId/${android.net.Uri.encode(fileName)}"
+
+                var resolvedBookId = findExistingBookId(
+                    db = db,
+                    filePath = filePath,
+                    fileName = fileName,
+                    fileSize = fileSize,
+                    sourceTreeUri = sourceTreeUri,
+                    relativePath = relativePath,
+                    title = title,
+                    format = format
+                )
+                val oldGroupId = row.longOrNull("groupId")
+                val resolvedGroupId = oldGroupId?.let(groupIdMap::get)
+
+                if (resolvedBookId == null) {
+                    val restoredFileStatus = if (canReadRestoredBookUri(filePath)) {
+                        "AVAILABLE"
+                    } else {
+                        "MISSING"
+                    }
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO books
+                        (title, author, filePath, format, groupId, lastReadTime, addTime, cover,
+                         fileName, fileSize, lastModified, sourceTreeUri, relativePath, fileStatus, txtCharset)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            title,
+                            row.stringOrNull("author") ?: "",
+                            filePath,
+                            format,
+                            resolvedGroupId,
+                            row.optLong("lastReadTime", 0L),
+                            row.optLong("addTime", System.currentTimeMillis()),
+                            row.stringOrNull("cover"),
+                            fileName,
+                            fileSize,
+                            row.longOrNull("lastModified"),
+                            sourceTreeUri,
+                            relativePath,
+                            restoredFileStatus,
+                            row.stringOrNull("txtCharset")
+                        )
+                    )
+                    resolvedBookId = findExistingBookId(
+                        db,
+                        filePath,
+                        fileName,
+                        fileSize,
+                        sourceTreeUri,
+                        relativePath,
+                        title,
+                        format
+                    )
+                    if (resolvedBookId != null) insertedBooks++
+                } else {
+                    matchedBooks++
+                    if (resolvedGroupId != null) {
+                        db.execSQL(
+                            "UPDATE books SET groupId = ? WHERE id = ?",
+                            arrayOf(resolvedGroupId, resolvedBookId)
+                        )
+                    }
+                }
+                if (oldBookId >= 0L && resolvedBookId != null) bookIdMap[oldBookId] = resolvedBookId
+            }
+
+            for (index in 0 until progressRows.length()) {
+                val row = progressRows.getJSONObject(index)
+                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
+                val backupUpdateTime = row.optLong("updateTime", 0L)
+                val currentUpdateTime = queryLong(
+                    db,
+                    "SELECT updateTime FROM read_progress WHERE bookId = ? LIMIT 1",
+                    arrayOf(mappedBookId)
+                )
+                if (currentUpdateTime == null || backupUpdateTime >= currentUpdateTime) {
+                    db.execSQL(
+                        """
+                        INSERT OR REPLACE INTO read_progress
+                        (bookId, position, locatorType, txtCharOffset, txtTotalLength, epubSpineIndex,
+                         epubChapterHref, epubChapterOffset, epubProgressFraction, updateTime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            mappedBookId,
+                            row.stringOrNull("position") ?: "0",
+                            row.stringOrNull("locatorType") ?: "TXT",
+                            row.longOrNull("txtCharOffset"),
+                            row.longOrNull("txtTotalLength"),
+                            row.longOrNull("epubSpineIndex"),
+                            row.stringOrNull("epubChapterHref"),
+                            row.longOrNull("epubChapterOffset"),
+                            row.doubleOrNull("epubProgressFraction"),
+                            backupUpdateTime
+                        )
+                    )
+                    restoredProgress++
+                }
+            }
+
+            for (index in 0 until bookmarkRows.length()) {
+                val row = bookmarkRows.getJSONObject(index)
+                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
+                val position = row.stringOrNull("position") ?: "0"
+                val content = row.stringOrNull("content") ?: ""
+                val existingBookmark = queryLong(
+                    db,
+                    "SELECT id FROM bookmarks WHERE bookId = ? AND position = ? AND content = ? LIMIT 1",
+                    arrayOf(mappedBookId, position, content)
+                )
+                if (existingBookmark == null) {
+                    db.execSQL(
+                        "INSERT INTO bookmarks (bookId, position, content, createTime) VALUES (?, ?, ?, ?)",
+                        arrayOf(
+                            mappedBookId,
+                            position,
+                            content,
+                            row.optLong("createTime", System.currentTimeMillis())
+                        )
+                    )
+                    insertedBookmarks++
+                }
+            }
+        }
+
+        return "过往数据导入完成：新增书籍 $insertedBooks 本，匹配去重 $matchedBooks 本，" +
+            "新增分组 $insertedGroups 个，恢复书签 $insertedBookmarks 条，恢复进度 $restoredProgress 条"
+    }
+
+    private fun findExistingBookId(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        filePath: String,
+        fileName: String,
+        fileSize: Long?,
+        sourceTreeUri: String?,
+        relativePath: String?,
+        title: String,
+        format: String
+    ): Long? {
+        queryLong(db, "SELECT id FROM books WHERE filePath = ? LIMIT 1", arrayOf(filePath))?.let { return it }
+        if (!sourceTreeUri.isNullOrBlank() && !relativePath.isNullOrBlank()) {
+            queryLong(
+                db,
+                "SELECT id FROM books WHERE sourceTreeUri = ? AND relativePath = ? AND LOWER(fileName) = LOWER(?) LIMIT 1",
+                arrayOf(sourceTreeUri, relativePath, fileName)
+            )?.let { return it }
+        }
+        if (fileSize != null && fileName.isNotBlank()) {
+            queryLong(
+                db,
+                "SELECT id FROM books WHERE LOWER(fileName) = LOWER(?) AND fileSize = ? LIMIT 1",
+                arrayOf(fileName, fileSize)
+            )?.let { return it }
+        }
+        return queryLong(
+            db,
+            "SELECT id FROM books WHERE LOWER(title) = LOWER(?) AND UPPER(format) = UPPER(?) AND COALESCE(relativePath, '') = COALESCE(?, '') LIMIT 1",
+            arrayOf(title, format, relativePath)
+        )
+    }
+
+    private fun queryLong(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        sql: String,
+        args: Array<out Any?>
+    ): Long? {
+        db.query(sql, args).use { cursor ->
+            return if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+    }
+
+    private fun org.json.JSONObject.stringOrNull(key: String): String? {
+        if (!has(key) || isNull(key)) return null
+        return optString(key).takeIf { it.isNotBlank() }
+    }
+
+    private fun org.json.JSONObject.longOrNull(key: String): Long? {
+        if (!has(key) || isNull(key)) return null
+        return runCatching { getLong(key) }.getOrNull()
+    }
+
+    private fun org.json.JSONObject.doubleOrNull(key: String): Double? {
+        if (!has(key) || isNull(key)) return null
+        return runCatching { getDouble(key) }.getOrNull()
+    }
+
+    private fun canReadRestoredBookUri(filePath: String): Boolean {
+        val uri = runCatching { Uri.parse(filePath) }.getOrNull() ?: return false
+        if (uri.scheme != "content" && uri.scheme != "file") return false
+        return runCatching {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false
+        }.getOrDefault(false)
+    }
+
+    private fun relinkRestoredBooks(
+        root: DocumentFile,
+        sourceTreeUri: String,
+        permissionStatus: PermissionStatus
+    ) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val candidates = mutableListOf<ImportCandidate>()
+                    collectFolderCandidates(
+                        folder = root,
+                        sourceTreeUri = sourceTreeUri,
+                        relativePath = root.name ?: "原书文件夹",
+                        permissionStatus = permissionStatus,
+                        candidates = candidates
+                    )
+                    val restoredBooks = bookRepository.getAllBooks().first().filter { book ->
+                        book.fileStatus == "MISSING" || book.filePath.startsWith("backup://missing/")
+                    }
+                    val matches = com.simplereader.app.data.migration.BackupRelinkMatcher.match(
+                        restoredBooks = restoredBooks,
+                        candidates = candidates
+                    )
+                    matches.forEach { match ->
+                        val candidate = match.candidate
+                        bookRepository.update(
+                            match.book.copy(
+                                filePath = candidate.uri,
+                                format = candidate.format,
+                                fileName = candidate.displayName,
+                                fileSize = candidate.size,
+                                lastModified = candidate.lastModified,
+                                sourceTreeUri = candidate.sourceTreeUri,
+                                relativePath = candidate.relativeParentPath,
+                                fileStatus = fileStatusFor(candidate.permissionStatus)
+                            )
+                        )
+                    }
+                    Triple(matches.size, restoredBooks.size - matches.size, candidates.size)
+                }
+            }
+            result.onSuccess { (matched, remaining, scanned) ->
+                val restoreSummary = pendingBackupRestoreSummary
+                pendingBackupRestoreSummary = null
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("数据恢复与原书关联完成")
+                    .setMessage(
+                        buildString {
+                            if (!restoreSummary.isNullOrBlank()) {
+                                append(restoreSummary)
+                                append("\n\n")
+                            }
+                            append("扫描到 $scanned 个文件，自动关联 $matched 本书。")
+                            if (remaining > 0) {
+                                append("\n仍有 $remaining 本未找到；书架、分组、书签和进度均已保留。")
+                                append("可稍后选择其他总目录补充关联，不需要重新导入备份。")
+                            } else {
+                                append("\n全部书籍均已恢复读取权限，可直接打开阅读。")
+                            }
+                        }
+                    )
+                    .setPositiveButton("确定", null)
+                    .show()
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "重新关联失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     private fun showImportOptions() {
         AlertDialog.Builder(this)
-            .setTitle("导入本地书籍")
-            .setItems(arrayOf("选择按文件夹导入", "选择单个或多个文件")) { _, which ->
+            .setTitle("导入与恢复")
+            .setItems(arrayOf("选择按文件夹导入", "选择单个或多个文件", "导入备份并自动关联", "补充关联未找到的书籍")) { _, which ->
                 when (which) {
                     0 -> openFolderLauncher.launch(null)
                     1 -> openFilesLauncher.launch(
-                        arrayOf("text/plain", "application/epub+zip", "application/octet-stream")
+                        arrayOf(
+                            "text/plain",
+                            "application/epub+zip",
+                            "application/vnd.ms-htmlhelp",
+                            "application/x-chm",
+                            "application/octet-stream"
+                        )
                     )
+                    2 -> importDataLauncher.launch(
+                        arrayOf("application/json", "text/json", "application/octet-stream")
+                    )
+                    3 -> relinkRestoredDataLauncher.launch(null)
                 }
             }
             .show()
@@ -615,29 +1537,47 @@ class MainActivity : AppCompatActivity() {
         baseOptions: ImportPlanOptions = ImportPlanOptions()
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
             return
         }
+
         val levels = FolderGrouping.levelPreviews(candidates)
-        val limitText = if (candidates.size >= FOLDER_IMPORT_LIMIT) "，已达到单次上限 $FOLDER_IMPORT_LIMIT 本" else ""
+        val limitText = if (candidates.size >= FOLDER_IMPORT_LIMIT) {
+            "，已达到单次上限 $FOLDER_IMPORT_LIMIT 本"
+        } else {
+            ""
+        }
         val levelItems = levels.map { level ->
             val addedText = if (level.depth == 1) {
-                "初始 ${level.groupCount} 个分组"
+                "${level.groupCount} 个分组"
             } else {
-                "共 ${level.groupCount} 个，比上一层新增 ${level.additionalGroupCount} 个"
+                "${level.groupCount} 个分组，比上一层新增 ${level.additionalGroupCount} 个"
             }
             "按 ${level.depth} 层文件夹分组（$addedText）"
         }
         val items = (levelItems + "不分组导入").toTypedArray()
+        var selectedIndex = 0
 
-        AlertDialog.Builder(this)
-            .setTitle("选择文件夹分组层级")
-            .setMessage(
-                "发现 ${candidates.size} 本书$limitText，识别到最深 ${levels.last().depth} 层文件夹。" +
-                    "可选层数以实际识别深度为准，最多支持 ${FolderGrouping.MAX_SUPPORTED_DEPTH} 层。"
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(
+                "选择分组层级 · ${candidates.size} 本$limitText · 最深 ${levels.last().depth} 层"
             )
-            .setItems(items) { _, which ->
-                if (which == levels.size) {
+            .setSingleChoiceItems(items, selectedIndex) { _, which ->
+                selectedIndex = which
+            }
+            .setNegativeButton("取消", null)
+            .setPositiveButton("下一步", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.listView.apply {
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_INSET
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                dialog.dismiss()
+                if (selectedIndex == levels.size) {
                     showImportPreview(
                         candidates,
                         baseOptions.copy(
@@ -650,14 +1590,14 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     showFolderGroupingPreview(
                         candidates = candidates,
-                        depth = levels[which].depth,
+                        depth = levels[selectedIndex].depth,
                         selected = selected,
                         baseOptions = baseOptions
                     )
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showFolderGroupingPreview(
@@ -692,7 +1632,7 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("${depth} 层分组预览（${groups.size} 个分组）")
-            .setView(ScrollView(this).apply { addView(previewView) })
+            .setView(FastScrollView(this).apply { addView(previewView) })
             .setNegativeButton("返回选择层级") { _, _ ->
                 showFolderImportMode(candidates, selected, baseOptions)
             }
@@ -727,7 +1667,7 @@ class MainActivity : AppCompatActivity() {
         selected: BooleanArray
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
             return
         }
         val labels = candidates.map { candidate ->
@@ -891,22 +1831,37 @@ class MainActivity : AppCompatActivity() {
     ): ImportCandidate {
         val uri = file.uri.toString()
         val format = file.bookFormat()
+        val displayName = file.name ?: "未命名书籍"
+        val size = file.length().takeIf { it >= 0L }
+        val existingByUri = if (format == null) null else bookRepository.getByFilePath(uri)
+        val existingByIdentity = if (format == null || existingByUri != null) {
+            null
+        } else {
+            bookRepository.findDuplicate(
+                filePath = uri,
+                sourceTreeUri = sourceTreeUri,
+                relativePath = relativeParentPath,
+                fileName = displayName,
+                fileSize = size
+            )
+        }
         val duplicateStatus = when {
             format == null -> DuplicateStatus.INVALID
-            bookRepository.getByFilePath(uri) != null -> DuplicateStatus.SAME_URI
+            existingByUri != null -> DuplicateStatus.SAME_URI
+            existingByIdentity != null -> DuplicateStatus.POSSIBLE_DUPLICATE
             else -> DuplicateStatus.NEW
         }
         val groupName = relativeParentPath?.substringAfterLast("/")?.ifBlank { null }
         val groupKey = sourceTreeUri?.let { "$it|${relativeParentPath.orEmpty()}" }
         return ImportCandidate(
             uri = uri,
-            displayName = file.name ?: "未命名书籍",
+            displayName = displayName,
             format = format ?: "",
             sourceTreeUri = sourceTreeUri,
             relativeParentPath = relativeParentPath,
             suggestedGroupKey = groupKey,
             suggestedGroupName = groupName,
-            size = file.length().takeIf { it >= 0L },
+            size = size,
             lastModified = file.lastModified().takeIf { it > 0L },
             duplicateStatus = duplicateStatus,
             permissionStatus = permissionStatus,
@@ -993,13 +1948,25 @@ class MainActivity : AppCompatActivity() {
         candidate: ImportCandidate,
         options: ImportPlanOptions
     ): ImportItemResult {
-        val existing = bookRepository.getByFilePath(candidate.uri)
+        val existing = bookRepository.findDuplicate(
+            filePath = candidate.uri,
+            sourceTreeUri = candidate.sourceTreeUri,
+            relativePath = candidate.relativeParentPath,
+            fileName = candidate.displayName,
+            fileSize = candidate.size
+        )
         val resolvedGroupId = resolveGroupId(candidate)
 
         if (existing != null) {
-            return when (options.duplicateStrategy) {
-                DuplicateStrategy.SKIP -> ImportItemResult.Skipped("相同 URI 已存在")
-                DuplicateStrategy.KEEP_BOTH -> ImportItemResult.Skipped("相同 URI 不能保留两份")
+            when (options.duplicateStrategy) {
+                DuplicateStrategy.SKIP -> {
+                    val reason = if (existing.filePath == candidate.uri) {
+                        "相同文件 URI 已存在"
+                    } else {
+                        "已存在相同位置或同名同大小书籍"
+                    }
+                    return ImportItemResult.Skipped(reason)
+                }
                 DuplicateStrategy.UPDATE_EXISTING -> {
                     val groupIdForUpdate = if (
                         options.targetGroupMode == TargetGroupMode.SUGGESTED &&
@@ -1013,7 +1980,9 @@ class MainActivity : AppCompatActivity() {
                         existing.copy(
                             title = candidate.displayName
                                 .removeSuffixIgnoreCase(".txt")
-                                .removeSuffixIgnoreCase(".epub"),
+                                .removeSuffixIgnoreCase(".epub")
+                                .removeSuffixIgnoreCase(".chm"),
+                            filePath = candidate.uri,
                             format = candidate.format,
                             groupId = groupIdForUpdate,
                             fileName = candidate.displayName,
@@ -1024,7 +1993,12 @@ class MainActivity : AppCompatActivity() {
                             fileStatus = fileStatusFor(candidate.permissionStatus)
                         )
                     )
-                    ImportItemResult.Updated(existing.id)
+                    return ImportItemResult.Updated(existing.id)
+                }
+                DuplicateStrategy.KEEP_BOTH -> {
+                    if (existing.filePath == candidate.uri) {
+                        return ImportItemResult.Skipped("相同文件 URI 不能保留两份")
+                    }
                 }
             }
         }
@@ -1032,7 +2006,8 @@ class MainActivity : AppCompatActivity() {
         val book = Book(
             title = candidate.displayName
                 .removeSuffixIgnoreCase(".txt")
-                .removeSuffixIgnoreCase(".epub"),
+                .removeSuffixIgnoreCase(".epub")
+                .removeSuffixIgnoreCase(".chm"),
             filePath = candidate.uri,
             format = candidate.format,
             groupId = resolvedGroupId,
@@ -1047,7 +2022,7 @@ class MainActivity : AppCompatActivity() {
         return if (insertedId != -1L) {
             ImportItemResult.Inserted(insertedId)
         } else {
-            ImportItemResult.Skipped("导入过程中发现相同 URI 已存在")
+            ImportItemResult.Skipped("导入写入前再次查重，书籍已存在")
         }
     }
 
@@ -1097,6 +2072,7 @@ class MainActivity : AppCompatActivity() {
         return when {
             name.endsWith(".txt", ignoreCase = true) -> "TXT"
             name.endsWith(".epub", ignoreCase = true) -> "EPUB"
+            name.endsWith(".chm", ignoreCase = true) -> "CHM"
             else -> null
         }
     }
@@ -1122,6 +2098,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val BACKUP_SCHEMA_VERSION = 1
+        private const val BACKUP_PREFS = "simple_reader_backup"
+        private const val BACKUP_URI_KEY = "backup_uri"
         private const val FOLDER_IMPORT_LIMIT = 10_000
         private const val GROUP_PREVIEW_LIMIT = 200
     }

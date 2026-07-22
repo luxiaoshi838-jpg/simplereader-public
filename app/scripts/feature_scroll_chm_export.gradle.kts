@@ -159,13 +159,15 @@ tasks.named("applyRuntimeUiPatches").configure {
             ""
         )
 
-        val chmMarker = "                            else -> LoadedContent(\"\")"
-        check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
-        val chmBranch = """                            "CHM" -> LoadedContent(
-                                text = readChmTextIsolated(input)
-                            )
+        val chmMarker = "        else -> LoadedContent(\"\")"
+val chmBranch = """        "CHM" -> LoadedContent(
+        text = readChmTextIsolated(input)
+    )
 """
-        readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+if (!readerSource.contains("\"CHM\" -> LoadedContent(")) {
+    check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
+    readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+}
 
         if (!readerSource.contains("private fun readChmTextIsolated(")) {
             val setupMarker = "    private fun setupUI() {"
