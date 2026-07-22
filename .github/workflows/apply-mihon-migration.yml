@@ -89,20 +89,32 @@ jobs:
         if: steps.patch.outputs.present == 'true'
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           export SIMPLE_READER_VERSION_CODE=$((2026300000 + 10#$GITHUB_RUN_NUMBER))
           export SIMPLE_READER_VERSION_NAME=2026.07.22.mihon.${GITHUB_RUN_NUMBER}
-          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee mihon-build.log
+
+      - name: Upload build diagnostics
+        if: always() && steps.patch.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihon-build-diagnostics-${{ github.run_number }}
+          path: |
+            mihon-build.log
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: warn
+          retention-days: 2
 
       - name: Verify build does not rewrite business source
-        if: steps.patch.outputs.present == 'true'
+        if: steps.patch.outputs.present == 'true' && success()
         shell: bash
         run: |
           set -euo pipefail
           git diff --exit-code -- app/src/main app/build.gradle.kts settings.gradle.kts
 
       - name: Commit verified direct source
-        if: steps.patch.outputs.present == 'true'
+        if: steps.patch.outputs.present == 'true' && success()
         shell: bash
         run: |
           set -euo pipefail
