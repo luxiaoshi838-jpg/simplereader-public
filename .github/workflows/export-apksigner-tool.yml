@@ -1,0 +1,33 @@
+name: Export verified Android signer tool
+
+on:
+  push:
+    branches:
+      - agent/export-official-apksigner
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download signer built on Android apksig
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            'https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar' \
+            --output uber-apk-signer-1.3.0.jar
+          echo 'e1299fd6fcf4da527dd53735b56127e8ea922a321128123b9c32d619bba1d835  uber-apk-signer-1.3.0.jar' | sha256sum --check
+          java -jar uber-apk-signer-1.3.0.jar --version
+
+      - name: Upload verified signer
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-android-apk-signer
+          path: uber-apk-signer-1.3.0.jar
+          if-no-files-found: error
+          retention-days: 1
