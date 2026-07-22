@@ -1,0 +1,112 @@
+    private fun showGroupManagement(group: BookGroup, groupBooks: List<ShelfBookItem>) {
+        val sortedBooks = groupBooks.sortedByDescending(::activityTime)
+        val selected = BooleanArray(sortedBooks.size)
+        val labels = sortedBooks.map { book ->
+            "${book.title} · 已读 ${book.progressPercent()}%"
+        }.toTypedArray()
+
+        val titleBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(10), dp(10), dp(6))
+        }
+        val titleText = TextView(this).apply {
+            text = "分组管理 · ${group.displayName.ifBlank { group.name }}"
+            textSize = 20f
+            setTextColor(Color.rgb(30, 30, 30))
+            maxLines = 1
+        }
+        val selectAllButton = TextView(this).apply {
+            text = "全选"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(45, 105, 160))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            contentDescription = "全选分组书籍"
+        }
+        titleBar.addView(
+            titleText,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        titleBar.addView(
+            selectAllButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val dialog = AlertDialog.Builder(this)
+            .setCustomTitle(titleBar)
+            .setMultiChoiceItems(labels, selected) { _, which, isChecked ->
+                selected[which] = isChecked
+            }
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("移出分组", null)
+            .setPositiveButton("删除书架", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.listView.apply {
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_INSET
+            }
+            selectAllButton.setOnClickListener {
+                selected.indices.forEach { index ->
+                    selected[index] = true
+                    dialog.listView.setItemChecked(index, true)
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val selectedBooks = sortedBooks.filterIndexed { index, _ -> selected[index] }
+                if (selectedBooks.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "请先选择书籍", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        selectedBooks.forEach { book ->
+                            database.bookDao().getBook(book.id)?.let { entity ->
+                                bookRepository.update(entity.copy(groupId = null))
+                            }
+                        }
+                    }
+                    Toast.makeText(
+                        this@MainActivity,
+                        "已将 ${selectedBooks.size} 本书移到未分组",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    dialog.dismiss()
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selectedBooks = sortedBooks.filterIndexed { index, _ -> selected[index] }
+                if (selectedBooks.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "请先选择书籍", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("批量删除书架")
+                    .setMessage("将从书架移除 ${selectedBooks.size} 本书，不删除原文件。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除") { _, _ ->
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO) {
+                                selectedBooks.forEach { book ->
+                                    database.bookDao().deleteById(book.id)
+                                }
+                            }
+                            Toast.makeText(
+                                this@MainActivity,
+                                "已从书架移除 ${selectedBooks.size} 本书",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            dialog.dismiss()
+                        }
+                    }
+                    .show()
+            }
+        }
+        dialog.show()
+    }

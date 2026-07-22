@@ -1,0 +1,2 @@
+reader-open-guard-v1
+URI fallback, permission-loss handling, and application-code R8 keep rules enabled.

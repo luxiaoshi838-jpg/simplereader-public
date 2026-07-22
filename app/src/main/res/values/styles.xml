@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SimpleReader" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">#302F2A</item>
+        <item name="colorPrimaryDark">#302F2A</item>
+        <item name="colorAccent">#E4772D</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#302F2A</item>
+    </style>
+</resources>

@@ -1,0 +1,71 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "legacy_v1_schema",
+    "entities": [
+      {
+        "tableName": "books",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `author` TEXT NOT NULL, `filePath` TEXT NOT NULL, `format` TEXT NOT NULL, `groupId` INTEGER, `lastReadPosition` TEXT NOT NULL, `lastReadTime` INTEGER NOT NULL, `addTime` INTEGER NOT NULL, `cover` TEXT)",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "title", "columnName": "title", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "author", "columnName": "author", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "filePath", "columnName": "filePath", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "format", "columnName": "format", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "groupId", "columnName": "groupId", "affinity": "INTEGER", "notNull": false},
+          {"fieldPath": "lastReadPosition", "columnName": "lastReadPosition", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "lastReadTime", "columnName": "lastReadTime", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "addTime", "columnName": "addTime", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "cover", "columnName": "cover", "affinity": "TEXT", "notNull": false}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "book_groups",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `createTime` INTEGER NOT NULL)",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "createTime", "columnName": "createTime", "affinity": "INTEGER", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "bookmarks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `bookId` INTEGER NOT NULL, `position` TEXT NOT NULL, `content` TEXT NOT NULL, `createTime` INTEGER NOT NULL)",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "bookId", "columnName": "bookId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "position", "columnName": "position", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "content", "columnName": "content", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "createTime", "columnName": "createTime", "affinity": "INTEGER", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "read_progress",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bookId` INTEGER NOT NULL, `position` TEXT NOT NULL, `updateTime` INTEGER NOT NULL, PRIMARY KEY(`bookId`))",
+        "fields": [
+          {"fieldPath": "bookId", "columnName": "bookId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "position", "columnName": "position", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "updateTime", "columnName": "updateTime", "affinity": "INTEGER", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": false, "columnNames": ["bookId"]},
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'legacy_v1_schema')"
+    ]
+  }
+}

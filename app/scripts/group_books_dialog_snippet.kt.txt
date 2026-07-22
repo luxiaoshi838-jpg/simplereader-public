@@ -1,0 +1,10 @@
+    private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
+        startActivity(
+            Intent(this, GroupBooksActivity::class.java)
+                .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
+                .putExtra(
+                    GroupBooksActivity.EXTRA_GROUP_NAME,
+                    group.displayName.ifBlank { group.name }
+                )
+        )
+    }

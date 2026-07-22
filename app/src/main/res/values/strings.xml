@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">简阅</string>
+    <string name="import_books">导入本地书籍</string>
+    <string name="settings">设置</string>
+    <string name="my_shelf">我的书架</string>
+    <string name="font_size">字体大小</string>
+    <string name="night_mode">夜间模式</string>
+</resources>

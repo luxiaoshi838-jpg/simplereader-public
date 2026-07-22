@@ -1,0 +1,436 @@
+    private fun showDataExportOptions() {
+        AlertDialog.Builder(this)
+            .setTitle("数据导出")
+            .setItems(arrayOf("导出", "同步")) { _, which ->
+                when (which) {
+                    0 -> launchDataExport()
+                    1 -> syncDataExport()
+                }
+            }
+            .show()
+    }
+
+    private fun launchDataExport() {
+        val stamp = java.text.SimpleDateFormat(
+            "yyyyMMdd_HHmmss",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date())
+        exportDataLauncher.launch("简阅数据备份_${stamp}.json")
+    }
+
+    private fun syncDataExport() {
+        val savedUri = getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+            .getString(BACKUP_URI_KEY, null)
+        if (savedUri.isNullOrBlank()) {
+            Toast.makeText(this, "尚未选择过导出文件，请先执行一次导出", Toast.LENGTH_SHORT).show()
+            launchDataExport()
+            return
+        }
+        exportReaderData(Uri.parse(savedUri), isSync = true)
+    }
+
+    private fun rememberBackupLocation(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(BACKUP_URI_KEY, uri.toString())
+            .apply()
+    }
+
+    private fun exportReaderData(targetUri: Uri, isSync: Boolean = false) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = org.json.JSONObject()
+                    val manifest = org.json.JSONObject()
+                    val relationships = org.json.JSONObject()
+                    val tablesJson = org.json.JSONObject()
+                    val databaseHandle = database.openHelper.readableDatabase
+
+                    manifest.put("format", "SimpleReaderBackup")
+                    manifest.put("schemaVersion", BACKUP_SCHEMA_VERSION)
+                    manifest.put("minimumCompatibleSchemaVersion", 1)
+                    manifest.put("appPackage", packageName)
+                    manifest.put("databaseVersion", 2)
+                    manifest.put("exportedAtEpochMillis", System.currentTimeMillis())
+                    manifest.put("encoding", "UTF-8")
+                    manifest.put(
+                        "includedData",
+                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress"))
+                    )
+
+                    relationships.put("books.groupId", "book_groups.id")
+                    relationships.put("bookmarks.bookId", "books.id")
+                    relationships.put("read_progress.bookId", "books.id")
+                    relationships.put(
+                        "bookLocationFields",
+                        org.json.JSONArray(
+                            listOf(
+                                "books.filePath",
+                                "books.sourceTreeUri",
+                                "books.relativePath",
+                                "books.fileName",
+                                "books.format"
+                            )
+                        )
+                    )
+
+                    listOf("book_groups", "books", "bookmarks", "read_progress").forEach { table ->
+                        val rows = org.json.JSONArray()
+                        databaseHandle.query("SELECT * FROM $table").use { cursor ->
+                            while (cursor.moveToNext()) {
+                                val row = org.json.JSONObject()
+                                for (columnIndex in 0 until cursor.columnCount) {
+                                    val value: Any = when (cursor.getType(columnIndex)) {
+                                        android.database.Cursor.FIELD_TYPE_NULL -> org.json.JSONObject.NULL
+                                        android.database.Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(columnIndex)
+                                        android.database.Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(columnIndex)
+                                        android.database.Cursor.FIELD_TYPE_BLOB -> android.util.Base64.encodeToString(
+                                            cursor.getBlob(columnIndex),
+                                            android.util.Base64.NO_WRAP
+                                        )
+                                        else -> cursor.getString(columnIndex)
+                                    }
+                                    row.put(cursor.getColumnName(columnIndex), value)
+                                }
+                                rows.put(row)
+                            }
+                        }
+                        tablesJson.put(table, rows)
+                    }
+
+                    root.put("manifest", manifest)
+                    root.put("relationships", relationships)
+                    root.put("tables", tablesJson)
+
+                    val output = contentResolver.openOutputStream(targetUri, "wt")
+                        ?: error("无法打开所选保存位置")
+                    output.bufferedWriter(Charsets.UTF_8).use { writer ->
+                        writer.write(root.toString(2))
+                    }
+
+                    val bookCount = tablesJson.getJSONArray("books").length()
+                    val groupCount = tablesJson.getJSONArray("book_groups").length()
+                    val bookmarkCount = tablesJson.getJSONArray("bookmarks").length()
+                    val progressCount = tablesJson.getJSONArray("read_progress").length()
+                    val action = if (isSync) "同步" else "导出"
+                    "$action完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条"
+                }
+            }
+
+            result.onSuccess { summary ->
+                rememberBackupLocation(targetUri)
+                Toast.makeText(this@MainActivity, summary, Toast.LENGTH_LONG).show()
+            }.onFailure { error ->
+                if (isSync) {
+                    getSharedPreferences(BACKUP_PREFS, MODE_PRIVATE)
+                        .edit()
+                        .remove(BACKUP_URI_KEY)
+                        .apply()
+                }
+                Toast.makeText(
+                    this@MainActivity,
+                    "数据${if (isSync) "同步" else "导出"}失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun importReaderData(sourceUri: Uri) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = contentResolver.openInputStream(sourceUri)
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { it.readText() }
+                        ?: error("无法读取所选备份文件")
+                    restoreReaderBackup(org.json.JSONObject(text))
+                }
+            }
+            result.onSuccess { summary ->
+                Toast.makeText(this@MainActivity, summary, Toast.LENGTH_LONG).show()
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "导入过往数据失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private suspend fun restoreReaderBackup(root: org.json.JSONObject): String {
+        val manifest = root.optJSONObject("manifest") ?: error("不是有效的简阅备份文件")
+        if (manifest.optString("format") != "SimpleReaderBackup") {
+            error("备份格式不受支持")
+        }
+        val schemaVersion = manifest.optInt("schemaVersion", -1)
+        if (schemaVersion !in 1..BACKUP_SCHEMA_VERSION) {
+            error("备份版本 $schemaVersion 暂不受支持")
+        }
+        val tables = root.optJSONObject("tables") ?: error("备份文件缺少数据表")
+        val groupRows = tables.optJSONArray("book_groups") ?: org.json.JSONArray()
+        val bookRows = tables.optJSONArray("books") ?: org.json.JSONArray()
+        val bookmarkRows = tables.optJSONArray("bookmarks") ?: org.json.JSONArray()
+        val progressRows = tables.optJSONArray("read_progress") ?: org.json.JSONArray()
+
+        var insertedGroups = 0
+        var insertedBooks = 0
+        var matchedBooks = 0
+        var insertedBookmarks = 0
+        var restoredProgress = 0
+
+        database.withTransaction {
+            val db = database.openHelper.writableDatabase
+            val groupIdMap = mutableMapOf<Long, Long>()
+            val bookIdMap = mutableMapOf<Long, Long>()
+
+            for (index in 0 until groupRows.length()) {
+                val row = groupRows.getJSONObject(index)
+                val oldId = row.optLong("id", -1L)
+                val name = row.stringOrNull("name") ?: "未命名分组"
+                val displayName = row.stringOrNull("displayName") ?: name
+                val originalKey = row.stringOrNull("sourceKey")
+                val sourceKey = originalKey?.takeIf { it.isNotBlank() }
+                    ?: "backup:$oldId:${displayName.lowercase()}"
+
+                var resolvedId = queryLong(
+                    db,
+                    "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
+                    arrayOf(sourceKey)
+                )
+                if (resolvedId == null) {
+                    resolvedId = queryLong(
+                        db,
+                        "SELECT id FROM book_groups WHERE LOWER(displayName) = LOWER(?) OR LOWER(name) = LOWER(?) LIMIT 1",
+                        arrayOf(displayName, name)
+                    )
+                }
+                if (resolvedId == null) {
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO book_groups
+                        (name, createTime, displayName, sourceTreeUri, relativePath, sourceKey, sortOrder, isExpanded)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            name,
+                            row.optLong("createTime", System.currentTimeMillis()),
+                            displayName,
+                            row.stringOrNull("sourceTreeUri"),
+                            row.stringOrNull("relativePath"),
+                            sourceKey,
+                            row.optInt("sortOrder", 0),
+                            if (row.optBoolean("isExpanded", true)) 1 else 0
+                        )
+                    )
+                    resolvedId = queryLong(
+                        db,
+                        "SELECT id FROM book_groups WHERE sourceKey = ? LIMIT 1",
+                        arrayOf(sourceKey)
+                    )
+                    if (resolvedId != null) insertedGroups++
+                }
+                if (oldId >= 0L && resolvedId != null) groupIdMap[oldId] = resolvedId
+            }
+
+            for (index in 0 until bookRows.length()) {
+                val row = bookRows.getJSONObject(index)
+                val oldBookId = row.optLong("id", -1L)
+                val title = row.stringOrNull("title") ?: "未命名书籍"
+                val format = row.stringOrNull("format") ?: "TXT"
+                val fileName = row.stringOrNull("fileName") ?: title
+                val fileSize = row.longOrNull("fileSize")
+                val sourceTreeUri = row.stringOrNull("sourceTreeUri")
+                val relativePath = row.stringOrNull("relativePath")
+                val originalFilePath = row.stringOrNull("filePath")
+                val filePath = originalFilePath?.takeIf { it.isNotBlank() }
+                    ?: "backup://missing/$oldBookId/${android.net.Uri.encode(fileName)}"
+
+                var resolvedBookId = findExistingBookId(
+                    db = db,
+                    filePath = filePath,
+                    fileName = fileName,
+                    fileSize = fileSize,
+                    sourceTreeUri = sourceTreeUri,
+                    relativePath = relativePath,
+                    title = title,
+                    format = format
+                )
+                val oldGroupId = row.longOrNull("groupId")
+                val resolvedGroupId = oldGroupId?.let(groupIdMap::get)
+
+                if (resolvedBookId == null) {
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO books
+                        (title, author, filePath, format, groupId, lastReadTime, addTime, cover,
+                         fileName, fileSize, lastModified, sourceTreeUri, relativePath, fileStatus, txtCharset)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            title,
+                            row.stringOrNull("author") ?: "",
+                            filePath,
+                            format,
+                            resolvedGroupId,
+                            row.optLong("lastReadTime", 0L),
+                            row.optLong("addTime", System.currentTimeMillis()),
+                            row.stringOrNull("cover"),
+                            fileName,
+                            fileSize,
+                            row.longOrNull("lastModified"),
+                            sourceTreeUri,
+                            relativePath,
+                            row.stringOrNull("fileStatus") ?: "AVAILABLE",
+                            row.stringOrNull("txtCharset")
+                        )
+                    )
+                    resolvedBookId = findExistingBookId(
+                        db,
+                        filePath,
+                        fileName,
+                        fileSize,
+                        sourceTreeUri,
+                        relativePath,
+                        title,
+                        format
+                    )
+                    if (resolvedBookId != null) insertedBooks++
+                } else {
+                    matchedBooks++
+                    if (resolvedGroupId != null) {
+                        db.execSQL(
+                            "UPDATE books SET groupId = ? WHERE id = ?",
+                            arrayOf(resolvedGroupId, resolvedBookId)
+                        )
+                    }
+                }
+                if (oldBookId >= 0L && resolvedBookId != null) bookIdMap[oldBookId] = resolvedBookId
+            }
+
+            for (index in 0 until progressRows.length()) {
+                val row = progressRows.getJSONObject(index)
+                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
+                val backupUpdateTime = row.optLong("updateTime", 0L)
+                val currentUpdateTime = queryLong(
+                    db,
+                    "SELECT updateTime FROM read_progress WHERE bookId = ? LIMIT 1",
+                    arrayOf(mappedBookId)
+                )
+                if (currentUpdateTime == null || backupUpdateTime >= currentUpdateTime) {
+                    db.execSQL(
+                        """
+                        INSERT OR REPLACE INTO read_progress
+                        (bookId, position, locatorType, txtCharOffset, txtTotalLength, epubSpineIndex,
+                         epubChapterHref, epubChapterOffset, epubProgressFraction, updateTime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            mappedBookId,
+                            row.stringOrNull("position") ?: "0",
+                            row.stringOrNull("locatorType") ?: "TXT",
+                            row.longOrNull("txtCharOffset"),
+                            row.longOrNull("txtTotalLength"),
+                            row.longOrNull("epubSpineIndex"),
+                            row.stringOrNull("epubChapterHref"),
+                            row.longOrNull("epubChapterOffset"),
+                            row.doubleOrNull("epubProgressFraction"),
+                            backupUpdateTime
+                        )
+                    )
+                    restoredProgress++
+                }
+            }
+
+            for (index in 0 until bookmarkRows.length()) {
+                val row = bookmarkRows.getJSONObject(index)
+                val mappedBookId = bookIdMap[row.optLong("bookId", -1L)] ?: continue
+                val position = row.stringOrNull("position") ?: "0"
+                val content = row.stringOrNull("content") ?: ""
+                val existingBookmark = queryLong(
+                    db,
+                    "SELECT id FROM bookmarks WHERE bookId = ? AND position = ? AND content = ? LIMIT 1",
+                    arrayOf(mappedBookId, position, content)
+                )
+                if (existingBookmark == null) {
+                    db.execSQL(
+                        "INSERT INTO bookmarks (bookId, position, content, createTime) VALUES (?, ?, ?, ?)",
+                        arrayOf(
+                            mappedBookId,
+                            position,
+                            content,
+                            row.optLong("createTime", System.currentTimeMillis())
+                        )
+                    )
+                    insertedBookmarks++
+                }
+            }
+        }
+
+        return "过往数据导入完成：新增书籍 $insertedBooks 本，匹配去重 $matchedBooks 本，" +
+            "新增分组 $insertedGroups 个，恢复书签 $insertedBookmarks 条，恢复进度 $restoredProgress 条"
+    }
+
+    private fun findExistingBookId(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        filePath: String,
+        fileName: String,
+        fileSize: Long?,
+        sourceTreeUri: String?,
+        relativePath: String?,
+        title: String,
+        format: String
+    ): Long? {
+        queryLong(db, "SELECT id FROM books WHERE filePath = ? LIMIT 1", arrayOf(filePath))?.let { return it }
+        if (!sourceTreeUri.isNullOrBlank() && !relativePath.isNullOrBlank()) {
+            queryLong(
+                db,
+                "SELECT id FROM books WHERE sourceTreeUri = ? AND relativePath = ? AND LOWER(fileName) = LOWER(?) LIMIT 1",
+                arrayOf(sourceTreeUri, relativePath, fileName)
+            )?.let { return it }
+        }
+        if (fileSize != null && fileName.isNotBlank()) {
+            queryLong(
+                db,
+                "SELECT id FROM books WHERE LOWER(fileName) = LOWER(?) AND fileSize = ? LIMIT 1",
+                arrayOf(fileName, fileSize)
+            )?.let { return it }
+        }
+        return queryLong(
+            db,
+            "SELECT id FROM books WHERE LOWER(title) = LOWER(?) AND UPPER(format) = UPPER(?) AND COALESCE(relativePath, '') = COALESCE(?, '') LIMIT 1",
+            arrayOf(title, format, relativePath)
+        )
+    }
+
+    private fun queryLong(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        sql: String,
+        args: Array<out Any?>
+    ): Long? {
+        db.query(sql, args).use { cursor ->
+            return if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+    }
+
+    private fun org.json.JSONObject.stringOrNull(key: String): String? {
+        if (!has(key) || isNull(key)) return null
+        return optString(key).takeIf { it.isNotBlank() }
+    }
+
+    private fun org.json.JSONObject.longOrNull(key: String): Long? {
+        if (!has(key) || isNull(key)) return null
+        return runCatching { getLong(key) }.getOrNull()
+    }
+
+    private fun org.json.JSONObject.doubleOrNull(key: String): Double? {
+        if (!has(key) || isNull(key)) return null
+        return runCatching { getDouble(key) }.getOrNull()
+    }

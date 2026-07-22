@@ -1,0 +1,14 @@
+.gradle/
+build/
+*.apk
+*.aar
+*.jks
+*.keystore
+local.properties
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+Thumbs.db
+build-logs/github-run-*/

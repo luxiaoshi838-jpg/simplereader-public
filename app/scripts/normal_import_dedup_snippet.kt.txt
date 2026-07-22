@@ -1,0 +1,127 @@
+    private suspend fun buildCandidate(
+        file: DocumentFile,
+        sourceTreeUri: String?,
+        relativeParentPath: String?,
+        permissionStatus: PermissionStatus
+    ): ImportCandidate {
+        val uri = file.uri.toString()
+        val format = file.bookFormat()
+        val displayName = file.name ?: "未命名书籍"
+        val size = file.length().takeIf { it >= 0L }
+        val existingByUri = if (format == null) null else bookRepository.getByFilePath(uri)
+        val existingByIdentity = if (format == null || existingByUri != null) {
+            null
+        } else {
+            bookRepository.findDuplicate(
+                filePath = uri,
+                sourceTreeUri = sourceTreeUri,
+                relativePath = relativeParentPath,
+                fileName = displayName,
+                fileSize = size
+            )
+        }
+        val duplicateStatus = when {
+            format == null -> DuplicateStatus.INVALID
+            existingByUri != null -> DuplicateStatus.SAME_URI
+            existingByIdentity != null -> DuplicateStatus.POSSIBLE_DUPLICATE
+            else -> DuplicateStatus.NEW
+        }
+        val groupName = relativeParentPath?.substringAfterLast("/")?.ifBlank { null }
+        val groupKey = sourceTreeUri?.let { "$it|${relativeParentPath.orEmpty()}" }
+        return ImportCandidate(
+            uri = uri,
+            displayName = displayName,
+            format = format ?: "",
+            sourceTreeUri = sourceTreeUri,
+            relativeParentPath = relativeParentPath,
+            suggestedGroupKey = groupKey,
+            suggestedGroupName = groupName,
+            size = size,
+            lastModified = file.lastModified().takeIf { it > 0L },
+            duplicateStatus = duplicateStatus,
+            permissionStatus = permissionStatus,
+            selected = duplicateStatus == DuplicateStatus.NEW
+        )
+    }
+
+    private suspend fun importCandidate(
+        candidate: ImportCandidate,
+        options: ImportPlanOptions
+    ): ImportItemResult {
+        val existing = bookRepository.findDuplicate(
+            filePath = candidate.uri,
+            sourceTreeUri = candidate.sourceTreeUri,
+            relativePath = candidate.relativeParentPath,
+            fileName = candidate.displayName,
+            fileSize = candidate.size
+        )
+        val resolvedGroupId = resolveGroupId(candidate)
+
+        if (existing != null) {
+            when (options.duplicateStrategy) {
+                DuplicateStrategy.SKIP -> {
+                    val reason = if (existing.filePath == candidate.uri) {
+                        "相同文件 URI 已存在"
+                    } else {
+                        "已存在相同位置或同名同大小书籍"
+                    }
+                    return ImportItemResult.Skipped(reason)
+                }
+                DuplicateStrategy.UPDATE_EXISTING -> {
+                    val groupIdForUpdate = if (
+                        options.targetGroupMode == TargetGroupMode.SUGGESTED &&
+                        candidate.suggestedGroupKey == null
+                    ) {
+                        existing.groupId
+                    } else {
+                        resolvedGroupId
+                    }
+                    bookRepository.update(
+                        existing.copy(
+                            title = candidate.displayName
+                                .removeSuffixIgnoreCase(".txt")
+                                .removeSuffixIgnoreCase(".epub")
+                                .removeSuffixIgnoreCase(".chm"),
+                            filePath = candidate.uri,
+                            format = candidate.format,
+                            groupId = groupIdForUpdate,
+                            fileName = candidate.displayName,
+                            fileSize = candidate.size,
+                            lastModified = candidate.lastModified,
+                            sourceTreeUri = candidate.sourceTreeUri ?: existing.sourceTreeUri,
+                            relativePath = candidate.relativeParentPath ?: existing.relativePath,
+                            fileStatus = fileStatusFor(candidate.permissionStatus)
+                        )
+                    )
+                    return ImportItemResult.Updated(existing.id)
+                }
+                DuplicateStrategy.KEEP_BOTH -> {
+                    if (existing.filePath == candidate.uri) {
+                        return ImportItemResult.Skipped("相同文件 URI 不能保留两份")
+                    }
+                }
+            }
+        }
+
+        val book = Book(
+            title = candidate.displayName
+                .removeSuffixIgnoreCase(".txt")
+                .removeSuffixIgnoreCase(".epub")
+                .removeSuffixIgnoreCase(".chm"),
+            filePath = candidate.uri,
+            format = candidate.format,
+            groupId = resolvedGroupId,
+            fileName = candidate.displayName,
+            fileSize = candidate.size,
+            lastModified = candidate.lastModified,
+            sourceTreeUri = candidate.sourceTreeUri,
+            relativePath = candidate.relativeParentPath,
+            fileStatus = fileStatusFor(candidate.permissionStatus)
+        )
+        val insertedId = bookRepository.insert(book)
+        return if (insertedId != -1L) {
+            ImportItemResult.Inserted(insertedId)
+        } else {
+            ImportItemResult.Skipped("导入写入前再次查重，书籍已存在")
+        }
+    }
