@@ -60,7 +60,7 @@ class GroupBooksActivity : AppCompatActivity() {
 
         groupId = intent.getLongExtra(EXTRA_GROUP_ID, -1L)
         groupName = intent.getStringExtra(EXTRA_GROUP_NAME).orEmpty().ifBlank { "分类" }
-        if (groupId <= 0L) {
+        if (groupId < 0L) {
             Toast.makeText(this, "分类信息无效", Toast.LENGTH_SHORT).show()
             finish()
             return

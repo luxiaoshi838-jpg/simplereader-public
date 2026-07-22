@@ -1,10 +1,16 @@
     private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
-        startActivity(
-            Intent(this, GroupBooksActivity::class.java)
-                .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
-                .putExtra(
-                    GroupBooksActivity.EXTRA_GROUP_NAME,
-                    group.displayName.ifBlank { group.name }
-                )
-        )
+        val intent = Intent(this, GroupBooksActivity::class.java)
+            .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
+            .putExtra(
+                GroupBooksActivity.EXTRA_GROUP_NAME,
+                group.displayName.ifBlank { group.name }
+            )
+        runCatching { startActivity(intent) }
+            .onFailure { error ->
+                Toast.makeText(
+                    this,
+                    "打开分组失败：${error.message ?: error.javaClass.simpleName}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
     }

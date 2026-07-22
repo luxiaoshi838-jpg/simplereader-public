@@ -4,20 +4,30 @@
     android:layout_height="match_parent"
     android:background="#F5E9C8">
 
-    <TextView
-        android:id="@+id/contentView"
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/readerScrollView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clickable="true"
+        android:clipToPadding="false"
+        android:fillViewport="true"
         android:focusable="true"
-        android:lineSpacingMultiplier="1.75"
-        android:paddingStart="28dp"
-        android:paddingTop="26dp"
-        android:paddingEnd="28dp"
-        android:paddingBottom="118dp"
+        android:overScrollMode="ifContentScrolls"
         android:scrollbars="vertical"
-        android:textColor="#3B3428"
-        android:textSize="20sp" />
+        >
+
+        <TextView
+            android:id="@+id/contentView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingMultiplier="1.75"
+            android:paddingStart="28dp"
+            android:paddingTop="26dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="118dp"
+            android:textColor="#3B3428"
+            android:textSize="20sp" />
+    </androidx.core.widget.NestedScrollView>
 
     <LinearLayout
         android:id="@+id/readerProgressOverlay"

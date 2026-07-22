@@ -10,7 +10,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
-import android.text.method.ScrollingMovementMethod
 import android.widget.EditText
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
@@ -21,7 +20,9 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Bookmark
@@ -43,6 +44,7 @@ import org.json.JSONObject
 class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var contentView: TextView
+    private lateinit var readerScrollView: NestedScrollView
     private lateinit var fontSizeSeekBar: SeekBar
     private lateinit var readerProgressBar: SeekBar
     private lateinit var readerProgressLabel: TextView
@@ -82,6 +84,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
+        readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressBar = findViewById(R.id.readerProgressBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
@@ -90,17 +93,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         loadReaderPrefs()
         applyReaderPalette(currentBackgroundColor, currentTextColor)
         gestureDetector = GestureDetector(this, this)
-        contentView.setOnTouchListener { _, event ->
+        readerScrollView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            pageTurnMode != TURN_MODE_VERTICAL || readerControls.visibility == View.VISIBLE
+            pageTurnMode != TURN_MODE_VERTICAL
         }
-        contentView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             updateVerticalScrollProgress(scrollY)
         }
 
         bookId = intent.getLongExtra("bookId", 0L)
         setupUI()
-        loadBook()
+        val diagnosticText = intent.getStringExtra("readerDiagnosticText")
+        if (diagnosticText != null) {
+            val parsed = TxtParser.readText(
+                java.io.ByteArrayInputStream(diagnosticText.toByteArray(Charsets.UTF_8)),
+                Charsets.UTF_8.name()
+            )
+            currentContent = parsed.text
+            currentPosition = 0
+            txtStreamingMode = false
+            progressLoaded = true
+            contentLoaded = true
+            openSucceeded = true
+            displayContent()
+        } else {
+            loadBook()
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -141,21 +159,97 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun loadBook() {
         lifecycleScope.launch {
-            book = withContext(Dispatchers.IO) {
-                database.bookDao().getBook(bookId)
-            }
-            val selectedBook = book ?: return@launch showError("书籍记录不存在")
-            title = selectedBook.title
-            supportActionBar?.title = selectedBook.title
-            val documentFile = DocumentFile.fromSingleUri(this@ReaderActivity, Uri.parse(selectedBook.filePath))
-            if (documentFile == null || !documentFile.exists()) {
-                withContext(Dispatchers.IO) {
-                    database.bookDao().updateFileStatus(bookId, "MISSING")
+            try {
+                val selectedBook = withContext(Dispatchers.IO) {
+                    database.bookDao().getBook(bookId)
+                } ?: run {
+                    showError("书籍记录不存在")
+                    return@launch
                 }
-                showError("文件失效或权限已丢失")
-                return@launch
+
+                book = selectedBook
+                title = selectedBook.title
+                supportActionBar?.title = selectedBook.title
+
+                val documentFile = withContext(Dispatchers.IO) {
+                    resolveReadableDocument(selectedBook)
+                }
+                if (documentFile == null) {
+                    markBookUnavailableSafely("PERMISSION_LOST")
+                    showError("无法访问原书籍文件。请重新导入该书，或重新选择原文件夹以恢复访问权限。")
+                    return@launch
+                }
+
+                loadBookContent(documentFile, selectedBook.format)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (security: SecurityException) {
+                markBookUnavailableSafely("PERMISSION_LOST")
+                showError("书籍文件访问权限已失效。请重新导入该书，或重新选择原文件夹。")
+            } catch (error: Exception) {
+                markBookUnavailableSafely("OPEN_FAILED")
+                showError("打开书籍失败：${error.message ?: "未知错误"}")
+            } catch (linkage: LinkageError) {
+                markBookUnavailableSafely("OPEN_FAILED")
+                showError("阅读组件加载失败，请安装修复版本后重试。")
             }
-            loadBookContent(documentFile, selectedBook.format)
+        }
+    }
+
+    private fun resolveReadableDocument(selectedBook: Book): DocumentFile? {
+        val directUri = runCatching { Uri.parse(selectedBook.filePath) }.getOrNull()
+        val direct = directUri?.let { uri ->
+            runCatching { DocumentFile.fromSingleUri(this, uri) }.getOrNull()
+        }
+        if (direct != null && runCatching { direct.exists() && direct.isFile }.getOrDefault(false)) {
+            return direct
+        }
+
+        val treeUriText = selectedBook.sourceTreeUri?.takeIf { it.isNotBlank() } ?: return null
+        val treeRoot = runCatching {
+            DocumentFile.fromTreeUri(this, Uri.parse(treeUriText))
+        }.getOrNull() ?: return null
+        if (!runCatching { treeRoot.exists() && treeRoot.isDirectory }.getOrDefault(false)) {
+            return null
+        }
+
+        var parent = treeRoot
+        val rootName = runCatching { treeRoot.name }.getOrNull()
+        val pathSegments = selectedBook.relativePath
+            .orEmpty()
+            .replace('\\', '/')
+            .trim('/')
+            .split('/')
+            .filter { it.isNotBlank() }
+            .let { segments ->
+                if (rootName != null && segments.firstOrNull().equals(rootName, ignoreCase = true)) {
+                    segments.drop(1)
+                } else {
+                    segments
+                }
+            }
+
+        for (segment in pathSegments) {
+            parent = runCatching { parent.findFile(segment) }.getOrNull() ?: return null
+            if (!runCatching { parent.exists() && parent.isDirectory }.getOrDefault(false)) {
+                return null
+            }
+        }
+
+        val fileName = selectedBook.fileName.ifBlank {
+            directUri?.lastPathSegment?.substringAfterLast('/') ?: selectedBook.title
+        }
+        val recovered = runCatching { parent.findFile(fileName) }.getOrNull() ?: return null
+        return recovered.takeIf {
+            runCatching { it.exists() && it.isFile }.getOrDefault(false)
+        }
+    }
+
+    private suspend fun markBookUnavailableSafely(status: String) {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                database.bookDao().updateFileStatus(bookId, status)
+            }
         }
     }
 
@@ -208,6 +302,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                     epubChapterStartPositions = chapterStartPositions(chapters)
                                 )
                             }
+                            "CHM" -> LoadedContent(
+                                text = readChmTextIsolated(input)
+                            )
                             else -> LoadedContent("")
                         }
                     } ?: LoadedContent("")
@@ -248,9 +345,29 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         scanStreamingTxtChapters(documentFile)
                     }
                 }
-            } catch (e: Exception) {
-                showError("打开书籍失败：${e.message ?: "未知错误"}")
+            } catch (e: Throwable) {
+                showError("打开书籍失败：${e.message ?: e.javaClass.simpleName}")
             }
+        }
+    }
+
+    private fun readChmTextIsolated(input: java.io.InputStream): String {
+        return try {
+            val parserClass = Class.forName("com.simplereader.app.parser.ChmParser")
+            val parserInstance = parserClass.getField("INSTANCE").get(null)
+            val method = parserClass.getMethod("readText", java.io.InputStream::class.java)
+            method.invoke(parserInstance, input) as? String
+                ?: error("CHM 解析器未返回文本")
+        } catch (error: Throwable) {
+            val cause = if (error is java.lang.reflect.InvocationTargetException) {
+                error.targetException ?: error
+            } else {
+                error
+            }
+            throw IllegalStateException(
+                "CHM 解析组件不可用：${cause.message ?: cause.javaClass.simpleName}",
+                cause
+            )
         }
     }
 
@@ -294,10 +411,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun displayContent() {
+        val continuous = pageTurnMode == TURN_MODE_VERTICAL
         if (txtStreamingMode) {
             contentView.text = currentContent
             contentView.textSize = readerTextSize
             configureVerticalScrollIfNeeded()
+            if (continuous) {
+                readerScrollView.post {
+                    val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+                    val windowBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+                    val fraction = ((currentPosition.toLong() - txtCurrentPageStartByte).toDouble() / windowBytes)
+                        .coerceIn(0.0, 1.0)
+                    readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
+                }
+            } else {
+                readerScrollView.scrollTo(0, 0)
+            }
             val progress = if (txtTotalBytes > 0L) {
                 ((currentPosition.toFloat() / txtTotalBytes) * 1000).toInt()
             } else {
@@ -306,26 +435,28 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             updateProgressViews(progress.coerceIn(0, 1000))
             return
         }
-        if (pageTurnMode == TURN_MODE_VERTICAL) {
+
+        if (continuous) {
             contentView.text = currentContent
-            contentView.scrollTo(0, 0)
             contentView.post {
-                val maxScroll = (contentView.layout?.height ?: 0) - contentView.height
+                val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
                 if (maxScroll > 0 && currentContent.isNotEmpty()) {
-                    val progress = currentPosition.toFloat() / currentContent.length
-                    contentView.scrollTo(0, (maxScroll * progress).toInt().coerceIn(0, maxScroll))
+                    val fraction = (currentPosition.toFloat() / currentContent.length).coerceIn(0f, 1f)
+                    readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
                 }
             }
         } else {
             val endPosition = (currentPosition + pageSize).coerceAtMost(currentContent.length)
-            contentView.text = currentContent.substring(currentPosition, endPosition)
-            contentView.scrollTo(0, 0)
+            val safeStart = currentPosition.coerceIn(0, endPosition)
+            contentView.text = currentContent.substring(safeStart, endPosition)
+            readerScrollView.scrollTo(0, 0)
         }
         contentView.textSize = readerTextSize
         configureVerticalScrollIfNeeded()
         if (currentContent.isNotEmpty()) {
-            updateProgressViews(((currentPosition.toFloat() / currentContent.length) * 1000).toInt()
-                .coerceIn(0, 1000))
+            updateProgressViews(
+                ((currentPosition.toFloat() / currentContent.length) * 1000).toInt().coerceIn(0, 1000)
+            )
         }
     }
 
@@ -336,18 +467,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun configureVerticalScrollIfNeeded() {
-        if (pageTurnMode == TURN_MODE_VERTICAL) {
-            contentView.movementMethod = ScrollingMovementMethod.getInstance()
-            contentView.isVerticalScrollBarEnabled = true
+        val continuous = pageTurnMode == TURN_MODE_VERTICAL
+        contentView.movementMethod = null
+        contentView.isVerticalScrollBarEnabled = false
+        readerScrollView.isVerticalScrollBarEnabled = continuous
+        readerScrollView.isScrollbarFadingEnabled = false
+        readerScrollView.isSmoothScrollingEnabled = true
+        readerScrollView.overScrollMode = if (continuous) {
+            View.OVER_SCROLL_IF_CONTENT_SCROLLS
         } else {
-            contentView.movementMethod = null
-            contentView.isVerticalScrollBarEnabled = false
+            View.OVER_SCROLL_NEVER
         }
     }
 
     private fun updateVerticalScrollProgress(scrollY: Int) {
         if (pageTurnMode != TURN_MODE_VERTICAL || !openSucceeded || currentContent.isBlank()) return
-        val maxScroll = ((contentView.layout?.height ?: 0) - contentView.height).coerceAtLeast(0)
+        val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
         if (maxScroll <= 0) return
         val scrollProgress = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
         currentPosition = if (txtStreamingMode) {
@@ -426,37 +561,221 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         val input = EditText(this).apply {
-            hint = "搜索书内文字"
+            hint = "输入要查找的文字"
+            setSingleLine(true)
         }
         AlertDialog.Builder(this)
             .setTitle("搜索书内内容")
             .setView(input)
             .setNegativeButton("取消", null)
-            .setPositiveButton("定位") { _, _ ->
-                val query = input.text.toString()
-                if (query.isBlank()) return@setPositiveButton
-                if (txtStreamingMode) {
-                    searchStreamingTxt(query)
-                    return@setPositiveButton
-                }
-                val start = (currentPosition + 1).coerceAtMost(currentContent.length)
-                val forwardIndex = currentContent.indexOf(query, startIndex = start, ignoreCase = true)
-                val wrappedIndex = if (forwardIndex >= 0) {
-                    forwardIndex
+            .setPositiveButton("显示全部结果") { _, _ ->
+                val query = input.text.toString().trim()
+                if (query.isBlank()) {
+                    Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
                 } else {
-                    currentContent.indexOf(query, startIndex = 0, ignoreCase = true)
-                }
-                if (wrappedIndex >= 0) {
-                    currentPosition = wrappedIndex
-                    displayContent()
-                    markProgressDirty()
-                    scheduleProgressSave()
-                    readerControls.visibility = View.GONE
-                } else {
-                    Toast.makeText(this, "没有找到：$query", Toast.LENGTH_SHORT).show()
+                    showContentSearchResults(query)
                 }
             }
             .show()
+    }
+
+    private fun showContentSearchResults(query: String) {
+        val density = resources.displayMetrics.density
+        fun localDp(value: Int) = (value * density + 0.5f).toInt()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(localDp(8), localDp(4), localDp(8), localDp(4))
+        }
+        val statusView = TextView(this).apply {
+            text = "正在搜索…"
+            textSize = 14f
+            setTextColor(Color.rgb(110, 100, 84))
+            setPadding(localDp(12), localDp(8), localDp(12), localDp(8))
+        }
+        val layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+        val recyclerView = androidx.recyclerview.widget.RecyclerView(this).apply {
+            this.layoutManager = layoutManager
+            itemAnimator = null
+            isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+        container.addView(statusView)
+        container.addView(
+            recyclerView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.68f).toInt()
+            )
+        )
+
+        var dialog: AlertDialog? = null
+        var loading = false
+        var endReached = false
+        var nextPosition = 0L
+        var loadJob: Job? = null
+
+        val adapter = ReaderSearchResultAdapter { hit ->
+            dialog?.dismiss()
+            if (txtStreamingMode) {
+                showStreamingTxtPage(hit.position, saveImmediately = true)
+            } else {
+                currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
+                displayContent()
+                markProgressDirty()
+                saveProgressNow()
+                readerControls.visibility = View.GONE
+            }
+        }
+        recyclerView.adapter = adapter
+
+        fun updateStatus() {
+            statusView.text = when {
+                adapter.currentList.isEmpty() && endReached -> "没有找到“$query”"
+                endReached -> "共 ${adapter.itemCount} 条结果"
+                loading -> "正在加载更多结果…"
+                else -> "已加载 ${adapter.itemCount} 条，继续下拉加载"
+            }
+        }
+
+        fun loadNextPage() {
+            if (loading || endReached) return
+            loading = true
+            updateStatus()
+            loadJob = lifecycleScope.launch {
+                try {
+                    val page = withContext(Dispatchers.IO) {
+                        if (txtStreamingMode) {
+                            val selectedBook = book
+                            val charsetName = txtCharsetName
+                                ?: selectedBook?.txtCharset
+                                ?: Charsets.UTF_8.name()
+                            val parsed = selectedBook?.let { activeBook ->
+                                contentResolver.openInputStream(Uri.parse(activeBook.filePath))?.let { stream ->
+                                    TxtParser.findTextPage(
+                                        inputStream = stream,
+                                        charsetName = charsetName,
+                                        query = query,
+                                        startByte = nextPosition,
+                                        pageSize = 40
+                                    )
+                                }
+                            }
+                            if (parsed == null) {
+                                ReaderSearchPage(emptyList(), nextPosition, true)
+                            } else {
+                                ReaderSearchPage(
+                                    hits = parsed.hits.map { hit ->
+                                        val percent = if (txtTotalBytes > 0L) {
+                                            ((hit.byteOffset.toDouble() / txtTotalBytes) * 100).toInt()
+                                                .coerceIn(0, 100)
+                                        } else 0
+                                        ReaderSearchHit(
+                                            stableKey = "byte:${hit.byteOffset}",
+                                            position = hit.byteOffset,
+                                            positionLabel = "约 $percent% · 字节 ${hit.byteOffset}",
+                                            preview = hit.preview
+                                        )
+                                    },
+                                    nextPosition = parsed.nextByte,
+                                    endReached = parsed.endReached
+                                )
+                            }
+                        } else {
+                            findInMemorySearchPage(query, nextPosition.toInt(), 40)
+                        }
+                    }
+
+                    val merged = (adapter.currentList + page.hits)
+                        .distinctBy { it.stableKey }
+                    adapter.submitList(merged)
+                    nextPosition = page.nextPosition
+                    endReached = page.endReached
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    endReached = true
+                    Toast.makeText(
+                        this@ReaderActivity,
+                        "搜索失败：${error.message ?: error.javaClass.simpleName}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } finally {
+                    loading = false
+                    updateStatus()
+                    recyclerView.post {
+                        if (!endReached && !recyclerView.canScrollVertically(1)) {
+                            loadNextPage()
+                        }
+                    }
+                }
+            }
+        }
+
+        recyclerView.addOnScrollListener(object : androidx.recyclerview.widget.RecyclerView.OnScrollListener() {
+            override fun onScrolled(view: androidx.recyclerview.widget.RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(view, dx, dy)
+                if (dy < 0 || loading || endReached) return
+                val lastVisible = layoutManager.findLastVisibleItemPosition()
+                if (lastVisible >= adapter.itemCount - 6) {
+                    loadNextPage()
+                }
+            }
+        })
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("“$query”的搜索结果")
+            .setView(container)
+            .setNegativeButton("关闭", null)
+            .create()
+        dialog?.setOnDismissListener { loadJob?.cancel() }
+        dialog?.show()
+        loadNextPage()
+    }
+
+    private fun findInMemorySearchPage(
+        query: String,
+        startIndex: Int,
+        pageSize: Int
+    ): ReaderSearchPage {
+        if (query.isBlank() || currentContent.isEmpty()) {
+            return ReaderSearchPage(emptyList(), startIndex.toLong(), true)
+        }
+        val hits = mutableListOf<ReaderSearchHit>()
+        var cursor = startIndex.coerceIn(0, currentContent.length)
+        var endReached = false
+        while (hits.size < pageSize) {
+            val index = currentContent.indexOf(query, startIndex = cursor, ignoreCase = true)
+            if (index < 0) {
+                endReached = true
+                break
+            }
+            val previewStart = (index - 45).coerceAtLeast(0)
+            val previewEnd = (index + query.length + 90).coerceAtMost(currentContent.length)
+            val preview = currentContent.substring(previewStart, previewEnd)
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            val percent = if (currentContent.isNotEmpty()) {
+                ((index.toDouble() / currentContent.length) * 100).toInt().coerceIn(0, 100)
+            } else 0
+            hits += ReaderSearchHit(
+                stableKey = "char:$index",
+                position = index.toLong(),
+                positionLabel = "约 $percent% · 位置 $index",
+                preview = preview.ifBlank { "位置 $index" }
+            )
+            cursor = (index + query.length.coerceAtLeast(1)).coerceAtMost(currentContent.length)
+            if (cursor >= currentContent.length) {
+                endReached = true
+                break
+            }
+        }
+        return ReaderSearchPage(
+            hits = hits,
+            nextPosition = cursor.toLong(),
+            endReached = endReached
+        )
     }
 
     private fun jumpChapter(direction: Int) {
@@ -683,26 +1002,61 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun addBookmark() {
-        if (!openSucceeded || currentContent.isBlank()) {
+        if (!openSucceeded || currentContent.isBlank() || bookId <= 0L) {
             Toast.makeText(this, "当前没有可添加书签的内容", Toast.LENGTH_SHORT).show()
             return
         }
-        val endPosition = (currentPosition + 80).coerceAtMost(currentContent.length)
-        val preview = currentContent.substring(currentPosition, endPosition)
+
+        val positionToSave = currentPosition.coerceAtLeast(0)
+        val preview = bookmarkPreviewAt(positionToSave)
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    database.withTransaction {
+                        check(database.bookDao().getBook(bookId) != null) { "书籍记录不存在" }
+                        database.bookmarkDao().insert(
+                            Bookmark(
+                                bookId = bookId,
+                                position = positionToSave.toString(),
+                                content = preview
+                            )
+                        )
+                    }
+                }
+                Toast.makeText(this@ReaderActivity, "已添加书签", Toast.LENGTH_SHORT).show()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Toast.makeText(
+                    this@ReaderActivity,
+                    "添加书签失败：${error.message ?: error.javaClass.simpleName}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun bookmarkPreviewAt(globalPosition: Int): String {
+        if (currentContent.isEmpty()) return "位置 $globalPosition"
+        val localStart = if (txtStreamingMode) {
+            val windowBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+            val fraction = ((globalPosition.toLong() - txtCurrentPageStartByte).toDouble() / windowBytes)
+                .coerceIn(0.0, 1.0)
+            (currentContent.length * fraction).toInt()
+        } else {
+            globalPosition
+        }.coerceIn(0, currentContent.length)
+
+        val readableStart = if (localStart >= currentContent.length && currentContent.isNotEmpty()) {
+            (currentContent.length - 1).coerceAtLeast(0)
+        } else {
+            localStart
+        }
+        val end = (readableStart + 120).coerceAtMost(currentContent.length)
+        return currentContent.substring(readableStart, end)
             .replace(Regex("\\s+"), " ")
             .trim()
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                database.bookmarkDao().insert(
-                    Bookmark(
-                        bookId = bookId,
-                        position = currentPosition.toString(),
-                        content = preview
-                    )
-                )
-            }
-            Toast.makeText(this@ReaderActivity, "已添加书签", Toast.LENGTH_SHORT).show()
-        }
+            .ifBlank { "位置 $globalPosition" }
     }
 
     private fun showBookmarks() {
@@ -825,21 +1179,28 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun scrollContinuousPage(direction: Int) {
-        val maxScroll = ((contentView.layout?.height ?: 0) - contentView.height).coerceAtLeast(0)
-        val target = (contentView.scrollY + direction * (contentView.height * 0.85f).toInt())
-            .coerceIn(0, maxScroll)
-        if (target == contentView.scrollY) {
-            if (txtStreamingMode && direction > 0 && txtCurrentPageEndByte < txtTotalBytes) {
-                showStreamingTxtPage(txtCurrentPageEndByte, direction = 1)
-            } else if (txtStreamingMode && direction < 0 && txtCurrentPageStartByte > 0L) {
-                showStreamingTxtPage((txtCurrentPageStartByte - TXT_STREAM_WINDOW_BYTES).coerceAtLeast(0L), direction = -1)
-            } else {
-                Toast.makeText(this, if (direction > 0) "已经到末尾" else "已经到开头", Toast.LENGTH_SHORT).show()
-            }
+        val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+        val distance = (readerScrollView.height * 0.78f).toInt().coerceAtLeast(1)
+        val target = (readerScrollView.scrollY + direction * distance).coerceIn(0, maxScroll)
+        if (target != readerScrollView.scrollY) {
+            readerScrollView.smoothScrollTo(0, target)
             return
         }
-        contentView.scrollTo(0, target)
-        updateVerticalScrollProgress(target)
+
+        if (txtStreamingMode && direction > 0 && txtCurrentPageEndByte < txtTotalBytes) {
+            showStreamingTxtPage(txtCurrentPageEndByte, direction = 1)
+        } else if (txtStreamingMode && direction < 0 && txtCurrentPageStartByte > 0L) {
+            showStreamingTxtPage(
+                (txtCurrentPageStartByte - TXT_STREAM_WINDOW_BYTES).coerceAtLeast(0L),
+                direction = -1
+            )
+        } else {
+            Toast.makeText(
+                this,
+                if (direction > 0) "已经到末尾" else "已经到开头",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     private fun setupReaderSettingsPanel() {
@@ -896,7 +1257,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         pageTurnMode = mode
         saveReaderPrefs()
         updateSettingsLabels()
-        Toast.makeText(this, "翻页模式：${turnModeLabel(mode)}", Toast.LENGTH_SHORT).show()
+        displayContent()
+        val label = if (mode == TURN_MODE_VERTICAL) "连续滚动" else turnModeLabel(mode)
+        Toast.makeText(this, "阅读模式：$label", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateSettingsLabels() {
@@ -1264,7 +1627,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onDown(e: MotionEvent): Boolean = true
     override fun onShowPress(e: MotionEvent) {}
     override fun onSingleTapUp(e: MotionEvent): Boolean {
-        val width = contentView.width.takeIf { it > 0 } ?: return false
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            toggleReaderControls()
+            return true
+        }
+        val width = readerScrollView.width.takeIf { it > 0 } ?: return false
         val leftBoundary = width / 3
         val rightBoundary = width * 2 / 3
         if (e.x < leftBoundary) {
@@ -1292,6 +1659,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         velocityX: Float,
         velocityY: Float
     ): Boolean {
+        if (pageTurnMode == TURN_MODE_VERTICAL) return false
         val start = e1 ?: return false
         val delta = e2.x - start.x
         val threshold = 100

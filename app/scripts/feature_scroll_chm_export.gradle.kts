@@ -78,7 +78,10 @@ tasks.named("applyRuntimeUiPatches").configure {
         if (mainSource.contains(oldImportOptions)) {
             mainSource = mainSource.replace(oldImportOptions, newImportOptions)
         } else {
-            check(mainSource.contains("导入过往数据")) { "无法扩展导入入口" }
+            check(
+                mainSource.contains("导入过往数据") ||
+                    mainSource.contains("导入备份并自动关联")
+            ) { "无法扩展导入入口" }
         }
 
         mainSource = mainSource.replace(
@@ -156,13 +159,15 @@ tasks.named("applyRuntimeUiPatches").configure {
             ""
         )
 
-        val chmMarker = "                            else -> LoadedContent(\"\")"
-        check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
-        val chmBranch = """                            "CHM" -> LoadedContent(
-                                text = readChmTextIsolated(input)
-                            )
+        val chmMarker = "        else -> LoadedContent(\"\")"
+val chmBranch = """        "CHM" -> LoadedContent(
+        text = readChmTextIsolated(input)
+    )
 """
-        readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+if (!readerSource.contains("\"CHM\" -> LoadedContent(")) {
+    check(readerSource.contains(chmMarker)) { "无法接入隔离式 CHM 阅读解析器" }
+    readerSource = readerSource.replace(chmMarker, chmBranch + chmMarker)
+}
 
         if (!readerSource.contains("private fun readChmTextIsolated(")) {
             val setupMarker = "    private fun setupUI() {"
@@ -217,8 +222,11 @@ tasks.named("applyRuntimeUiPatches").configure {
         } else {
             loadBook()
         }"""
-        check(readerSource.contains(normalStartup)) { "无法接入阅读页真实启动测试入口" }
-        readerSource = readerSource.replace(normalStartup, testedStartup)
+        if (readerSource.contains(normalStartup)) {
+            readerSource = readerSource.replace(normalStartup, testedStartup)
+        } else {
+            check(readerSource.contains(testedStartup)) { "无法接入阅读页真实启动测试入口" }
+        }
 
         readerFile.writeText(readerSource)
     }
