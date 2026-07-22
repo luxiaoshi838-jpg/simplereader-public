@@ -2,19 +2,6 @@ name: Build 简阅 Permanent Signing v2
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "app/**"
-      - "gradle/**"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradlew"
-      - "gradlew.bat"
-      - ".github/workflows/android-release-v2.yml"
-      - "SIGNING_POLICY.md"
 
 permissions:
   contents: read
