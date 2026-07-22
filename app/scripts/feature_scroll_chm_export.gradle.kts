@@ -78,7 +78,10 @@ tasks.named("applyRuntimeUiPatches").configure {
         if (mainSource.contains(oldImportOptions)) {
             mainSource = mainSource.replace(oldImportOptions, newImportOptions)
         } else {
-            check(mainSource.contains("导入过往数据")) { "无法扩展导入入口" }
+            check(
+                mainSource.contains("导入过往数据") ||
+                    mainSource.contains("导入备份并自动关联")
+            ) { "无法扩展导入入口" }
         }
 
         mainSource = mainSource.replace(
@@ -217,8 +220,11 @@ tasks.named("applyRuntimeUiPatches").configure {
         } else {
             loadBook()
         }"""
-        check(readerSource.contains(normalStartup)) { "无法接入阅读页真实启动测试入口" }
-        readerSource = readerSource.replace(normalStartup, testedStartup)
+        if (readerSource.contains(normalStartup)) {
+            readerSource = readerSource.replace(normalStartup, testedStartup)
+        } else {
+            check(readerSource.contains(testedStartup)) { "无法接入阅读页真实启动测试入口" }
+        }
 
         readerFile.writeText(readerSource)
     }
