@@ -25,10 +25,27 @@ jobs:
           echo 'e1299fd6fcf4da527dd53735b56127e8ea922a321128123b9c32d619bba1d835  uber-apk-signer-1.3.0.jar' | sha256sum --check
           java -jar uber-apk-signer-1.3.0.jar --version
 
-      - name: Upload verified signer
+      - name: Export Android SDK parser tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$build_tools/aapt2"
+          test -x "$build_tools/zipalign"
+          mkdir -p android-build-tools
+          cp "$build_tools/aapt2" android-build-tools/
+          cp "$build_tools/zipalign" android-build-tools/
+          cp "$build_tools/apksigner" android-build-tools/
+          cp "$build_tools/lib/apksigner.jar" android-build-tools/
+          chmod +x android-build-tools/aapt2 android-build-tools/zipalign android-build-tools/apksigner
+          "$build_tools/aapt2" version
+
+      - name: Upload verified signer and parser tools
         uses: actions/upload-artifact@v4
         with:
           name: verified-android-apk-signer
-          path: uber-apk-signer-1.3.0.jar
+          path: |
+            uber-apk-signer-1.3.0.jar
+            android-build-tools/
           if-no-files-found: error
           retention-days: 1
