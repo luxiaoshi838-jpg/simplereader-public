@@ -1,0 +1,169 @@
+name: Build 简阅 Permanent Signing v2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/android-release-v2.yml"
+      - "SIGNING_POLICY.md"
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_SIGNING_SHA256: "6c2baa3cc6f51a3d7ec608d9350fe8f6610b66f54dc46bd6da8e1af959b8cbe5"
+  SIGNING_ALIAS: "simplereader-v2"
+  APK_SIZE_WARNING_BYTES: "16777216"
+  MAX_APK_BYTES: "52428800"
+
+concurrency:
+  group: permanent-signing-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build and verify migration release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Restore permanent v2 signing key from secrets
+        shell: bash
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64"
+          test -n "$SIGNING_PASSWORD"
+          keystore="$RUNNER_TEMP/SimpleReader_Permanent_v2.p12"
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+
+          actual="$(keytool -list -v \
+            -keystore "$keystore" \
+            -storepass "$SIGNING_PASSWORD" \
+            -alias "$SIGNING_ALIAS" 2>/dev/null \
+            | sed -n 's/.*SHA256: //p' \
+            | head -n 1 \
+            | tr -d ':\r\n ' \
+            | tr 'A-F' 'a-f')"
+          test "$actual" = "$EXPECTED_SIGNING_SHA256"
+
+          {
+            echo "SIMPLEREADER_KEYSTORE_PATH=$keystore"
+            echo "SIMPLEREADER_KEYSTORE_PASSWORD=$SIGNING_PASSWORD"
+            echo "SIMPLEREADER_KEY_ALIAS=$SIGNING_ALIAS"
+            echo "SIMPLEREADER_KEY_PASSWORD=$SIGNING_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "SIGNING_IDENTITY=简阅 Permanent Signing v2"
+            echo "SIGNING_SHA256=$actual"
+            echo "SIGNING_SOURCE=GitHub Actions encrypted secrets"
+            echo "KEYSTORE_COMMITTED=false"
+            echo "OLD_BACKUP_COMPATIBILITY=SimpleReaderBackup schemaVersion 1"
+          } | tee signing-identity.log
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Generate migration-safe version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_code=$((2101000000 + 10#$GITHUB_RUN_NUMBER))
+          version_name="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          apk_name="SimpleReader_${version_name}_migration_v2.apk"
+          apk_path="app/build/outputs/apk/release/${apk_name}"
+          artifact_name="SimpleReader_${version_name}_migration_v2"
+          echo "SIMPLE_READER_VERSION_CODE=${version_code}" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
+          echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
+          echo "APK_PATH=${apk_path}" >> "$GITHUB_ENV"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run release unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew clean testReleaseUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+
+      - name: Verify package, fixed certificate and signature schemes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp app/build/outputs/apk/release/app-release.apk "$APK_PATH"
+          test -s "$APK_PATH"
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+
+          "${build_tools}/zipalign" -c -v 4 "$APK_PATH" | tee zipalign-check.txt
+          "${build_tools}/apksigner" verify --verbose --print-certs "$APK_PATH" | tee apk-certificate.txt
+          grep -Fq "Verified using v1 scheme (JAR signing): true" apk-certificate.txt
+          grep -Fq "Verified using v2 scheme (APK Signature Scheme v2): true" apk-certificate.txt
+
+          actual="$(sed -n 's/.*certificate SHA-256 digest: //p' apk-certificate.txt \
+            | head -n 1 \
+            | tr -d ':\r\n ' \
+            | tr 'A-F' 'a-f')"
+          test "$actual" = "$EXPECTED_SIGNING_SHA256"
+
+          "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
+          grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
+          grep -Fq "sdkVersion:'26'" apk-package-info.txt
+
+          apk_bytes="$(stat -c %s "$APK_PATH")"
+          test "$apk_bytes" -le "$MAX_APK_BYTES"
+          if [ "$apk_bytes" -gt "$APK_SIZE_WARNING_BYTES" ]; then
+            echo "::warning::APK size is above the normal review threshold"
+          fi
+
+          {
+            echo "APK_SIGNING_SHA256=$actual"
+            echo "APK_SIGNATURE_V1=true"
+            echo "APK_SIGNATURE_V2=true"
+            echo "APK_PACKAGE_NAME=com.simplereader.app"
+            echo "APK_MIN_SDK=26"
+            echo "APK_SIZE_BYTES=$apk_bytes"
+            echo "OLD_BACKUP_SCHEMA_V1_SUPPORTED=true"
+            echo "RELINK_WORKFLOW_INCLUDED=true"
+          } | tee apk-verification.log
+          sha256sum "$APK_PATH" | tee "$APK_PATH.sha256"
+
+      - name: Upload verified migration APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.artifact_name }}
+          path: |
+            ${{ env.APK_PATH }}
+            ${{ env.APK_PATH }}.sha256
+            signing-identity.log
+            apk-verification.log
+            apk-certificate.txt
+            apk-package-info.txt
+            zipalign-check.txt
+            gradle-build.log
+          if-no-files-found: error
+          retention-days: 30

@@ -102,7 +102,7 @@ class GroupBooksAdapter(
 
         fun bind(value: ShelfBookItem) {
             boundItem = value
-            cover.text = "${value.title.take(12)}\n\n${value.format.uppercase()}"
+            cover.text = value.title.take(22)
             title.text = value.title
             val status = if (value.fileStatus == "AVAILABLE") "" else " · ${value.fileStatus}"
             progress.text = "已读 ${value.progressPercent()}%$status"

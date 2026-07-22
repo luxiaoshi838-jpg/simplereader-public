@@ -161,6 +161,17 @@ tasks.matching { it.name == "preBuild" }.configureEach {
     dependsOn(applyRuntimeUiPatches)
 }
 
+val permanentKeystorePath = System.getenv("SIMPLEREADER_KEYSTORE_PATH")
+val permanentKeystorePassword = System.getenv("SIMPLEREADER_KEYSTORE_PASSWORD")
+val permanentKeyAlias = System.getenv("SIMPLEREADER_KEY_ALIAS")
+val permanentKeyPassword = System.getenv("SIMPLEREADER_KEY_PASSWORD")
+val permanentSigningConfigured = listOf(
+    permanentKeystorePath,
+    permanentKeystorePassword,
+    permanentKeyAlias,
+    permanentKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.simplereader.app"
     compileSdk = 35
@@ -185,11 +196,15 @@ android {
     }
 
     signingConfigs {
-        getByName("debug") {
-            // Keep the permanent certificate, but emit both signature schemes.
-            // Some Xiaomi/Meizu/OEM installers fail their pre-parser on V2-only APKs.
-            enableV1Signing = true
-            enableV2Signing = true
+        if (permanentSigningConfigured) {
+            create("permanentV2") {
+                storeFile = file(requireNotNull(permanentKeystorePath))
+                storePassword = requireNotNull(permanentKeystorePassword)
+                keyAlias = requireNotNull(permanentKeyAlias)
+                keyPassword = requireNotNull(permanentKeyPassword)
+                enableV1Signing = true
+                enableV2Signing = true
+            }
         }
     }
 
@@ -203,7 +218,9 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            if (permanentSigningConfigured) {
+                signingConfig = signingConfigs.getByName("permanentV2")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

@@ -2,13 +2,17 @@
 
 SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、EPUB、CHM 等本地文件阅读场景。
 
-## 公开库说明
+## 当前开发基线
 
-这个仓库是公开源码与普通 CI 仓库，不保存、不恢复、不发布正式签名文件。
+本公开仓库是后续唯一开发仓库，保留当前有效代码，不复制原私有仓库的 Git 历史，也不提交任何签名私钥。
 
-公开库生成的 APK 只用于编译验证或本地调试，不能视为正式发布包，也不保证能够覆盖安装正式版。
+当前任务包括：
 
-正式 APK、覆盖安装签名和发布流程保留在私有发布仓库中。
+- 书架与分组封面不再显示 TXT、EPUB、CHM 格式标识；
+- 兼容旧版 `SimpleReaderBackup` schemaVersion 1；
+- 恢复书籍、分组、书签和阅读进度；
+- 换签重装后重新选择原书总文件夹，并安全重新关联文件；
+- 无法唯一匹配的同名文件会跳过，不会猜测绑定。
 
 ## 构建要求
 
@@ -16,25 +20,52 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 - Android SDK 35
 - Gradle Wrapper
 
-## 本地构建
+## 普通编译与预览
 
-Windows:
-
-```powershell
-.\gradlew.bat clean assembleDebug
-```
-
-Linux/macOS:
+Pull Request 和普通开发分支只运行无永久签名的编译、单元测试和 Debug APK 预览：
 
 ```bash
-./gradlew clean assembleDebug
+./gradlew clean testDebugUnitTest assembleDebug
 ```
 
-输出位置:
+输出位置：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Debug APK 只用于功能预览，不能覆盖正式 v2 版本。
+
+## 正式 v2 APK
+
+正式发布工作流只允许可信 `main` 分支或手动触发，并从 GitHub Actions Secrets 读取永久签名：
+
+```text
+SIMPLEREADER_SIGNING_KEY_BASE64
+SIMPLEREADER_SIGNING_PASSWORD
+```
+
+仓库不保存 keystore、密码或 Base64 私钥。工作流在上传 APK 前强制验证：
+
+- 包名 `com.simplereader.app`
+- minSdk 26
+- V1 和 V2 签名
+- 证书 SHA-256 `6c2baa3cc6f51a3d7ec608d9350fe8f6610b66f54dc46bd6da8e1af959b8cbe5`
+- zipalign
+- Release 单元测试
+
+## 从旧签名迁移
+
+v2 签名与旧版签名不同，第一次不能覆盖安装。固定迁移流程：
+
+1. 在旧版执行“数据导出”，保存 JSON；
+2. 确认备份文件可读取；
+3. 卸载旧版；
+4. 安装正式 v2 APK；
+5. 选择“导入过往数据”；
+6. 按提示重新选择原书总文件夹。
+
+旧版备份没有包含字号、背景色、翻页方式等 SharedPreferences，这些设置需要重新选择。
 
 ## 功能范围
 
@@ -47,14 +78,6 @@ app/build/outputs/apk/debug/app-debug.apk
 - 目录识别
 - 搜索定位
 - 阅读设置
+- 旧版数据备份恢复与原书重关联
 
-## 安全边界
-
-公开库 CI 不使用以下内容：
-
-- 永久签名 keystore
-- GitHub Actions Cache 中的正式签名文件
-- 正式发布证书
-- 可覆盖正式版的发布 APK
-
-如需正式发布，请在私有发布仓库中执行受控构建。
+详细签名规则见 [`SIGNING_POLICY.md`](SIGNING_POLICY.md)。

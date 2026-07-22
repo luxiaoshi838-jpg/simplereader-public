@@ -4,6 +4,12 @@ build/
 *.aar
 *.jks
 *.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*signing*.base64
+*signing*.txt
 local.properties
 .idea/
 *.iml
