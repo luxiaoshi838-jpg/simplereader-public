@@ -96,17 +96,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 2
 
-      - name: Remove one-time integration files
-        run: |
-          rm -f tools/integrate_stable_source.py
-          rm -f .github/workflows/export-transformed-source.yml
+      - name: Remove one-time integration script
+        run: rm -f tools/integrate_stable_source.py
 
-      - name: Commit integrated source
+      - name: Commit integrated application source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git restore --staged .github/workflows/android-pr-validation.yml || true
+          git restore .github/workflows/android-pr-validation.yml || true
           git add -A
           git commit -m "Stabilize groups and one-step backup relinking"
           git push origin HEAD:agent/complete-backup-group-fix
