@@ -18,7 +18,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar --exclude=.git --exclude='**/build' -czf simplereader-source.tar.gz .
+          tar --exclude=.git --exclude='*/build' --exclude='*/build/*' -czf "$RUNNER_TEMP/simplereader-source.tar.gz" .
+          cp "$RUNNER_TEMP/simplereader-source.tar.gz" simplereader-source.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: simplereader-source-snapshot
