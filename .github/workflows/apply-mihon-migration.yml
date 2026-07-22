@@ -82,6 +82,29 @@ jobs:
         run: |
           set -euo pipefail
           patch -p1 --forward < mihon.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/java/com/simplereader/app/data/backup/LocalLibraryScanner.kt')
+          source = path.read_text(encoding='utf-8')
+          old = '''        val title: String
+              get() = displayName
+                  .removeSuffixIgnoreCase(".txt")
+                  .removeSuffixIgnoreCase(".epub")
+                  .removeSuffixIgnoreCase(".chm")
+          '''
+          new = '''        val title: String
+              get() = displayName.substringBeforeLast('.', displayName)
+          '''
+          if old not in source:
+              raise SystemExit('LocalLibraryScanner title block not found')
+          source = source.replace(old, new)
+          source = source.replace(
+              '''\n    private fun String.removeSuffixIgnoreCase(suffix: String): String =
+                  if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this\n''',
+              '\n',
+          )
+          path.write_text(source, encoding='utf-8')
+          PY
           rm -rf tools/mihon_migration concatenated-patch.b64 chunk-diagnostics.txt mihon.patch mihon.patch.sha256
           chmod +x ./gradlew
 
