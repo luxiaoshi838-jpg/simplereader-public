@@ -41,35 +41,42 @@ jobs:
         if: steps.patch.outputs.present == 'true'
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Record remote chunk checksums
+        if: steps.patch.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c tools/mihon_migration/part* | tee chunk-diagnostics.txt
+          sha256sum tools/mihon_migration/part* | tee -a chunk-diagnostics.txt
+          cat tools/mihon_migration/part* > concatenated-patch.b64
+
+      - name: Upload chunk diagnostics
+        if: steps.patch.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihon-chunk-diagnostics-${{ github.run_number }}
+          path: |
+            chunk-diagnostics.txt
+            concatenated-patch.b64
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Reconstruct reviewed patch
         if: steps.patch.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          cat tools/mihon_migration/part* | base64 -d | gzip -d > mihon.patch
+          base64 -d concatenated-patch.b64 | gzip -d > mihon.patch
           sha256sum mihon.patch | tee mihon.patch.sha256
-          ls -l tools/mihon_migration/part* mihon.patch
+          echo 'ab35426777bb7d86fbe6f97bb05193387050078fe6660b99d8f97da732ba9397  mihon.patch' | sha256sum --check
 
-      - name: Upload reconstructed patch diagnostics
-        if: steps.patch.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: reconstructed-mihon-patch-${{ github.run_number }}
-          path: |
-            mihon.patch
-            mihon.patch.sha256
-            tools/mihon_migration/part*
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Verify and apply reviewed patch
+      - name: Apply reviewed patch
         if: steps.patch.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo 'ab35426777bb7d86fbe6f97bb05193387050078fe6660b99d8f97da732ba9397  mihon.patch' | sha256sum --check
           patch -p1 --forward < mihon.patch
-          rm -rf tools/mihon_migration mihon.patch mihon.patch.sha256
+          rm -rf tools/mihon_migration concatenated-patch.b64 chunk-diagnostics.txt mihon.patch mihon.patch.sha256
           chmod +x ./gradlew
 
       - name: Test and build direct source
