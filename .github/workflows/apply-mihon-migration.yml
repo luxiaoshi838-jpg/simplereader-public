@@ -1,0 +1,84 @@
+name: Apply reviewed Mihon migration
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/mihon-style-backup-local-library'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/mihon-style-backup-local-library
+          fetch-depth: 0
+
+      - name: Detect reviewed patch
+        id: patch
+        shell: bash
+        run: |
+          if compgen -G 'tools/mihon_migration/part*' > /dev/null; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.patch.outputs.present == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        if: steps.patch.outputs.present == 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify and apply reviewed patch
+        if: steps.patch.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tools/mihon_migration/part* | base64 -d | gzip -d > "$RUNNER_TEMP/mihon.patch"
+          echo 'ab35426777bb7d86fbe6f97bb05193387050078fe6660b99d8f97da732ba9397  '"$RUNNER_TEMP/mihon.patch" | sha256sum --check
+          patch -p1 --forward < "$RUNNER_TEMP/mihon.patch"
+          rm -rf tools/mihon_migration
+          chmod +x ./gradlew
+
+      - name: Test and build direct source
+        if: steps.patch.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SIMPLE_READER_VERSION_CODE=$((2026300000 + 10#$GITHUB_RUN_NUMBER))
+          export SIMPLE_READER_VERSION_NAME=2026.07.22.mihon.${GITHUB_RUN_NUMBER}
+          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Verify build does not rewrite business source
+        if: steps.patch.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- app/src/main app/build.gradle.kts settings.gradle.kts
+
+      - name: Commit verified direct source
+        if: steps.patch.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git restore --staged .github/workflows/apply-mihon-migration.yml || true
+          git restore .github/workflows/apply-mihon-migration.yml || true
+          git restore --staged .github/workflows/export-source-snapshot.yml || true
+          git restore .github/workflows/export-source-snapshot.yml || true
+          git commit -m 'Adopt Mihon backup and local library patterns'
+          git push origin HEAD:agent/mihon-style-backup-local-library
