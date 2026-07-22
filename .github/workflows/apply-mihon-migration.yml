@@ -41,13 +41,11 @@ jobs:
         if: steps.patch.outputs.present == 'true'
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Record remote chunk checksums
+      - name: Reconstruct reviewed patch
         if: steps.patch.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          wc -c tools/mihon_migration/part* | tee chunk-diagnostics.txt
-          sha256sum tools/mihon_migration/part* | tee -a chunk-diagnostics.txt
           {
             head -c 7000 tools/mihon_migration/part00
             cat tools/mihon_migration/part01 tools/mihon_migration/part02 \
@@ -55,25 +53,7 @@ jobs:
               tools/mihon_migration/part05 tools/mihon_migration/part06 \
               tools/mihon_migration/part07
           } > concatenated-patch.b64
-
-      - name: Upload chunk diagnostics
-        if: steps.patch.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mihon-chunk-diagnostics-${{ github.run_number }}
-          path: |
-            chunk-diagnostics.txt
-            concatenated-patch.b64
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Reconstruct reviewed patch
-        if: steps.patch.outputs.present == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
           base64 -d concatenated-patch.b64 | gzip -d > mihon.patch
-          sha256sum mihon.patch | tee mihon.patch.sha256
           echo 'ab35426777bb7d86fbe6f97bb05193387050078fe6660b99d8f97da732ba9397  mihon.patch' | sha256sum --check
 
       - name: Apply reviewed patch
@@ -84,28 +64,30 @@ jobs:
           patch -p1 --forward < mihon.patch
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path('app/src/main/java/com/simplereader/app/data/backup/LocalLibraryScanner.kt')
-          source = path.read_text(encoding='utf-8')
-          old = '''        val title: String
-              get() = displayName
-                  .removeSuffixIgnoreCase(".txt")
-                  .removeSuffixIgnoreCase(".epub")
-                  .removeSuffixIgnoreCase(".chm")
-          '''
-          new = '''        val title: String
-              get() = displayName.substringBeforeLast('.', displayName)
-          '''
-          if old not in source:
-              raise SystemExit('LocalLibraryScanner title block not found')
-          source = source.replace(old, new)
-          source = source.replace(
-              '''\n    private fun String.removeSuffixIgnoreCase(suffix: String): String =
-                  if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this\n''',
-              '\n',
+          lines = path.read_text(encoding='utf-8').splitlines()
+          txt_index = next(
+              (i for i, line in enumerate(lines) if '.removeSuffixIgnoreCase(".txt")' in line),
+              None,
           )
-          path.write_text(source, encoding='utf-8')
+          if txt_index is None or txt_index < 2:
+              raise SystemExit('LocalLibraryScanner title suffix chain not found')
+          if 'val title: String' not in lines[txt_index - 2] or 'get() = displayName' not in lines[txt_index - 1]:
+              raise SystemExit('Unexpected LocalLibraryScanner title block')
+          lines[txt_index - 2:txt_index + 3] = [
+              '        val title: String',
+              "            get() = displayName.substringBeforeLast('.', displayName)",
+          ]
+          extension_index = next(
+              (i for i, line in enumerate(lines) if 'private fun String.removeSuffixIgnoreCase' in line),
+              None,
+          )
+          if extension_index is not None:
+              del lines[extension_index:extension_index + 2]
+          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
-          rm -rf tools/mihon_migration concatenated-patch.b64 chunk-diagnostics.txt mihon.patch mihon.patch.sha256
+          rm -rf tools/mihon_migration concatenated-patch.b64 mihon.patch
           chmod +x ./gradlew
 
       - name: Test and build direct source
