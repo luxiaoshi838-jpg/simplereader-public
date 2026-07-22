@@ -56,7 +56,7 @@ jobs:
           base64 -d concatenated-patch.b64 | gzip -d > mihon.patch
           echo 'ab35426777bb7d86fbe6f97bb05193387050078fe6660b99d8f97da732ba9397  mihon.patch' | sha256sum --check
 
-      - name: Apply reviewed patch
+      - name: Apply and stage reviewed patch
         if: steps.patch.outputs.present == 'true'
         shell: bash
         run: |
@@ -89,6 +89,7 @@ jobs:
           PY
           rm -rf tools/mihon_migration concatenated-patch.b64 mihon.patch
           chmod +x ./gradlew
+          git add -A
 
       - name: Test and build direct source
         if: steps.patch.outputs.present == 'true'
@@ -111,7 +112,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 2
 
-      - name: Verify build does not rewrite business source
+      - name: Verify build adds no source rewrites
         if: steps.patch.outputs.present == 'true' && success()
         shell: bash
         run: |
@@ -125,10 +126,10 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
           git restore --staged .github/workflows/apply-mihon-migration.yml || true
           git restore .github/workflows/apply-mihon-migration.yml || true
           git restore --staged .github/workflows/export-source-snapshot.yml || true
           git restore .github/workflows/export-source-snapshot.yml || true
+          git add -A
           git commit -m 'Adopt Mihon backup and local library patterns'
           git push origin HEAD:agent/mihon-style-backup-local-library
