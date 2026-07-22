@@ -48,7 +48,13 @@ jobs:
           set -euo pipefail
           wc -c tools/mihon_migration/part* | tee chunk-diagnostics.txt
           sha256sum tools/mihon_migration/part* | tee -a chunk-diagnostics.txt
-          cat tools/mihon_migration/part* > concatenated-patch.b64
+          {
+            head -c 7000 tools/mihon_migration/part00
+            cat tools/mihon_migration/part01 tools/mihon_migration/part02 \
+              tools/mihon_migration/part03 tools/mihon_migration/part04 \
+              tools/mihon_migration/part05 tools/mihon_migration/part06 \
+              tools/mihon_migration/part07
+          } > concatenated-patch.b64
 
       - name: Upload chunk diagnostics
         if: steps.patch.outputs.present == 'true'
