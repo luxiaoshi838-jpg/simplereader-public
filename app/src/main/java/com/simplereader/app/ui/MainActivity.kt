@@ -367,12 +367,19 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             minimumWidth = 0
             layoutParams = GridLayout.LayoutParams().apply {
-                width = 0
+                width = shelfCardWidth()
                 height = GridLayout.LayoutParams.WRAP_CONTENT
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, 1f)
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1)
                 setMargins(dp(3), 0, dp(3), dp(18))
             }
         }
+    }
+
+    private fun shelfCardWidth(): Int {
+        val horizontalPadding = dp(16 * 2 + 14)
+        val itemMargins = dp(3 * 2 * 3)
+        return ((resources.displayMetrics.widthPixels - horizontalPadding - itemMargins) / 3)
+            .coerceAtLeast(dp(82))
     }
 
     private fun addEmptyText(message: String) {
@@ -812,10 +819,11 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "该分组暂无书籍", Toast.LENGTH_SHORT).show()
             return
         }
-        showingHistory = false
-        shelfSearchQuery = ""
-        selectedGroupId = group.id
-        updateUI()
+        startActivity(
+            Intent(this, GroupBooksActivity::class.java)
+                .putExtra(GroupBooksActivity.EXTRA_GROUP_ID, group.id)
+                .putExtra(GroupBooksActivity.EXTRA_GROUP_NAME, group.displayName.ifBlank { group.name })
+        )
     }
 
     private fun showBookActionsV2(book: ShelfBookItem) {

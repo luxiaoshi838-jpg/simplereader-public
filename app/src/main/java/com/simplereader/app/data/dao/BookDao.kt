@@ -53,6 +53,32 @@ interface BookDao {
     )
     fun getShelfBooks(): Flow<List<ShelfBookItem>>
 
+    @Query(
+        """
+        SELECT
+            books.id AS id,
+            books.title AS title,
+            books.author AS author,
+            books.filePath AS filePath,
+            books.format AS format,
+            books.groupId AS groupId,
+            books.lastReadTime AS lastReadTime,
+            books.addTime AS addTime,
+            books.fileName AS fileName,
+            books.fileStatus AS fileStatus,
+            read_progress.position AS progressPosition,
+            read_progress.locatorType AS locatorType,
+            read_progress.txtCharOffset AS txtCharOffset,
+            read_progress.txtTotalLength AS txtTotalLength,
+            read_progress.epubProgressFraction AS epubProgressFraction
+        FROM books
+        LEFT JOIN read_progress ON books.id = read_progress.bookId
+        WHERE books.groupId = :groupId
+        ORDER BY books.lastReadTime DESC, books.addTime DESC
+        """
+    )
+    fun getShelfBooksByGroup(groupId: Long): Flow<List<ShelfBookItem>>
+
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteById(id: Long)
 

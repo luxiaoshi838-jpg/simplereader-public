@@ -5,11 +5,9 @@ import com.simplereader.app.data.model.ImportCandidate
 /**
  * Builds import groups below the folder selected by the user.
  *
- * The selected root folder is only a scan boundary. It is never used as a
- * group name and is not shown in visible folder paths. Depth 1 starts from the
- * first child folder under that root. Files placed directly in the selected
- * root remain ungrouped. The selectable maximum follows the deepest child
- * folder actually discovered, capped at ten levels as a safety guard.
+ * Depth 1 is the folder selected by the user. Files placed directly in that
+ * folder use the selected folder name as their group. Nested folders can be
+ * selected by increasing depth.
  */
 object FolderGrouping {
     const val MAX_SUPPORTED_DEPTH = 10
@@ -97,6 +95,6 @@ object FolderGrouping {
             ?.filter { it.isNotEmpty() }
             .orEmpty()
 
-        return allSegments.drop(1)
+        return allSegments
     }
 }

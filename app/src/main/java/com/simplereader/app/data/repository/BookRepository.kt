@@ -10,6 +10,7 @@ class BookRepository(private val bookDao: BookDao) {
     fun getBooksByGroup(groupId: Long): Flow<List<Book>> = bookDao.getBooksByGroup(groupId)
     fun getAllBooks(): Flow<List<Book>> = bookDao.getAllBooks()
     fun getShelfBooks(): Flow<List<ShelfBookItem>> = bookDao.getShelfBooks()
+    fun getShelfBooksByGroup(groupId: Long): Flow<List<ShelfBookItem>> = bookDao.getShelfBooksByGroup(groupId)
 
     suspend fun getBook(id: Long): Book? = bookDao.getBook(id)
     suspend fun getByFilePath(filePath: String): Book? = bookDao.getByFilePath(filePath)

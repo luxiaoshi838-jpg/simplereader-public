@@ -7,13 +7,24 @@ import java.io.File
 
 class StableWorkflowContractTest {
     @Test
-    fun `group card filters the existing bookshelf instead of launching another activity`() {
+    fun `group card opens an isolated group bookshelf activity`() {
         val source = projectFile("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val method = source.substringAfter("private fun showGroupBooksV2(")
             .substringBefore("private fun showBookActionsV2(")
-        assertTrue(method.contains("selectedGroupId = group.id"))
-        assertTrue(method.contains("updateUI()"))
-        assertFalse(source.contains("GroupBooksActivity::class.java"))
+        assertTrue(method.contains("GroupBooksActivity::class.java"))
+        assertTrue(method.contains("GroupBooksActivity.EXTRA_GROUP_ID"))
+        assertFalse(method.contains("selectedGroupId = group.id"))
+        assertFalse(method.contains("updateUI()"))
+    }
+
+    @Test
+    fun `folder import treats the selected folder as depth one`() {
+        val source = projectFile("src/main/java/com/simplereader/app/data/repository/FolderGrouping.kt").readText()
+        val groupingSegments = source.substringAfter("private fun groupingSegments(")
+            .substringBeforeLast("}")
+        assertTrue(source.contains("Depth 1 is the folder selected by the user"))
+        assertTrue(groupingSegments.contains("return allSegments"))
+        assertFalse(groupingSegments.contains("drop(1)"))
     }
 
     @Test
