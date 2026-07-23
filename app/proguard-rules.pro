@@ -2,9 +2,9 @@
 # runtime-critical. Keep app classes stable across release shrinking.
 -keep class com.simplereader.app.** { *; }
 
-# EPUB reader.
--keep class nl.siegmann.epublib.** { *; }
--dontwarn nl.siegmann.epublib.**
+# EPUB read path uses documentnode/epub4j. Its writer-only kxml2 dependency is
+# deliberately excluded on Android; unused serializer references are ignored.
+-dontwarn org.kxml2.**
 
 # Public pure-Java CHM reader (Apache-2.0).
 -keep class org.jchmlib.** { *; }
