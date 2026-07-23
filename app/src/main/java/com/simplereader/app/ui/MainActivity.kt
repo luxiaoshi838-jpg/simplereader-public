@@ -140,6 +140,12 @@ class MainActivity : AppCompatActivity() {
         bookRepository = BookRepository(database.bookDao())
         bookGroupRepository = BookGroupRepository(database.bookGroupDao())
         mainRoot = findViewById(R.id.mainRoot)
+        mainRoot.setPadding(
+            mainRoot.paddingLeft,
+            statusBarHeight() + dp(12),
+            mainRoot.paddingRight,
+            mainRoot.paddingBottom
+        )
         shelfGrid = findViewById(R.id.shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
         shelfTabTextView = findViewById(R.id.shelfTabTextView)
@@ -186,6 +192,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadBooks()
+    }
+
+    private fun statusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
     }
 
     override fun onResume() {

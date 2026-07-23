@@ -1,4 +1,4 @@
-package com.simplereader.app.ui
+﻿package com.simplereader.app.ui
 
 import android.net.Uri
 import android.content.Intent
@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
 import android.widget.ArrayAdapter
+import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -77,6 +78,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
     private var pendingSeekProgress: Int? = null
+    private var currentReadableDocument: DocumentFile? = null
+    private var chapterScanJob: Job? = null
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -411,6 +414,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun loadBookContent(documentFile: DocumentFile, format: String) {
+        currentReadableDocument = documentFile
         lifecycleScope.launch {
             try {
                 val loadedContent = withContext(Dispatchers.IO) {
@@ -498,9 +502,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         database.bookDao().updateFileStatus(bookId, stableStatusFor(book, documentFile.uri))
                     }
                     displayContent()
-                    if (txtStreamingMode && epubChapters.isEmpty()) {
-                        scanStreamingTxtChapters(documentFile)
-                    }
                 }
             } catch (e: Throwable) {
                 showError("打开书籍失败：${e.message ?: e.javaClass.simpleName}")
@@ -537,7 +538,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             toggleReaderSettingsPanel()
         }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
-            applyReaderPalette(Color.BLACK, Color.WHITE)
+            applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
         }
         findViewById<TextView>(R.id.moreReaderButton).setOnClickListener {
             showReaderMoreActions()
@@ -747,23 +748,37 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             setPadding(localDp(8), localDp(4), localDp(8), localDp(4))
         }
         val statusView = TextView(this).apply {
-            text = "正在搜索..."
+            text = "Searching..."
             textSize = 14f
             setTextColor(Color.rgb(110, 100, 84))
             setPadding(localDp(12), localDp(8), localDp(12), localDp(8))
         }
-        val layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
-        val recyclerView = androidx.recyclerview.widget.RecyclerView(this).apply {
-            this.layoutManager = layoutManager
-            itemAnimator = null
+        val hits = mutableListOf<ReaderSearchHit>()
+        val listAdapter = object : BaseAdapter() {
+            override fun getCount(): Int = hits.size
+            override fun getItem(position: Int): ReaderSearchHit = hits[position]
+            override fun getItemId(position: Int): Long = hits[position].stableKey.hashCode().toLong()
+
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                val row = (convertView as? TextView) ?: TextView(parent.context).apply {
+                    textSize = 15f
+                    setTextColor(Color.rgb(38, 35, 31))
+                    setPadding(localDp(14), localDp(10), localDp(14), localDp(10))
+                    maxLines = 4
+                }
+                val hit = hits[position]
+                row.text = "${position + 1}. ${hit.positionLabel}\n${hit.preview}"
+                return row
+            }
+        }
+        val listView = ListView(this).apply {
+            adapter = listAdapter
             isVerticalScrollBarEnabled = true
-            isScrollbarFadingEnabled = false
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
 
         container.addView(statusView)
         container.addView(
-            recyclerView,
+            listView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 (resources.displayMetrics.heightPixels * 0.68f).toInt()
@@ -772,7 +787,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         var dialog: AlertDialog? = null
         var loadJob: Job? = null
-        val adapter = ReaderSearchResultAdapter { hit ->
+
+        fun refreshRows(ordered: List<ReaderSearchHit>, message: String) {
+            hits.clear()
+            hits.addAll(ordered)
+            listAdapter.notifyDataSetChanged()
+            statusView.text = message
+        }
+
+        fun openHit(hit: ReaderSearchHit) {
             dialog?.dismiss()
             if (txtStreamingMode) {
                 showStreamingTxtPage(hit.position, saveImmediately = true)
@@ -784,15 +807,18 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 readerControls.visibility = View.GONE
             }
         }
-        recyclerView.adapter = adapter
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            hits.getOrNull(position)?.let { openHit(it) }
+        }
 
         dialog = AlertDialog.Builder(this)
-            .setTitle("\"$query\" 的搜索结果")
+            .setTitle("Search results")
             .setView(container)
-            .setNegativeButton("关闭", null)
+            .setNegativeButton("Close", null)
             .create()
-        dialog?.setOnDismissListener { loadJob?.cancel() }
-        dialog?.show()
+        dialog.setOnDismissListener { loadJob?.cancel() }
+        dialog.show()
 
         loadJob = lifecycleScope.launch {
             val results = mutableListOf<ReaderSearchHit>()
@@ -800,9 +826,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 withContext(Dispatchers.IO) {
                     if (txtStreamingMode) {
                         val selectedBook = book
-                        val charsetName = txtCharsetName
-                            ?: selectedBook?.txtCharset
-                            ?: Charsets.UTF_8.name()
+                        val charsetName = txtCharsetName ?: selectedBook?.txtCharset ?: Charsets.UTF_8.name()
                         var nextPosition = 0L
                         var finished = selectedBook == null
                         while (!finished) {
@@ -817,15 +841,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 ReaderSearchPage(
                                     hits = parsed.hits.map { hit ->
                                         val percent = if (txtTotalBytes > 0L) {
-                                            ((hit.byteOffset.toDouble() / txtTotalBytes) * 100).toInt()
-                                                .coerceIn(0, 100)
+                                            ((hit.byteOffset.toDouble() / txtTotalBytes) * 100).toInt().coerceIn(0, 100)
                                         } else {
                                             0
                                         }
                                         ReaderSearchHit(
                                             stableKey = "byte:${hit.byteOffset}",
                                             position = hit.byteOffset,
-                                            positionLabel = "约 $percent% · 字节 ${hit.byteOffset}",
+                                            positionLabel = "about $percent% - byte ${hit.byteOffset}",
                                             preview = hit.preview
                                         )
                                     },
@@ -837,12 +860,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 finished = true
                             } else {
                                 results += page.hits
-                                val ordered = results.distinctBy { it.stableKey }.sortedBy { it.position }
+                                val ordered = results.distinctBy { it.stableKey }
+                                    .sortedBy { it.position }
+                                    .take(MAX_SEARCH_RESULTS)
                                 withContext(Dispatchers.Main) {
-                                    adapter.submitList(ordered)
-                                    statusView.text = "正在搜索，已找到 ${ordered.size} 条..."
+                                    refreshRows(ordered, "Searching... ${ordered.size} results")
                                 }
-                                finished = page.endReached || page.nextPosition <= nextPosition
+                                finished = page.endReached ||
+                                    page.nextPosition <= nextPosition ||
+                                    ordered.size >= MAX_SEARCH_RESULTS
                                 nextPosition = page.nextPosition
                             }
                         }
@@ -851,17 +877,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     }
                 }
 
-                val ordered = results.distinctBy { it.stableKey }.sortedBy { it.position }
-                adapter.submitList(ordered)
-                statusView.text = if (ordered.isEmpty()) {
-                    "没有找到 \"$query\""
-                } else {
-                    "共 ${ordered.size} 条结果"
+                val ordered = results.distinctBy { it.stableKey }
+                    .sortedBy { it.position }
+                    .take(MAX_SEARCH_RESULTS)
+                val message = when {
+                    ordered.isEmpty() -> "No results for \"$query\""
+                    ordered.size >= MAX_SEARCH_RESULTS -> "Showing first $MAX_SEARCH_RESULTS results. Use a longer keyword."
+                    else -> "${ordered.size} results"
                 }
+                refreshRows(ordered, message)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                val message = "搜索失败：${error.message ?: error.javaClass.simpleName}"
+                val message = "Search failed: ${error.message ?: error.javaClass.simpleName}"
                 statusView.text = message
                 Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_LONG).show()
             }
@@ -872,7 +900,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (query.isBlank() || currentContent.isEmpty()) return emptyList()
         val hits = mutableListOf<ReaderSearchHit>()
         var cursor = 0
-        while (cursor < currentContent.length) {
+        while (cursor < currentContent.length && hits.size < MAX_SEARCH_RESULTS) {
             val index = currentContent.indexOf(query, startIndex = cursor, ignoreCase = true)
             if (index < 0) break
             val previewStart = (index - 45).coerceAtLeast(0)
@@ -884,8 +912,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             hits += ReaderSearchHit(
                 stableKey = "char:$index",
                 position = index.toLong(),
-                positionLabel = "约 $percent% · 位置 $index",
-                preview = preview.ifBlank { "位置 $index" }
+                positionLabel = "about $percent% - position $index",
+                preview = preview.ifBlank { "position $index" }
             )
             cursor = (index + query.length.coerceAtLeast(1)).coerceAtMost(currentContent.length)
         }
@@ -1144,12 +1172,48 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             container.addView(tabs)
             container.addView(listView)
 
+            fun requestTxtCatalogScan(onChanged: () -> Unit) {
+                val document = currentReadableDocument ?: return
+                if (!txtStreamingMode || epubChapters.isNotEmpty()) return
+                if (chapterScanJob?.isActive == true) return
+                chapterScanJob = lifecycleScope.launch {
+                    val chapters = try {
+                        val charsetName = txtCharsetName ?: book?.txtCharset ?: Charsets.UTF_8.name()
+                        withContext(Dispatchers.IO) {
+                            contentResolver.openInputStream(document.uri)?.let { stream ->
+                                TxtParser.scanChapters(stream, charsetName)
+                            }.orEmpty()
+                        }
+                    } catch (_: Throwable) {
+                        emptyList()
+                    }
+                    if (chapters.isNotEmpty()) {
+                        epubChapters = chapters.map { chapter ->
+                            EpubChapter(name = chapter.title, text = "")
+                        }
+                        epubChapterStartPositions = chapters.map {
+                            it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                        }
+                        withContext(Dispatchers.IO) {
+                            writeTxtChapterCache(
+                                totalBytes = txtTotalBytes,
+                                lastModified = document.lastModified(),
+                                charsetName = txtCharsetName ?: book?.txtCharset ?: Charsets.UTF_8.name(),
+                                chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
+                            )
+                        }
+                    }
+                    onChanged()
+                }
+            }
+
             fun render() {
                 catalogButton.isEnabled = !showingCatalog
                 bookmarkButton.isEnabled = showingCatalog
                 if (showingCatalog) {
                     val labels = if (epubChapters.isEmpty()) {
-                        listOf("暂无目录")
+                        requestTxtCatalogScan { render() }
+                        if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
                     } else {
                         epubChapters.mapIndexed { index, chapter ->
                             val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
@@ -1217,13 +1281,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             val dialog = AlertDialog.Builder(this@ReaderActivity)
                 .setTitle(if (showingCatalog) "目录" else "书签")
                 .setView(container)
-                .setNegativeButton("关闭", null)
-                .show()
+                .create()
+            dialog.setCanceledOnTouchOutside(true)
+            dialog.show()
             dialog.window?.let { window ->
                 window.setBackgroundDrawable(ColorDrawable(Color.rgb(250, 246, 232)))
                 window.setGravity(android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL)
                 window.setLayout(
-                    (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+                    (resources.displayMetrics.widthPixels * 0.72f).toInt(),
                     android.view.WindowManager.LayoutParams.MATCH_PARENT
                 )
             }
@@ -1255,7 +1320,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     }
                     2 -> applyReaderPalette(Color.rgb(245, 233, 200), Color.rgb(59, 52, 40))
                     3 -> applyReaderPalette(Color.rgb(218, 238, 205), Color.rgb(48, 60, 42))
-                    4 -> applyReaderPalette(Color.BLACK, Color.WHITE)
+                    4 -> applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
                     5 -> applyReaderPalette(Color.WHITE, Color.rgb(35, 35, 35))
                 }
             }
@@ -1542,7 +1607,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             saveReaderPrefs()
         }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
-            applyReaderPalette(Color.BLACK, Color.WHITE)
+            applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
             saveReaderPrefs()
         }
         findViewById<TextView>(R.id.turnModeOverlapButton).setOnClickListener { setTurnMode(TURN_MODE_OVERLAP) }
@@ -2025,6 +2090,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val TXT_STREAM_WINDOW_BYTES = 64 * 1024
         private const val MAX_CACHED_TXT_CHAPTERS = 5000
         private const val SEARCH_RESULT_PAGE_SIZE = 200
+        private const val MAX_SEARCH_RESULTS = 5000
         private const val RECOVER_SCAN_LIMIT = 10000
         private const val READER_PREFS = "reader_prefs"
         private const val PREF_TEXT_SIZE = "text_size"

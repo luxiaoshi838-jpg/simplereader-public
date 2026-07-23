@@ -231,7 +231,7 @@ class GroupBooksActivity : AppCompatActivity() {
             cover.apply {
                 gravity = Gravity.CENTER
                 maxLines = 5
-                textSize = 12f
+                textSize = 11f
                 setTextColor(Color.rgb(232, 238, 244))
                 setPadding(dp(6), dp(8), dp(6), dp(8))
                 background = GradientDrawable(
@@ -240,19 +240,19 @@ class GroupBooksActivity : AppCompatActivity() {
                 ).apply {
                     cornerRadius = dp(5).toFloat()
                 }
-                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(112))
+                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(148))
             }
             addView(cover)
 
             title.apply {
-                textSize = 18f
+                textSize = 15f
                 maxLines = 2
                 setTextColor(Color.rgb(30, 30, 30))
             }
             addView(title)
 
             progress.apply {
-                textSize = 14f
+                textSize = 12f
                 setTextColor(Color.rgb(130, 126, 118))
             }
             addView(progress)

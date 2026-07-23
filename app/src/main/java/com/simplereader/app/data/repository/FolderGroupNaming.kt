@@ -12,15 +12,13 @@ object FolderGroupNaming {
         if (pathSegments.isEmpty()) return group
 
         val leafName = pathSegments.last()
-        val compactPath = pathSegments.joinToString("/")
-        val pathAwareName = pathSegments.joinToString(" / ")
         val currentName = group.displayName.ifBlank { group.name }.trim()
         val wasAutomaticallyNamed = currentName.isBlank() ||
             currentName == leafName ||
-            currentName == compactPath ||
-            currentName == pathAwareName
+            currentName == pathSegments.joinToString("/") ||
+            currentName == pathSegments.joinToString(" / ")
         if (!wasAutomaticallyNamed) return group
 
-        return group.copy(name = pathAwareName, displayName = pathAwareName)
+        return group.copy(name = leafName, displayName = leafName)
     }
 }

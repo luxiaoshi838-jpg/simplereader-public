@@ -10,6 +10,8 @@ object ReaderAppearance {
     private const val PREF_TEXT_SIZE = "text_size"
     private const val DEFAULT_BACKGROUND = 0xFFF5E9C8.toInt()
     private const val DEFAULT_TEXT = 0xFF3B3428.toInt()
+    const val NIGHT_BACKGROUND = 0xFF202124.toInt()
+    const val NIGHT_TEXT = 0xFFE8EAED.toInt()
 
     data class Palette(
         val backgroundColor: Int,
@@ -18,9 +20,11 @@ object ReaderAppearance {
 
     fun palette(context: Context): Palette {
         val prefs = context.getSharedPreferences(READER_PREFS, Context.MODE_PRIVATE)
+        val savedBackground = prefs.getInt(PREF_BACKGROUND, DEFAULT_BACKGROUND)
+        val savedText = prefs.getInt(PREF_TEXT_COLOR, DEFAULT_TEXT)
         return Palette(
-            backgroundColor = prefs.getInt(PREF_BACKGROUND, DEFAULT_BACKGROUND),
-            textColor = prefs.getInt(PREF_TEXT_COLOR, DEFAULT_TEXT)
+            backgroundColor = if (savedBackground == Color.BLACK) NIGHT_BACKGROUND else savedBackground,
+            textColor = if (savedBackground == Color.BLACK && savedText == Color.WHITE) NIGHT_TEXT else savedText
         )
     }
 
