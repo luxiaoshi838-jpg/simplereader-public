@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - agent/v13-epub-chm-theme-grid
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.head_ref == 'agent/v13-epub-chm-theme-grid' || github.ref_name == 'agent/v13-epub-chm-theme-grid')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
