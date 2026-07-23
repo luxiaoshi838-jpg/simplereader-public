@@ -3,7 +3,10 @@ package com.simplereader.app.parser
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class ChmParserEncodingTest {
     @Test
     fun `decodes declared gb2312 page as gb18030`() {
