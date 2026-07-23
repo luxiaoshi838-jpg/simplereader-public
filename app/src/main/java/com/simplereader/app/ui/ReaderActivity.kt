@@ -4,7 +4,12 @@ import android.net.Uri
 import android.content.Intent
 import android.os.Bundle
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.Menu
@@ -796,7 +801,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         fun openHit(hit: ReaderSearchHit) {
-            dialog?.dismiss()
+            pageTurnMode = TURN_MODE_VERTICAL
+            saveReaderPrefs()
+            updateSettingsLabels()
             if (txtStreamingMode) {
                 showStreamingTxtPage(hit.position, saveImmediately = true)
             } else {
@@ -806,6 +813,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 saveProgressNow()
                 readerControls.visibility = View.GONE
             }
+            statusView.text = "Selected ${hits.indexOf(hit) + 1} / ${hits.size}"
         }
 
         listView.setOnItemClickListener { _, _, position, _ ->
@@ -1171,6 +1179,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             val listView = ListView(this@ReaderActivity)
             container.addView(tabs)
             container.addView(listView)
+            var dialog: AlertDialog? = null
 
             fun requestTxtCatalogScan(onChanged: () -> Unit) {
                 val document = currentReadableDocument ?: return
@@ -1207,20 +1216,77 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
             }
 
+            fun twoLineAdapter(labels: List<CharSequence>, highlightedIndex: Int = -1): ArrayAdapter<CharSequence> {
+                return object : ArrayAdapter<CharSequence>(
+                    this@ReaderActivity,
+                    android.R.layout.simple_list_item_1,
+                    labels
+                ) {
+                    override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                        val view = super.getView(position, convertView, parent)
+                        (view as? TextView)?.apply {
+                            maxLines = 2
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                            if (position == highlightedIndex) {
+                                textSize = 15f
+                                setTypeface(Typeface.DEFAULT, Typeface.NORMAL)
+                                setTextColor(Color.rgb(230, 112, 42))
+                            } else {
+                                textSize = 15f
+                                setTypeface(Typeface.DEFAULT, Typeface.NORMAL)
+                                setTextColor(Color.rgb(42, 39, 31))
+                            }
+                        }
+                        return view
+                    }
+                }
+            }
+
+            fun positionMeta(position: Int): String {
+                val safePosition = position.coerceAtLeast(0).toLong()
+                val total = if (txtStreamingMode) txtTotalBytes else currentContent.length.toLong()
+                val safeTotal = total.coerceAtLeast(1L)
+                val page = (safePosition / pageSize.coerceAtLeast(1)).coerceAtLeast(0L) + 1L
+                val percent = (safePosition.toDouble() / safeTotal.toDouble() * 100.0).coerceIn(0.0, 100.0)
+                return "第 ${page} 页 · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
+            }
+
+            fun catalogLabel(index: Int, title: String, position: Int, highlighted: Boolean): CharSequence {
+                val label = "${index + 1}. $title\n${positionMeta(position)}"
+                if (!highlighted) return label
+                return SpannableString(label).apply {
+                    val titleEnd = label.indexOf('\n').let { if (it >= 0) it else label.length }
+                    setSpan(StyleSpan(Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(RelativeSizeSpan(1.18f), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+
+            fun currentChapterIndex(): Int {
+                if (epubChapterStartPositions.isEmpty()) return -1
+                val current = currentPosition.coerceAtLeast(0)
+                return epubChapterStartPositions.indexOfLast { it <= current }
+                    .coerceAtLeast(0)
+            }
+
             fun render() {
                 catalogButton.isEnabled = !showingCatalog
                 bookmarkButton.isEnabled = showingCatalog
                 if (showingCatalog) {
+                    val currentChapter = currentChapterIndex()
                     val labels = if (epubChapters.isEmpty()) {
                         requestTxtCatalogScan { render() }
                         if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
                     } else {
                         epubChapters.mapIndexed { index, chapter ->
                             val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
-                            "${index + 1}. $title"
+                            val position = epubChapterStartPositions.getOrElse(index) { 0 }
+                            catalogLabel(index, title, position, index == currentChapter)
                         }
                     }
-                    listView.adapter = ArrayAdapter(this@ReaderActivity, android.R.layout.simple_list_item_1, labels)
+                    listView.adapter = twoLineAdapter(labels, currentChapter)
+                    if (currentChapter >= 0) {
+                        listView.post { listView.setSelection(currentChapter) }
+                    }
                     listView.setOnItemClickListener { _, _, which, _ ->
                         if (epubChapters.isNotEmpty()) {
                             currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
@@ -1231,6 +1297,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 markProgressDirty()
                                 saveProgressNow()
                             }
+                            dialog?.dismiss()
                         }
                     }
                     listView.setOnItemLongClickListener(null)
@@ -1238,13 +1305,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     val labels = if (bookmarks.isEmpty()) {
                         listOf("暂无书签")
                     } else {
-                        bookmarks.mapIndexed { index, bookmark ->
-                            "${index + 1}. ${bookmark.content.ifBlank { "位置 ${bookmark.position}" }}"
-                        }
+                        bookmarks.map(::bookmarkListLabel)
                     }
-                    listView.adapter = ArrayAdapter(this@ReaderActivity, android.R.layout.simple_list_item_1, labels)
+                    listView.adapter = twoLineAdapter(labels)
                     listView.setOnItemClickListener { _, _, which, _ ->
-                        bookmarks.getOrNull(which)?.let { jumpToBookmark(it) }
+                        bookmarks.getOrNull(which)?.let {
+                            jumpToBookmark(it)
+                            dialog?.dismiss()
+                        }
                     }
                     listView.setOnItemLongClickListener { _, _, which, _ ->
                         bookmarks.getOrNull(which)?.let { confirmDeleteBookmark(it) }
@@ -1278,7 +1346,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 false
             }
             render()
-            val dialog = AlertDialog.Builder(this@ReaderActivity)
+            dialog = AlertDialog.Builder(this@ReaderActivity)
                 .setTitle(if (showingCatalog) "目录" else "书签")
                 .setView(container)
                 .create()
@@ -1437,6 +1505,24 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             .ifBlank { "位置 $globalPosition" }
     }
 
+    private fun bookmarkListLabel(bookmark: Bookmark): String {
+        val position = bookmark.position.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        val total = if (txtStreamingMode) {
+            txtTotalBytes
+        } else {
+            currentContent.length.toLong()
+        }.coerceAtLeast(1L)
+        val page = (position / pageSize.coerceAtLeast(1)).coerceAtLeast(0L) + 1L
+        val percent = (position.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0)
+        val progress = String.format(java.util.Locale.US, "%.1f%%", percent)
+        val preview = bookmark.content
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { "无预览" }
+            .let { if (it.length > 64) "${it.take(64)}..." else it }
+        return "第 ${page} 页 · $progress\n$preview"
+    }
+
     private fun showBookmarks() {
         lifecycleScope.launch {
             val bookmarks = withContext(Dispatchers.IO) {
@@ -1446,10 +1532,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 Toast.makeText(this@ReaderActivity, "暂无书签", Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            val labels = bookmarks.map { bookmark ->
-                val position = bookmark.position.toIntOrNull() ?: 0
-                "位置 $position · ${bookmark.content.ifBlank { "无预览" }}"
-            }.toTypedArray()
+            val labels = bookmarks.map(::bookmarkListLabel).toTypedArray()
             AlertDialog.Builder(this@ReaderActivity)
                 .setTitle("书签")
                 .setItems(labels) { _, which ->
@@ -1487,10 +1570,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun showDeleteBookmarkDialog(bookmarks: List<Bookmark>) {
-        val labels = bookmarks.map { bookmark ->
-            val position = bookmark.position.toIntOrNull() ?: 0
-            "位置 $position · ${bookmark.content.ifBlank { "无预览" }}"
-        }.toTypedArray()
+        val labels = bookmarks.map(::bookmarkListLabel).toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("删除书签")
             .setItems(labels) { _, which ->
@@ -1712,8 +1792,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 } ?: return@launch showError("无法读取当前位置")
                 currentContent = window.text
                 txtCurrentPageStartByte = window.startByte
-                currentPosition = window.startByte.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                 txtCurrentPageEndByte = window.nextByte
+                currentPosition = byteOffset
+                    .coerceIn(window.startByte, window.nextByte)
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
                 displayContent()
                 if (direction != 0) {
                     animatePageTurn(direction)
