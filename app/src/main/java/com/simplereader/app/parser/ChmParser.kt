@@ -1,28 +1,34 @@
 package com.simplereader.app.parser
 
+import android.net.Uri
 import android.text.Html
 import org.jchmlib.ChmFile
+import org.jchmlib.ChmTopicsTree
 import org.jchmlib.ChmUnitInfo
 import java.io.File
 import java.io.InputStream
 
 /**
- * CHM text reader backed by chimenchen/jchmlib v0.5.4 (Apache-2.0).
- * The SAF stream is copied to a temporary file because ChmFile uses random access.
+ * CHM reader backed by chimenchen/jchmlib v0.5.4 (Apache-2.0).
+ * Uses jchmlib's real topics tree, title map and detected archive encoding.
  */
+data class ChmChapter(
+    val path: String,
+    val title: String
+)
+
 object ChmParser {
     private const val MAX_DOCUMENT_ENTRIES = 4000
     private const val MAX_TOTAL_TEXT_CHARS = 12 * 1024 * 1024
     private const val MAX_ENTRY_BYTES = 8 * 1024 * 1024L
 
     fun readText(inputStream: InputStream): String {
-        return withTemporaryChm(inputStream) { file ->
-            val archive = ChmFile(file.absolutePath)
+        return withTemporaryChm(inputStream) { archive ->
             val combined = StringBuilder()
-            for (entry in readableEntries(archive)) {
-                if (combined.length >= MAX_TOTAL_TEXT_CHARS) break
-                val text = htmlOrPlainText(archive.retrieveObjectAsString(entry).orEmpty())
-                if (text.isBlank()) continue
+            chapterEntries(archive).forEach { chapter ->
+                if (combined.length >= MAX_TOTAL_TEXT_CHARS) return@forEach
+                val text = readEntryText(archive, chapter.path)
+                if (text.isBlank()) return@forEach
                 if (combined.isNotEmpty()) combined.append("\n\n")
                 combined.append(text)
             }
@@ -30,30 +36,78 @@ object ChmParser {
         }
     }
 
-    fun readChapterIndex(inputStream: InputStream): List<String> {
-        return withTemporaryChm(inputStream) { file ->
-            readableEntries(ChmFile(file.absolutePath)).map { it.path.orEmpty() }
-        }
+    fun readChapterIndex(inputStream: InputStream): List<ChmChapter> {
+        return withTemporaryChm(inputStream, ::chapterEntries)
     }
 
     fun readChapterText(inputStream: InputStream, chapterPath: String): String {
-        return withTemporaryChm(inputStream) { file ->
-            val archive = ChmFile(file.absolutePath)
-            val entry = readableEntries(archive).firstOrNull { it.path.orEmpty() == chapterPath }
-                ?: return@withTemporaryChm ""
-            cleanText(htmlOrPlainText(archive.retrieveObjectAsString(entry).orEmpty()))
+        return withTemporaryChm(inputStream) { archive ->
+            readEntryText(archive, chapterPath)
         }
     }
 
-    private fun <T> withTemporaryChm(inputStream: InputStream, block: (File) -> T): T {
-        val temporaryFile = File.createTempFile("simplereader_", ".chm")
-        return try {
-            temporaryFile.outputStream().buffered().use { output ->
-                inputStream.use { input -> input.copyTo(output) }
+    private fun chapterEntries(archive: ChmFile): List<ChmChapter> {
+        val result = mutableListOf<ChmChapter>()
+        val seen = linkedSetOf<String>()
+
+        fun add(pathValue: String?, titleValue: String?) {
+            val path = normalizePath(pathValue.orEmpty())
+            if (path.isBlank() || !isReadableDocument(path)) return
+            val key = path.lowercase()
+            if (!seen.add(key)) return
+            val resolved = resolveEntry(archive, path) ?: return
+            if (resolved.length !in 1L..MAX_ENTRY_BYTES) return
+            val title = titleValue
+                ?.trim()
+                ?.takeIf { it.isNotBlank() && it != "<Top>" }
+                ?: archive.getTitleOfObject(resolved.path.orEmpty())
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() && it != resolved.path }
+                ?: path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path }
+            result += ChmChapter(resolved.path.orEmpty(), title)
+        }
+
+        fun walk(node: ChmTopicsTree?) {
+            node?.children?.forEach { child ->
+                add(child.path, child.title)
+                walk(child)
             }
-            block(temporaryFile)
-        } finally {
-            temporaryFile.delete()
+        }
+
+        runCatching { walk(archive.topicsTree) }
+
+        if (result.isEmpty()) {
+            archive.homeFile?.let { add(it, archive.title) }
+            readableEntries(archive).forEach { entry ->
+                add(entry.path, archive.getTitleOfObject(entry.path.orEmpty()))
+            }
+        }
+
+        return result.take(MAX_DOCUMENT_ENTRIES)
+    }
+
+    private fun readEntryText(archive: ChmFile, path: String): String {
+        val entry = resolveEntry(archive, path) ?: return ""
+        if (entry.length !in 1L..MAX_ENTRY_BYTES) return ""
+        val source = archive.retrieveObjectAsString(entry).orEmpty()
+        return cleanText(htmlOrPlainText(source))
+    }
+
+    private fun resolveEntry(archive: ChmFile, rawPath: String): ChmUnitInfo? {
+        val normalized = normalizePath(rawPath)
+        val candidates = linkedSetOf(
+            rawPath.substringBefore('#').substringBefore('?'),
+            normalized,
+            Uri.decode(normalized)
+        ).filter { it.isNotBlank() }
+
+        candidates.forEach { candidate ->
+            archive.resolveObject(candidate)?.let { return it }
+        }
+
+        val target = normalizePath(Uri.decode(normalized)).lowercase()
+        return readableEntries(archive).firstOrNull {
+            normalizePath(Uri.decode(it.path.orEmpty())).lowercase() == target
         }
     }
 
@@ -71,9 +125,19 @@ object ChmParser {
                 entries += unit
             }
         }
-        return entries.sortedWith(
-            compareBy<ChmUnitInfo>({ entryPriority(it.path.orEmpty()) }, { it.path.orEmpty().lowercase() })
-        )
+        return entries
+    }
+
+    private fun <T> withTemporaryChm(inputStream: InputStream, block: (ChmFile) -> T): T {
+        val temporaryFile = File.createTempFile("simplereader_", ".chm")
+        return try {
+            temporaryFile.outputStream().buffered().use { output ->
+                inputStream.use { input -> input.copyTo(output) }
+            }
+            block(ChmFile(temporaryFile.absolutePath))
+        } finally {
+            temporaryFile.delete()
+        }
     }
 
     private fun htmlOrPlainText(source: String): String {
@@ -88,9 +152,20 @@ object ChmParser {
 
     private fun cleanText(text: String): String {
         return text
+            .replace('\u00A0', ' ')
             .replace(Regex("[ \\t]+\\n"), "\n")
             .replace(Regex("\\n{3,}"), "\n\n")
             .trim()
+    }
+
+    private fun normalizePath(value: String): String {
+        val cleaned = value
+            .substringBefore('#')
+            .substringBefore('?')
+            .replace('\\', '/')
+            .trim()
+        if (cleaned.isBlank()) return ""
+        return if (cleaned.startsWith('/')) cleaned else "/$cleaned"
     }
 
     private fun isReadableDocument(path: String): Boolean {
@@ -102,15 +177,5 @@ object ChmParser {
             normalized.endsWith(".html") ||
             normalized.endsWith(".xhtml") ||
             normalized.endsWith(".txt")
-    }
-
-    private fun entryPriority(path: String): Int {
-        val normalized = path.lowercase()
-        return when {
-            normalized.contains("index") -> 0
-            normalized.contains("default") -> 1
-            normalized.endsWith(".htm") || normalized.endsWith(".html") -> 2
-            else -> 3
-        }
     }
 }
