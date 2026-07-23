@@ -9,6 +9,36 @@ data class EpubChapter(
 )
 
 object EpubParser {
+    fun readChapterIndex(inputStream: InputStream): List<EpubChapter> {
+        val chapters = mutableListOf<EpubChapter>()
+        ZipInputStream(inputStream.buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                val name = entry.name
+                if (!entry.isDirectory && isChapterEntry(name)) {
+                    val title = name.substringAfterLast('/').substringBeforeLast('.').ifBlank { name }
+                    chapters += EpubChapter(name = name, text = title)
+                }
+                zip.closeEntry()
+            }
+        }
+        return chapters
+    }
+
+    fun readChapterText(inputStream: InputStream, chapterName: String): String {
+        ZipInputStream(inputStream.buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                val name = entry.name
+                if (!entry.isDirectory && name == chapterName) {
+                    return htmlToText(zip.readBytes().toString(Charsets.UTF_8))
+                }
+                zip.closeEntry()
+            }
+        }
+        return ""
+    }
+
     fun readChapters(inputStream: InputStream): List<EpubChapter> {
         val chapters = mutableListOf<EpubChapter>()
 
@@ -16,11 +46,8 @@ object EpubParser {
             while (true) {
                 val entry = zip.nextEntry ?: break
                 val name = entry.name
-                val isChapter = name.endsWith(".xhtml", ignoreCase = true) ||
-                    name.endsWith(".html", ignoreCase = true) ||
-                    name.endsWith(".htm", ignoreCase = true)
 
-                if (!entry.isDirectory && isChapter) {
+                if (!entry.isDirectory && isChapterEntry(name)) {
                     val html = zip.readBytes().toString(Charsets.UTF_8)
                     val text = htmlToText(html)
                     if (text.isNotBlank()) {
@@ -32,6 +59,12 @@ object EpubParser {
         }
 
         return chapters
+    }
+
+    private fun isChapterEntry(name: String): Boolean {
+        return name.endsWith(".xhtml", ignoreCase = true) ||
+            name.endsWith(".html", ignoreCase = true) ||
+            name.endsWith(".htm", ignoreCase = true)
     }
 
     private fun htmlToText(html: String): String {

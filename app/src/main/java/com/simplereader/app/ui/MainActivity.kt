@@ -9,7 +9,9 @@ import android.view.Gravity
 import android.view.View
 import android.widget.EditText
 import android.widget.GridLayout
+import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -921,18 +923,85 @@ class MainActivity : AppCompatActivity() {
             setText(shelfSearchQuery)
             selectAll()
         }
-        AlertDialog.Builder(this)
+        val resultsView = ListView(this)
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, dp(8), 0)
+            addView(input)
+            addView(
+                resultsView,
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(420))
+            )
+        }
+        var currentResults = emptyList<ShelfBookItem>()
+
+        fun groupNameFor(book: ShelfBookItem): String {
+            return book.groupId?.let { id ->
+                groups.firstOrNull { it.id == id }?.let { group ->
+                    group.displayName.ifBlank { group.name }
+                }
+            } ?: "未分组"
+        }
+
+        fun renderResults(query: String) {
+            currentResults = if (query.isBlank()) {
+                books.sortedByDescending(::activityTime)
+            } else {
+                books.filter { book ->
+                    book.title.contains(query, ignoreCase = true) ||
+                        groupNameFor(book).contains(query, ignoreCase = true)
+                }.sortedByDescending(::activityTime)
+            }
+            val labels = if (currentResults.isEmpty()) {
+                listOf("没有匹配的书籍")
+            } else {
+                currentResults.map { book ->
+                    "${book.title}\n${groupNameFor(book)} · ${book.format} · 已读 ${book.progressPercent()}%"
+                }
+            }
+            resultsView.adapter = object : ArrayAdapter<String>(
+                this,
+                android.R.layout.simple_list_item_1,
+                labels
+            ) {
+                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                    val view = super.getView(position, convertView, parent)
+                    (view as? TextView)?.apply {
+                        maxLines = 2
+                        textSize = 15f
+                    }
+                    return view
+                }
+            }
+            resultsView.setOnItemClickListener { _, _, which, _ ->
+                currentResults.getOrNull(which)?.let { book ->
+                    openBook(book.id)
+                }
+            }
+        }
+
+        renderResults(shelfSearchQuery)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("搜索书架")
-            .setView(input)
-            .setNegativeButton("清除") { _, _ ->
-                shelfSearchQuery = ""
-                updateUI()
-            }
-            .setPositiveButton("搜索") { _, _ ->
+            .setView(container)
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("清除", null)
+            .setPositiveButton("搜索", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 shelfSearchQuery = input.text.toString().trim()
+                selectedGroupId = null
+                renderResults(shelfSearchQuery)
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                shelfSearchQuery = ""
+                input.setText("")
+                renderResults("")
                 updateUI()
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showSettings() {

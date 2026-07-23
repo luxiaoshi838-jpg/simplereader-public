@@ -36,6 +36,7 @@ import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.ReadProgress
+import com.simplereader.app.parser.ChmParser
 import com.simplereader.app.parser.EpubChapter
 import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.parser.TxtParser
@@ -71,6 +72,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
+    private var structuredChapterIndex: Int = 0
     private val pageSize: Int = 2000
     private var contentLoaded: Boolean = false
     private var progressLoaded: Boolean = false
@@ -423,6 +425,49 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         return (targetByte - TXT_STREAM_WINDOW_BYTES / 3L).coerceAtLeast(0L)
     }
 
+    private fun isStructuredChapterDocument(): Boolean {
+        val format = book?.format?.uppercase().orEmpty()
+        return !txtStreamingMode && format in setOf("EPUB", "CHM") && epubChapters.isNotEmpty()
+    }
+
+    private fun loadStructuredChapter(
+        chapterIndex: Int,
+        offset: Int = 0,
+        saveImmediately: Boolean = false,
+        direction: Int = 0
+    ) {
+        val selectedBook = book ?: return
+        val targetIndex = chapterIndex.coerceIn(0, epubChapters.lastIndex)
+        val chapter = epubChapters.getOrNull(targetIndex) ?: return
+        val targetUri = Uri.parse(selectedBook.filePath)
+        lifecycleScope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(targetUri)?.use { input ->
+                        when (selectedBook.format.uppercase()) {
+                            "EPUB" -> EpubParser.readChapterText(input, chapter.name)
+                            "CHM" -> ChmParser.readChapterText(input, chapter.name)
+                            else -> ""
+                        }
+                    }.orEmpty()
+                }
+                if (text.isBlank()) {
+                    Toast.makeText(this@ReaderActivity, "该章节没有可显示内容", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                structuredChapterIndex = targetIndex
+                currentContent = text
+                currentPosition = offset.coerceIn(0, currentContent.length)
+                displayContent()
+                if (direction != 0) animatePageTurn(direction)
+                markProgressDirty()
+                if (saveImmediately) saveProgressNow() else scheduleProgressSave()
+            } catch (error: Throwable) {
+                showError("读取章节失败：${error.message ?: error.javaClass.simpleName}")
+            }
+        }
+    }
+
     private fun loadBookContent(documentFile: DocumentFile, format: String) {
         currentReadableDocument = documentFile
         lifecycleScope.launch {
@@ -468,16 +513,49 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 )
                             }
                             "EPUB" -> {
-                                val chapters = EpubParser.readChapters(input)
+                                val chapters = EpubParser.readChapterIndex(input)
+                                val progress = database.readProgressDao().getProgress(bookId)
+                                val targetIndex = (progress?.epubSpineIndex ?: 0)
+                                    .coerceIn(0, chapters.lastIndex.coerceAtLeast(0))
+                                val targetOffset = progress?.epubChapterOffset ?: 0
+                                val chapterText = chapters.getOrNull(targetIndex)?.name?.let { chapterName ->
+                                    contentResolver.openInputStream(documentFile.uri)?.use { chapterInput ->
+                                        EpubParser.readChapterText(chapterInput, chapterName)
+                                    }
+                                }.orEmpty()
                                 LoadedContent(
-                                    text = chapters.joinToString(EPUB_CHAPTER_SEPARATOR) { chapter -> chapter.text },
+                                    text = chapterText,
                                     epubChapters = chapters,
-                                    epubChapterStartPositions = chapterStartPositions(chapters)
+                                    epubChapterStartPositions = chapterIndexPositions(chapters),
+                                    structuredChapterIndex = targetIndex,
+                                    structuredChapterOffset = targetOffset
                                 )
                             }
-                            "CHM" -> LoadedContent(
-                                text = readChmTextIsolated(input)
-                            )
+                            "CHM" -> {
+                                val entries = ChmParser.readChapterIndex(input)
+                                val chapters = entries.map { path ->
+                                    EpubChapter(
+                                        name = path,
+                                        text = path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path }
+                                    )
+                                }
+                                val progress = database.readProgressDao().getProgress(bookId)
+                                val targetIndex = (progress?.epubSpineIndex ?: 0)
+                                    .coerceIn(0, chapters.lastIndex.coerceAtLeast(0))
+                                val targetOffset = progress?.epubChapterOffset ?: 0
+                                val chapterText = chapters.getOrNull(targetIndex)?.name?.let { chapterName ->
+                                    contentResolver.openInputStream(documentFile.uri)?.use { chapterInput ->
+                                        ChmParser.readChapterText(chapterInput, chapterName)
+                                    }
+                                }.orEmpty()
+                                LoadedContent(
+                                    text = chapterText,
+                                    epubChapters = chapters,
+                                    epubChapterStartPositions = chapterIndexPositions(chapters),
+                                    structuredChapterIndex = targetIndex,
+                                    structuredChapterOffset = targetOffset
+                                )
+                            }
                             else -> LoadedContent("")
                         }
                     } ?: LoadedContent("")
@@ -490,6 +568,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 txtCurrentPageEndByte = loadedContent.txtNextByte
                 epubChapters = loadedContent.epubChapters
                 epubChapterStartPositions = loadedContent.epubChapterStartPositions
+                structuredChapterIndex = loadedContent.structuredChapterIndex
 
                 val progress = withContext(Dispatchers.IO) {
                     database.readProgressDao().getProgress(bookId)
@@ -502,7 +581,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         .toInt()
                 } else when (format.uppercase()) {
                     "TXT" -> progress?.txtCharOffset ?: progress?.position?.toIntOrNull()
-                    "EPUB" -> restoredEpubPosition(progress)
+                    "EPUB", "CHM" -> loadedContent.structuredChapterOffset
                     else -> progress?.position?.toIntOrNull()
                 }?.coerceIn(0, currentContent.length) ?: 0
 
@@ -631,9 +710,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         contentView.textSize = readerTextSize
         configureVerticalScrollIfNeeded()
         if (currentContent.isNotEmpty()) {
-            updateProgressViews(
-                ((currentPosition.toFloat() / currentContent.length) * 1000).toInt().coerceIn(0, 1000)
-            )
+            updateProgressViews(progressForCurrentPosition())
         }
     }
 
@@ -680,6 +757,16 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun progressForCurrentPosition(): Int {
         return if (txtStreamingMode && txtTotalBytes > 0L) {
             ((currentPosition.toFloat() / txtTotalBytes) * 1000).toInt().coerceIn(0, 1000)
+        } else if (isStructuredChapterDocument()) {
+            val chapterCount = epubChapters.size.coerceAtLeast(1)
+            val chapterFraction = if (currentContent.isNotEmpty()) {
+                currentPosition.toFloat() / currentContent.length
+            } else {
+                0f
+            }.coerceIn(0f, 1f)
+            (((structuredChapterIndex + chapterFraction) / chapterCount) * 1000)
+                .toInt()
+                .coerceIn(0, 1000)
         } else if (currentContent.isNotEmpty()) {
             ((currentPosition.toFloat() / currentContent.length) * 1000).toInt().coerceIn(0, 1000)
         } else {
@@ -1147,11 +1234,18 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             Toast.makeText(this, "当前书籍没有章节目录", Toast.LENGTH_SHORT).show()
             return
         }
-        val currentIndex = epubChapterStartPositions.indexOfLast { it <= currentPosition }
-            .coerceAtLeast(0)
+        val currentIndex = if (isStructuredChapterDocument()) {
+            structuredChapterIndex
+        } else {
+            epubChapterStartPositions.indexOfLast { it <= currentPosition }.coerceAtLeast(0)
+        }
         val targetIndex = (currentIndex + direction).coerceIn(0, epubChapterStartPositions.lastIndex)
         if (targetIndex == currentIndex) {
             Toast.makeText(this, if (direction < 0) "已经是第一章" else "已经是最后一章", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (isStructuredChapterDocument()) {
+            loadStructuredChapter(targetIndex, offset = 0, saveImmediately = true, direction = direction)
             return
         }
         currentPosition = epubChapterStartPositions[targetIndex]
@@ -1267,6 +1361,16 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
 
             fun positionMeta(position: Int): String {
+                if (isStructuredChapterDocument()) {
+                    val index = (position / STRUCTURED_CHAPTER_POSITION_STRIDE)
+                        .coerceIn(0, epubChapters.lastIndex.coerceAtLeast(0))
+                    val percent = if (epubChapters.isNotEmpty()) {
+                        (index.toDouble() / epubChapters.size.toDouble() * 100.0).coerceIn(0.0, 100.0)
+                    } else {
+                        0.0
+                    }
+                    return "第 ${index + 1} 章 · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
+                }
                 val safePosition = position.coerceAtLeast(0).toLong()
                 val total = if (txtStreamingMode) txtTotalBytes else currentContent.length.toLong()
                 val safeTotal = total.coerceAtLeast(1L)
@@ -1287,6 +1391,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
             fun currentChapterIndex(): Int {
                 if (epubChapterStartPositions.isEmpty()) return -1
+                if (isStructuredChapterDocument()) return structuredChapterIndex.coerceIn(0, epubChapterStartPositions.lastIndex)
                 val current = currentPosition.coerceAtLeast(0)
                 return epubChapterStartPositions.indexOfLast { it <= current }
                     .coerceAtLeast(0)
@@ -1313,17 +1418,21 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     }
                     listView.setOnItemClickListener { _, _, which, _ ->
                         if (epubChapters.isNotEmpty()) {
-                            currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
-                            if (txtStreamingMode) {
+                            if (isStructuredChapterDocument()) {
+                                loadStructuredChapter(which, offset = 0, saveImmediately = true)
+                            } else {
+                                currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+                                if (txtStreamingMode) {
                                 showStreamingTxtPage(
                                     currentPosition.toLong(),
                                     saveImmediately = true,
                                     keepContextBeforeTarget = true
                                 )
-                            } else {
-                                displayContent()
-                                markProgressDirty()
-                                saveProgressNow()
+                                } else {
+                                    displayContent()
+                                    markProgressDirty()
+                                    saveProgressNow()
+                                }
                             }
                             dialog?.dismiss()
                         }
@@ -1626,6 +1735,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             return
         }
+        if (isStructuredChapterDocument() && currentPosition + pageSize >= currentContent.length) {
+            if (structuredChapterIndex < epubChapters.lastIndex) {
+                loadStructuredChapter(structuredChapterIndex + 1, offset = 0, saveImmediately = true, direction = 1)
+            } else {
+                Toast.makeText(this, "已经到末尾", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (currentPosition + pageSize < currentContent.length) {
             currentPosition += pageSize
             displayContent()
@@ -1648,6 +1765,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     (currentPosition.toLong() - TXT_STREAM_WINDOW_BYTES).coerceAtLeast(0L),
                     direction = -1
                 )
+            } else {
+                Toast.makeText(this, "已经到开头", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        if (isStructuredChapterDocument() && currentPosition <= 0) {
+            if (structuredChapterIndex > 0) {
+                loadStructuredChapter(structuredChapterIndex - 1, offset = Int.MAX_VALUE, saveImmediately = true, direction = -1)
             } else {
                 Toast.makeText(this, "已经到开头", Toast.LENGTH_SHORT).show()
             }
@@ -1680,6 +1805,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 (txtCurrentPageStartByte - TXT_STREAM_WINDOW_BYTES).coerceAtLeast(0L),
                 direction = -1
             )
+        } else if (isStructuredChapterDocument() && direction > 0 && structuredChapterIndex < epubChapters.lastIndex) {
+            loadStructuredChapter(structuredChapterIndex + 1, offset = 0, saveImmediately = true, direction = 1)
+        } else if (isStructuredChapterDocument() && direction < 0 && structuredChapterIndex > 0) {
+            loadStructuredChapter(structuredChapterIndex - 1, offset = Int.MAX_VALUE, saveImmediately = true, direction = -1)
         } else {
             Toast.makeText(
                 this,
@@ -1992,14 +2121,25 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         withContext(Dispatchers.IO) {
             val selectedBook = book ?: database.bookDao().getBook(bookId)
             val format = selectedBook?.format?.uppercase().orEmpty()
+            val structured = format in setOf("EPUB", "CHM") && isStructuredChapterDocument()
             val progressFraction = if (txtStreamingMode && txtTotalBytes > 0L) {
                 positionToSave.toFloat() / txtTotalBytes
+            } else if (structured) {
+                progressForCurrentPosition() / 1000f
             } else if (currentContent.isNotEmpty()) {
                 positionToSave.toFloat() / currentContent.length
             } else {
                 0f
             }
-            val epubLocation = if (format == "EPUB") epubLocationFor(positionToSave) else null
+            val epubLocation = when {
+                structured -> EpubLocation(
+                    index = structuredChapterIndex,
+                    href = epubChapters.getOrNull(structuredChapterIndex)?.name.orEmpty(),
+                    offset = positionToSave.coerceAtLeast(0)
+                )
+                format == "EPUB" -> epubLocationFor(positionToSave)
+                else -> null
+            }
             database.readProgressDao().insert(
                 ReadProgress(
                     bookId = bookId,
@@ -2012,7 +2152,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     epubSpineIndex = epubLocation?.index,
                     epubChapterHref = epubLocation?.href,
                     epubChapterOffset = epubLocation?.offset,
-                    epubProgressFraction = if (format == "EPUB") progressFraction else null
+                    epubProgressFraction = if (format in setOf("EPUB", "CHM")) progressFraction else null
                 )
             )
             database.bookDao().updateLastReadTime(bookId, System.currentTimeMillis())
@@ -2066,6 +2206,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             start
         }
+    }
+
+    private fun chapterIndexPositions(chapters: List<EpubChapter>): List<Int> {
+        return chapters.indices.map { index -> index * STRUCTURED_CHAPTER_POSITION_STRIDE }
     }
 
     private fun detectTxtChapters(content: String): List<TxtChapterIndex> {
@@ -2210,6 +2354,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
         private const val TXT_STREAM_WINDOW_BYTES = 64 * 1024
+        private const val STRUCTURED_CHAPTER_POSITION_STRIDE = 1_000_000
         private const val MAX_CACHED_TXT_CHAPTERS = 5000
         private const val SEARCH_RESULT_PAGE_SIZE = 200
         private const val MAX_SEARCH_RESULTS = 5000
@@ -2241,7 +2386,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val txtTotalBytes: Long = 0L,
         val txtStartByte: Long = 0L,
         val txtNextByte: Long = 0L,
-        val txtTargetByte: Long = 0L
+        val txtTargetByte: Long = 0L,
+        val structuredChapterIndex: Int = 0,
+        val structuredChapterOffset: Int = 0
     )
 
     private data class TxtChapterIndex(

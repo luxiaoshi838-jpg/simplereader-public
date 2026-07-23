@@ -24,7 +24,7 @@ data class ShelfBookItem(
                 val total = txtTotalLength ?: 0
                 if (total > 0) offset.toFloat() / total else 0f
             }
-            "EPUB" -> epubProgressFraction ?: 0f
+            "EPUB", "CHM" -> epubProgressFraction ?: 0f
             else -> 0f
         }
         return (fraction.coerceIn(0f, 1f) * 100).toInt()

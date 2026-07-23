@@ -16,19 +16,48 @@ object ChmParser {
     private const val MAX_ENTRY_BYTES = 8 * 1024 * 1024L
 
     fun readText(inputStream: InputStream): String {
+        return withTemporaryChm(inputStream) { file ->
+            val archive = ChmFile(file.absolutePath)
+            val combined = StringBuilder()
+            for (entry in readableEntries(archive)) {
+                if (combined.length >= MAX_TOTAL_TEXT_CHARS) break
+                val text = htmlOrPlainText(archive.retrieveObjectAsString(entry).orEmpty())
+                if (text.isBlank()) continue
+                if (combined.isNotEmpty()) combined.append("\n\n")
+                combined.append(text)
+            }
+            cleanText(combined.toString()).ifBlank { error("CHM 中没有读取到可显示内容") }
+        }
+    }
+
+    fun readChapterIndex(inputStream: InputStream): List<String> {
+        return withTemporaryChm(inputStream) { file ->
+            readableEntries(ChmFile(file.absolutePath)).map { it.path.orEmpty() }
+        }
+    }
+
+    fun readChapterText(inputStream: InputStream, chapterPath: String): String {
+        return withTemporaryChm(inputStream) { file ->
+            val archive = ChmFile(file.absolutePath)
+            val entry = readableEntries(archive).firstOrNull { it.path.orEmpty() == chapterPath }
+                ?: return@withTemporaryChm ""
+            cleanText(htmlOrPlainText(archive.retrieveObjectAsString(entry).orEmpty()))
+        }
+    }
+
+    private fun <T> withTemporaryChm(inputStream: InputStream, block: (File) -> T): T {
         val temporaryFile = File.createTempFile("simplereader_", ".chm")
         return try {
             temporaryFile.outputStream().buffered().use { output ->
                 inputStream.use { input -> input.copyTo(output) }
             }
-            readWithJChm(temporaryFile)
+            block(temporaryFile)
         } finally {
             temporaryFile.delete()
         }
     }
 
-    private fun readWithJChm(file: File): String {
-        val archive = ChmFile(file.absolutePath)
+    private fun readableEntries(archive: ChmFile): List<ChmUnitInfo> {
         val entries = mutableListOf<ChmUnitInfo>()
         archive.enumerate(
             ChmFile.CHM_ENUMERATE_NORMAL or ChmFile.CHM_ENUMERATE_FILES
@@ -42,27 +71,9 @@ object ChmParser {
                 entries += unit
             }
         }
-
-        entries.sortWith(
+        return entries.sortedWith(
             compareBy<ChmUnitInfo>({ entryPriority(it.path.orEmpty()) }, { it.path.orEmpty().lowercase() })
         )
-
-        val combined = StringBuilder()
-        for (entry in entries) {
-            if (combined.length >= MAX_TOTAL_TEXT_CHARS) break
-            val source = archive.retrieveObjectAsString(entry).orEmpty()
-            if (source.isBlank()) continue
-            val text = htmlOrPlainText(source)
-            if (text.isBlank()) continue
-            if (combined.isNotEmpty()) combined.append("\n\n")
-            combined.append(text)
-        }
-
-        return combined.toString()
-            .replace(Regex("[ \\t]+\\n"), "\n")
-            .replace(Regex("\\n{3,}"), "\n\n")
-            .trim()
-            .ifBlank { error("CHM 中没有读取到可显示内容") }
     }
 
     private fun htmlOrPlainText(source: String): String {
@@ -73,6 +84,13 @@ object ChmParser {
         } else {
             source
         }
+    }
+
+    private fun cleanText(text: String): String {
+        return text
+            .replace(Regex("[ \\t]+\\n"), "\n")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
     }
 
     private fun isReadableDocument(path: String): Boolean {
