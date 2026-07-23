@@ -33,6 +33,8 @@ jobs:
           epub_jar="$(find "$HOME/.gradle/caches/modules-2/files-2.1/io.documentnode/epub4j-core/4.2.3" -type f -name '*.jar' ! -name '*sources*' | head -n1)"
           test -s "$chm_jar"
           test -s "$epub_jar"
+          cp "$chm_jar" /tmp/jchmlib-v0.5.4.jar
+          cp "$epub_jar" /tmp/epub4j-core-4.2.3.jar
           {
             echo "CHM_JAR=$chm_jar"
             javap -classpath "$chm_jar" -public org.jchmlib.ChmFile
@@ -44,6 +46,9 @@ jobs:
           } | tee /tmp/parser-api.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: parser-v14-api
-          path: /tmp/parser-api.txt
+          name: parser-v14-probe
+          path: |
+            /tmp/parser-api.txt
+            /tmp/jchmlib-v0.5.4.jar
+            /tmp/epub4j-core-4.2.3.jar
           if-no-files-found: error
