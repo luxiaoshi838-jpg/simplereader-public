@@ -2,9 +2,10 @@
 # runtime-critical. Keep app classes stable across release shrinking.
 -keep class com.simplereader.app.** { *; }
 
-# EPUB reader.
--keep class nl.siegmann.epublib.** { *; }
--dontwarn nl.siegmann.epublib.**
+# EPUB4J reader (Apache-2.0).
+-keep class io.documentnode.epub4j.** { *; }
+-dontwarn io.documentnode.epub4j.**
+-dontwarn org.kxml2.**
 
 # Public pure-Java CHM reader (Apache-2.0).
 -keep class org.jchmlib.** { *; }

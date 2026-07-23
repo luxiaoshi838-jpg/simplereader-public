@@ -6,6 +6,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
 import android.view.View
 import android.widget.EditText
 import android.widget.GridLayout
@@ -311,20 +313,22 @@ class MainActivity : AppCompatActivity() {
         val cover = GridLayout(this).apply {
             columnCount = 2
             rowCount = 2
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(6), dp(6), dp(6), dp(6))
             setBackgroundColor(Color.rgb(232, 229, 220))
-            sortedBooks.take(4).forEach { book ->
-                addView(createBookCover(book.title, book.format, compact = true))
-            }
-            repeat((4 - sortedBooks.take(4).size).coerceAtLeast(0)) {
-                addView(TextView(this@MainActivity).apply {
-                    setBackgroundColor(Color.rgb(205, 202, 194))
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = dp(42)
-                        height = dp(48)
-                        setMargins(dp(2), dp(2), dp(2), dp(2))
+            val previewBooks = sortedBooks.take(4)
+            repeat(4) { index ->
+                val preview = previewBooks.getOrNull(index)
+                val child = if (preview != null) {
+                    createBookCover(preview.title, preview.format, compact = true).apply {
+                        layoutParams = groupPreviewLayoutParams(index)
                     }
-                })
+                } else {
+                    TextView(this@MainActivity).apply {
+                        setBackgroundColor(Color.rgb(205, 202, 194))
+                        layoutParams = groupPreviewLayoutParams(index)
+                    }
+                }
+                addView(child)
             }
         }
         card.addView(cover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112)))
@@ -345,6 +349,18 @@ class MainActivity : AppCompatActivity() {
             true
         }
         shelfGrid.addView(card)
+    }
+
+    private fun groupPreviewLayoutParams(index: Int): GridLayout.LayoutParams {
+        return GridLayout.LayoutParams(
+            GridLayout.spec(index / 2, 1, 1f),
+            GridLayout.spec(index % 2, 1, 1f)
+        ).apply {
+            width = 0
+            height = 0
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+            setGravity(Gravity.FILL)
+        }
     }
 
     private fun addBookCard(book: ShelfBookItem) {
@@ -918,20 +934,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showShelfSearch() {
+        selectedGroupId = null
+        showingHistory = false
+
         val input = EditText(this).apply {
-            hint = "搜索书名"
+            hint = "搜索书名或分组"
             setText(shelfSearchQuery)
             selectAll()
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+        }
+        val searchAction = TextView(this).apply {
+            text = "搜索"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setPadding(dp(16), 0, dp(16), 0)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(6).toFloat()
+                setColor(Color.rgb(74, 126, 172))
+            }
+        }
+        val searchRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(input, LinearLayout.LayoutParams(0, dp(52), 1f))
+            addView(searchAction, LinearLayout.LayoutParams(dp(76), dp(44)).apply {
+                marginStart = dp(8)
+            })
         }
         val resultsView = ListView(this)
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
-            addView(input)
-            addView(
-                resultsView,
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(420))
-            )
+            addView(searchRow)
+            addView(resultsView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(420)))
         }
         var currentResults = emptyList<ShelfBookItem>()
 
@@ -959,47 +996,55 @@ class MainActivity : AppCompatActivity() {
                     "${book.title}\n${groupNameFor(book)} · ${book.format} · 已读 ${book.progressPercent()}%"
                 }
             }
-            resultsView.adapter = object : ArrayAdapter<String>(
-                this,
-                android.R.layout.simple_list_item_1,
-                labels
-            ) {
+            resultsView.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
                 override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
-                    val view = super.getView(position, convertView, parent)
-                    (view as? TextView)?.apply {
-                        maxLines = 2
-                        textSize = 15f
+                    return super.getView(position, convertView, parent).also { view ->
+                        (view as? TextView)?.apply {
+                            maxLines = 2
+                            textSize = 15f
+                        }
                     }
-                    return view
                 }
             }
             resultsView.setOnItemClickListener { _, _, which, _ ->
-                currentResults.getOrNull(which)?.let { book ->
-                    openBook(book.id)
-                }
+                currentResults.getOrNull(which)?.let { openBook(it.id) }
             }
         }
 
+        fun executeSearch(): Boolean {
+            shelfSearchQuery = input.text.toString().trim()
+            selectedGroupId = null
+            showingHistory = false
+            renderResults(shelfSearchQuery)
+            return true
+        }
+
         renderResults(shelfSearchQuery)
+        searchAction.setOnClickListener { executeSearch() }
+        input.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
+            ) executeSearch() else false
+        }
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("搜索书架")
             .setView(container)
-            .setNegativeButton("关闭", null)
             .setNeutralButton("清除", null)
-            .setPositiveButton("搜索", null)
+            .setNegativeButton("关闭", null)
             .create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                shelfSearchQuery = input.text.toString().trim()
-                selectedGroupId = null
-                renderResults(shelfSearchQuery)
-            }
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 shelfSearchQuery = ""
                 input.setText("")
                 renderResults("")
-                updateUI()
             }
+        }
+        dialog.setOnDismissListener {
+            shelfSearchQuery = ""
+            selectedGroupId = null
+            showingHistory = false
+            updateUI()
         }
         dialog.show()
     }
