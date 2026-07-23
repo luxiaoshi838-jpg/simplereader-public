@@ -13,12 +13,11 @@ permissions:
 
 jobs:
   apply:
-    # Run only for the dedicated v13 branch; the workflow deletes itself after success.
     if: github.actor != 'github-actions[bot]' && (github.head_ref == 'agent/v13-epub-chm-theme-grid' || github.ref_name == 'agent/v13-epub-chm-theme-grid')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout v13 branch
+      - name: Checkout current v13 branch
         uses: actions/checkout@v4
         with:
           ref: agent/v13-epub-chm-theme-grid
@@ -51,8 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/apply_v13_ui.py
-          python3 tools/fix_v13_test.py
-          rm -f tools/apply_v13_ui.py tools/fix_v13_test.py
+          rm -f tools/apply_v13_ui.py
           rm -f .github/workflows/apply-v13-fixes.yml
           rm -f .github/workflows/export-v13-source.yml
           chmod +x ./gradlew
@@ -94,6 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -f v13-build.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
