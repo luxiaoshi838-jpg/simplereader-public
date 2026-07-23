@@ -1,0 +1,100 @@
+name: Apply and verify v14 real-file fixes
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Apply v14 verified changes') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SIMPLE_READER_VERSION_CODE: "2026072314"
+      SIMPLE_READER_VERSION_NAME: "2026.07.23.real-epub-chm-continuous.1"
+      EXPECTED_PATCH_SHA256: "9af1266dc0e92e27ccc75b5eece361b47b80d1688902333cbaaecd8068525104"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode and verify reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03 \
+            | base64 --decode \
+            | gzip --decompress > "$RUNNER_TEMP/v14.patch"
+          actual="$(sha256sum "$RUNNER_TEMP/v14.patch" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_PATCH_SHA256"
+          git apply --check "$RUNNER_TEMP/v14.patch"
+          git apply "$RUNNER_TEMP/v14.patch"
+
+      - name: Run unit tests and Debug Release builds
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee v14-gradle-build.log
+
+      - name: Verify v14 source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'fun readCoverImage' app/src/main/java/com/simplereader/app/parser/EpubParser.kt
+          grep -Fq 'book.coverImage' app/src/main/java/com/simplereader/app/parser/EpubParser.kt
+          grep -Fq 'archive.retrieveObject(entry)' app/src/main/java/com/simplereader/app/parser/ChmParser.kt
+          grep -Fq 'GB18030' app/src/main/java/com/simplereader/app/parser/ChmParser.kt
+          grep -Fq 'StructuredReadingBuffer' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'EpubParser.readCoverImage' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          ! grep -Fq 'retrieveObjectAsString(entry)' app/src/main/java/com/simplereader/app/parser/ChmParser.kt
+          ! grep -Fq 'offset = Int.MAX_VALUE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
+
+      - name: Commit verified source changes
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            app/src/main/java/com/simplereader/app/parser/ChmParser.kt \
+            app/src/main/java/com/simplereader/app/parser/EpubParser.kt \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/StructuredReadingBuffer.kt \
+            app/src/test/java/com/simplereader/app/parser/ChmParserEncodingTest.kt \
+            app/src/test/java/com/simplereader/app/parser/EpubParserTest.kt \
+            app/src/test/java/com/simplereader/app/parser/RealSampleRegressionContractTest.kt \
+            app/src/test/java/com/simplereader/app/ui/StructuredReadingBufferTest.kt
+          git commit -m "Apply v14 verified changes"
+          git push origin HEAD:agent/v14-real-epub-chm-continuous
+
+      - name: Upload v14 diagnostics and APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader_v14_build_${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/reports/tests/
+            v14-gradle-build.log
+          if-no-files-found: warn
+          retention-days: 7
