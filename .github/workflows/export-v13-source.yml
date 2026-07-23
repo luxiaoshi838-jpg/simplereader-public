@@ -1,0 +1,29 @@
+name: Export v13 source snapshot
+
+on:
+  push:
+    branches:
+      - agent/v13-reader-theme-shelf
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude='*/build' --exclude='*/build/*' -czf "$RUNNER_TEMP/simplereader-v13-source.tar.gz" .
+          cp "$RUNNER_TEMP/simplereader-v13-source.tar.gz" simplereader-v13-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v13-source
+          path: simplereader-v13-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
