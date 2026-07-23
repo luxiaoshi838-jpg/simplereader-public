@@ -39,17 +39,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wc -c .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
-          sha256sum .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
+          {
+            echo "Expected local chunks:"
+            echo "patch00 4500 495da7a4d09572f6ee34c5617f51ef2d539c70d2ff3c59767ddb3b918781da43"
+            echo "patch01 4500 cf9b5e538b21965e9c9ecb69c0f7702c830f702e386ed7ac867894f0346f4ad2"
+            echo "patch02 4500 ec2ce878c4413d9c9dd6fb97bbbbf1a5f801546f94c64dd2c646a8e90c62beda"
+            echo "patch03 3360 aef80a4c5e1487bac380d2202ab0506be36b9ac9388f45fa7904772277204be4"
+            echo "Actual repository chunks:"
+            wc -c .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
+            sha256sum .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
+          } | tee v14-chunk-diagnostics.txt
           cat .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03 \
             | tr -d '\r\n\t ' > "$RUNNER_TEMP/v14.patch.gz.b64"
           encoded_actual="$(sha256sum "$RUNNER_TEMP/v14.patch.gz.b64" | awk '{print $1}')"
-          echo "combined base64 sha256=$encoded_actual"
+          echo "combined base64 sha256=$encoded_actual" | tee -a v14-chunk-diagnostics.txt
           test "$encoded_actual" = "$EXPECTED_BASE64_SHA256"
           base64 --decode "$RUNNER_TEMP/v14.patch.gz.b64" \
             | gzip --decompress > "$RUNNER_TEMP/v14.patch"
           actual="$(sha256sum "$RUNNER_TEMP/v14.patch" | awk '{print $1}')"
-          echo "decoded patch sha256=$actual"
+          echo "decoded patch sha256=$actual" | tee -a v14-chunk-diagnostics.txt
           test "$actual" = "$EXPECTED_PATCH_SHA256"
           git apply --check "$RUNNER_TEMP/v14.patch"
           git apply "$RUNNER_TEMP/v14.patch"
@@ -104,5 +112,6 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/reports/tests/
             v14-gradle-build.log
+            v14-chunk-diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
