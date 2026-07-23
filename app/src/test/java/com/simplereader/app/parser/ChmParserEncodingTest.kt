@@ -1,5 +1,6 @@
 package com.simplereader.app.parser
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,5 +20,17 @@ class ChmParserEncodingTest {
         val decoded = ChmParser.decodeDocumentBytes(bytes)
         assertTrue(decoded.contains("第一章"))
         assertTrue(decoded.contains("中文内容"))
+    }
+
+    @Test
+    fun `extracts document write chapters and html entities`() {
+        val source = """document.write("第一章\n"); document.write('正文&nbsp;内容\n下一行');"""
+
+        val text = ChmParser.extractReadableText(source)
+
+        assertTrue(text.contains("第一章"))
+        assertTrue(text.contains("正文 内容"))
+        assertTrue(text.contains("下一行"))
+        assertFalse(text.contains("document.write"))
     }
 }
