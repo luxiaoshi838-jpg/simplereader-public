@@ -97,9 +97,10 @@ android {
 
 configurations.configureEach {
     exclude(group = "org.apache.tika")
-    // Android already supplies the XmlPull interfaces. Keeping the Maven copy
-    // makes R8 see the same class as both a platform and a program class.
+    // Android supplies the XmlPull API. kxml2 2.3.0 embeds another copy of
+    // org.xmlpull.v1, so both writer-only EPUB dependencies are removed.
     exclude(group = "xmlpull", module = "xmlpull")
+    exclude(group = "net.sf.kxml", module = "kxml2")
 }
 
 dependencies {
