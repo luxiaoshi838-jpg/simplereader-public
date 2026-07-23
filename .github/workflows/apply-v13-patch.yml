@@ -46,6 +46,21 @@ jobs:
           git apply --check "$RUNNER_TEMP/v13.patch"
           git apply "$RUNNER_TEMP/v13.patch"
 
+      - name: Apply Android EditText compatibility correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/java/com/simplereader/app/ui/MainActivity.kt')
+          text = path.read_text(encoding='utf-8-sig')
+          old = '            singleLine = true\n'
+          new = '            setSingleLine(true)\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected exactly one singleLine assignment, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+
       - name: Run tests and build debug/release
         shell: bash
         run: |
@@ -60,6 +75,7 @@ jobs:
           grep -Fq 'implementation("io.documentnode:epub4j-core:4.2.3")' app/build.gradle.kts
           grep -Fq 'text = "添"' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'EditorInfo.IME_ACTION_SEARCH' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -Fq 'setSingleLine(true)' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -Fq 'GridLayout.spec(index / 2, 1, 1f)' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -Fq 'NIGHT_BACKGROUND' app/src/main/java/com/simplereader/app/ui/ReaderAppearance.kt
           test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
