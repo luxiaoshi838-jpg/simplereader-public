@@ -68,6 +68,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var txtTotalBytes: Long = 0L
     private var txtCurrentPageStartByte: Long = 0L
     private var txtCurrentPageEndByte: Long = 0L
+    private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
     private val pageSize: Int = 2000
@@ -418,6 +419,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
+    private fun streamingWindowStartForTarget(targetByte: Long): Long {
+        return (targetByte - TXT_STREAM_WINDOW_BYTES / 3L).coerceAtLeast(0L)
+    }
+
     private fun loadBookContent(documentFile: DocumentFile, format: String) {
         currentReadableDocument = documentFile
         lifecycleScope.launch {
@@ -436,11 +441,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 val savedOffset = savedProgress?.position?.toLongOrNull()
                                     ?: savedProgress?.txtCharOffset?.toLong()
                                     ?: 0L
+                                val targetOffset = savedOffset.coerceIn(0L, fileSize.coerceAtLeast(0L))
                                 val window = contentResolver.openInputStream(documentFile.uri)?.let { stream ->
                                     TxtParser.readWindow(
                                         inputStream = stream,
                                         charsetName = charsetName,
-                                        startByte = savedOffset.coerceIn(0L, fileSize.coerceAtLeast(0L)),
+                                        startByte = streamingWindowStartForTarget(targetOffset),
                                         maxBytes = TXT_STREAM_WINDOW_BYTES
                                     )
                                 } ?: error("Cannot open TXT stream")
@@ -457,7 +463,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                     txtCharsetName = charsetName,
                                     txtTotalBytes = fileSize,
                                     txtStartByte = window.startByte,
-                                    txtNextByte = window.nextByte
+                                    txtNextByte = window.nextByte,
+                                    txtTargetByte = targetOffset
                                 )
                             }
                             "EPUB" -> {
@@ -489,7 +496,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
                 progressLoaded = true
                 currentPosition = if (txtStreamingMode) {
-                    loadedContent.txtStartByte.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    loadedContent.txtTargetByte
+                        .coerceIn(loadedContent.txtStartByte, loadedContent.txtNextByte)
+                        .coerceAtMost(Int.MAX_VALUE.toLong())
+                        .toInt()
                 } else when (format.uppercase()) {
                     "TXT" -> progress?.txtCharOffset ?: progress?.position?.toIntOrNull()
                     "EPUB" -> restoredEpubPosition(progress)
@@ -585,7 +595,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     val windowBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
                     val fraction = ((currentPosition.toLong() - txtCurrentPageStartByte).toDouble() / windowBytes)
                         .coerceIn(0.0, 1.0)
+                    suppressNextScrollProgress = true
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
+                    readerScrollView.post { suppressNextScrollProgress = false }
                 }
             } else {
                 readerScrollView.scrollTo(0, 0)
@@ -605,7 +617,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
                 if (maxScroll > 0 && currentContent.isNotEmpty()) {
                     val fraction = (currentPosition.toFloat() / currentContent.length).coerceIn(0f, 1f)
+                    suppressNextScrollProgress = true
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
+                    readerScrollView.post { suppressNextScrollProgress = false }
                 }
             }
         } else {
@@ -644,6 +658,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun updateVerticalScrollProgress(scrollY: Int) {
+        if (suppressNextScrollProgress) return
         if (pageTurnMode != TURN_MODE_VERTICAL || !openSucceeded || currentContent.isBlank()) return
         val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
         if (maxScroll <= 0) return
@@ -805,7 +820,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             saveReaderPrefs()
             updateSettingsLabels()
             if (txtStreamingMode) {
-                showStreamingTxtPage(hit.position, saveImmediately = true)
+                showStreamingTxtPage(hit.position, saveImmediately = true, keepContextBeforeTarget = true)
             } else {
                 currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
                 displayContent()
@@ -968,7 +983,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val adapter = ReaderSearchResultAdapter { hit ->
             dialog?.dismiss()
             if (txtStreamingMode) {
-                showStreamingTxtPage(hit.position, saveImmediately = true)
+                showStreamingTxtPage(hit.position, saveImmediately = true, keepContextBeforeTarget = true)
             } else {
                 currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
                 displayContent()
@@ -1141,7 +1156,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
         currentPosition = epubChapterStartPositions[targetIndex]
         if (txtStreamingMode) {
-            showStreamingTxtPage(currentPosition.toLong(), saveImmediately = true, direction = direction)
+            showStreamingTxtPage(
+                currentPosition.toLong(),
+                saveImmediately = true,
+                direction = direction,
+                keepContextBeforeTarget = direction == 0
+            )
         } else {
             displayContent()
             animatePageTurn(direction)
@@ -1216,7 +1236,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
             }
 
-            fun twoLineAdapter(labels: List<CharSequence>, highlightedIndex: Int = -1): ArrayAdapter<CharSequence> {
+            fun boundedLineAdapter(
+                labels: List<CharSequence>,
+                highlightedIndex: Int = -1,
+                maxLines: Int = 2
+            ): ArrayAdapter<CharSequence> {
                 return object : ArrayAdapter<CharSequence>(
                     this@ReaderActivity,
                     android.R.layout.simple_list_item_1,
@@ -1225,7 +1249,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
                         val view = super.getView(position, convertView, parent)
                         (view as? TextView)?.apply {
-                            maxLines = 2
+                            this.maxLines = maxLines
                             ellipsize = android.text.TextUtils.TruncateAt.END
                             if (position == highlightedIndex) {
                                 textSize = 15f
@@ -1283,7 +1307,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                             catalogLabel(index, title, position, index == currentChapter)
                         }
                     }
-                    listView.adapter = twoLineAdapter(labels, currentChapter)
+                    listView.adapter = boundedLineAdapter(labels, currentChapter, maxLines = 2)
                     if (currentChapter >= 0) {
                         listView.post { listView.setSelection(currentChapter) }
                     }
@@ -1291,7 +1315,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         if (epubChapters.isNotEmpty()) {
                             currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
                             if (txtStreamingMode) {
-                                showStreamingTxtPage(currentPosition.toLong(), saveImmediately = true)
+                                showStreamingTxtPage(
+                                    currentPosition.toLong(),
+                                    saveImmediately = true,
+                                    keepContextBeforeTarget = true
+                                )
                             } else {
                                 displayContent()
                                 markProgressDirty()
@@ -1307,7 +1335,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     } else {
                         bookmarks.map(::bookmarkListLabel)
                     }
-                    listView.adapter = twoLineAdapter(labels)
+                    listView.adapter = boundedLineAdapter(labels, maxLines = 3)
                     listView.setOnItemClickListener { _, _, which, _ ->
                         bookmarks.getOrNull(which)?.let {
                             jumpToBookmark(it)
@@ -1557,7 +1585,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (txtStreamingMode) {
             val target = bookmark.position.toLongOrNull()
                 ?: return Toast.makeText(this, "书签位置无效", Toast.LENGTH_SHORT).show()
-            showStreamingTxtPage(target, saveImmediately = true)
+            showStreamingTxtPage(target, saveImmediately = true, keepContextBeforeTarget = true)
             return
         }
         val target = bookmark.position.toIntOrNull()
@@ -1741,7 +1769,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (txtStreamingMode) {
             val targetByte = ((progress / 1000f) * txtTotalBytes).toLong()
                 .coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
-            showStreamingTxtPage(targetByte, saveImmediately = true)
+            showStreamingTxtPage(targetByte, saveImmediately = true, keepContextBeforeTarget = true)
             return
         }
         if (currentContent.isEmpty()) return
@@ -1774,18 +1802,29 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
-    private fun showStreamingTxtPage(byteOffset: Long, saveImmediately: Boolean = false, direction: Int = 0) {
+    private fun showStreamingTxtPage(
+        byteOffset: Long,
+        saveImmediately: Boolean = false,
+        direction: Int = 0,
+        keepContextBeforeTarget: Boolean = false
+    ) {
         val selectedBook = book ?: return
         val targetUri = Uri.parse(selectedBook.filePath)
         val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
         lifecycleScope.launch {
             try {
+                val targetByte = byteOffset.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
+                val windowStart = if (keepContextBeforeTarget) {
+                    streamingWindowStartForTarget(targetByte)
+                } else {
+                    targetByte
+                }
                 val window = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(targetUri)?.let { stream ->
                         TxtParser.readWindow(
                             inputStream = stream,
                             charsetName = charsetName,
-                            startByte = byteOffset.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L)),
+                            startByte = windowStart,
                             maxBytes = TXT_STREAM_WINDOW_BYTES
                         )
                     }
@@ -1793,7 +1832,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 currentContent = window.text
                 txtCurrentPageStartByte = window.startByte
                 txtCurrentPageEndByte = window.nextByte
-                currentPosition = byteOffset
+                currentPosition = targetByte
                     .coerceIn(window.startByte, window.nextByte)
                     .coerceAtMost(Int.MAX_VALUE.toLong())
                     .toInt()
@@ -1921,7 +1960,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
             }
             if (target != null) {
-                showStreamingTxtPage(target, saveImmediately = true)
+                showStreamingTxtPage(target, saveImmediately = true, keepContextBeforeTarget = true)
                 readerControls.visibility = View.GONE
             } else {
                 Toast.makeText(this@ReaderActivity, "没有找到：$query", Toast.LENGTH_SHORT).show()
@@ -2201,7 +2240,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val txtCharsetName: String? = null,
         val txtTotalBytes: Long = 0L,
         val txtStartByte: Long = 0L,
-        val txtNextByte: Long = 0L
+        val txtNextByte: Long = 0L,
+        val txtTargetByte: Long = 0L
     )
 
     private data class TxtChapterIndex(
