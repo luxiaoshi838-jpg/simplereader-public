@@ -1,0 +1,80 @@
+name: Apply and verify v13 patch
+
+on:
+  push:
+    branches:
+      - agent/v13-reader-theme-shelf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, 'Apply v13 verified changes') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      SIMPLE_READER_VERSION_CODE: "2026072313"
+      SIMPLE_READER_VERSION_NAME: "2026.07.23.structured-formats-theme-shelf.1"
+      EXPECTED_PATCH_SHA256: "be1f349dacbc56a863377bfa59f390b815084d764595489b0fbd3b325606a387"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v13-reader-theme-shelf
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode and verify reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .v13/v13.patch.gz.b64 | gzip --decompress > "$RUNNER_TEMP/v13.patch"
+          actual="$(sha256sum "$RUNNER_TEMP/v13.patch" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_PATCH_SHA256"
+          git apply --check "$RUNNER_TEMP/v13.patch"
+          git apply "$RUNNER_TEMP/v13.patch"
+
+      - name: Run tests and build debug/release
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee v13-gradle-build.log
+
+      - name: Verify expected v13 source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'implementation("io.documentnode:epub4j-core:4.2.3")' app/build.gradle.kts
+          grep -Fq 'text = "添"' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'EditorInfo.IME_ACTION_SEARCH' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -Fq 'GridLayout.spec(index / 2, 1, 1f)' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -Fq 'NIGHT_BACKGROUND' app/src/main/java/com/simplereader/app/ui/ReaderAppearance.kt
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
+
+      - name: Commit verified source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add THIRD_PARTY_NOTICES.md app/build.gradle.kts app/proguard-rules.pro app/src/main app/src/test
+          git commit -m "Apply v13 verified changes"
+          git push origin HEAD:agent/v13-reader-theme-shelf
+
+      - name: Upload unsigned v13 release
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader_v13_unsigned
+          path: |
+            app/build/outputs/apk/release/*.apk
+            v13-gradle-build.log
+          if-no-files-found: error
+          retention-days: 7
