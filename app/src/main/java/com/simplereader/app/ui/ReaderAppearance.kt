@@ -8,8 +8,9 @@ object ReaderAppearance {
     private const val PREF_BACKGROUND = "background"
     private const val PREF_TEXT_COLOR = "text_color"
     private const val PREF_TEXT_SIZE = "text_size"
-    private const val DEFAULT_BACKGROUND = 0xFFF5E9C8.toInt()
-    private const val DEFAULT_TEXT = 0xFF3B3428.toInt()
+
+    const val DAY_BACKGROUND = 0xFFF5E9C8.toInt()
+    const val DAY_TEXT = 0xFF3B3428.toInt()
     const val NIGHT_BACKGROUND = 0xFF202124.toInt()
     const val NIGHT_TEXT = 0xFFE8EAED.toInt()
 
@@ -20,8 +21,8 @@ object ReaderAppearance {
 
     fun palette(context: Context): Palette {
         val prefs = context.getSharedPreferences(READER_PREFS, Context.MODE_PRIVATE)
-        val savedBackground = prefs.getInt(PREF_BACKGROUND, DEFAULT_BACKGROUND)
-        val savedText = prefs.getInt(PREF_TEXT_COLOR, DEFAULT_TEXT)
+        val savedBackground = prefs.getInt(PREF_BACKGROUND, DAY_BACKGROUND)
+        val savedText = prefs.getInt(PREF_TEXT_COLOR, DAY_TEXT)
         return Palette(
             backgroundColor = if (savedBackground == Color.BLACK) NIGHT_BACKGROUND else savedBackground,
             textColor = if (savedBackground == Color.BLACK && savedText == Color.WHITE) NIGHT_TEXT else savedText
@@ -34,6 +35,18 @@ object ReaderAppearance {
             .putInt(PREF_BACKGROUND, backgroundColor)
             .putInt(PREF_TEXT_COLOR, textColor)
             .apply()
+    }
+
+    fun nextDayNightPalette(currentBackgroundColor: Int): Palette {
+        return if (isDark(currentBackgroundColor)) {
+            Palette(DAY_BACKGROUND, DAY_TEXT)
+        } else {
+            Palette(NIGHT_BACKGROUND, NIGHT_TEXT)
+        }
+    }
+
+    fun dayNightButtonLabel(currentBackgroundColor: Int): String {
+        return if (isDark(currentBackgroundColor)) "日间" else "夜间"
     }
 
     fun textSize(context: Context): Float {
