@@ -1,4 +1,4 @@
-name: Inspect jchmlib API for v14
+name: Inspect parser APIs for v14
 
 on:
   push:
@@ -23,23 +23,27 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Resolve dependency and inspect public API
+      - name: Resolve dependencies and inspect public APIs
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :app:dependencies --configuration debugRuntimeClasspath --console=plain >/tmp/dependencies.txt
-          jar_path="$(find "$HOME/.gradle/caches/modules-2/files-2.1/com.github.chimenchen/jchmlib/v0.5.4" -type f -name '*.jar' ! -name '*sources*' | head -n1)"
-          test -s "$jar_path"
+          chm_jar="$(find "$HOME/.gradle/caches/modules-2/files-2.1/com.github.chimenchen/jchmlib/v0.5.4" -type f -name '*.jar' ! -name '*sources*' | head -n1)"
+          epub_jar="$(find "$HOME/.gradle/caches/modules-2/files-2.1/io.documentnode/epub4j-core/4.2.3" -type f -name '*.jar' ! -name '*sources*' | head -n1)"
+          test -s "$chm_jar"
+          test -s "$epub_jar"
           {
-            echo "JAR=$jar_path"
-            javap -classpath "$jar_path" -public org.jchmlib.ChmFile
-            javap -classpath "$jar_path" -public org.jchmlib.ChmUnitInfo
-            echo "--- package entries ---"
-            jar tf "$jar_path" | grep '^org/jchmlib/' | sort
-          } | tee /tmp/jchmlib-api.txt
+            echo "CHM_JAR=$chm_jar"
+            javap -classpath "$chm_jar" -public org.jchmlib.ChmFile
+            javap -classpath "$chm_jar" -public org.jchmlib.ChmUnitInfo
+            echo "EPUB_JAR=$epub_jar"
+            javap -classpath "$epub_jar" -public io.documentnode.epub4j.domain.Book
+            javap -classpath "$epub_jar" -public io.documentnode.epub4j.domain.Resource
+            javap -classpath "$epub_jar" -public io.documentnode.epub4j.domain.Resources
+          } | tee /tmp/parser-api.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: jchmlib-v14-api
-          path: /tmp/jchmlib-api.txt
+          name: parser-v14-api
+          path: /tmp/parser-api.txt
           if-no-files-found: error
