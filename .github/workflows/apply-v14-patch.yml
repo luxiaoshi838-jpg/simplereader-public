@@ -21,6 +21,7 @@ jobs:
       SIMPLE_READER_VERSION_CODE: "2026072314"
       SIMPLE_READER_VERSION_NAME: "2026.07.23.real-epub-chm-continuous.1"
       EXPECTED_PATCH_SHA256: "9af1266dc0e92e27ccc75b5eece361b47b80d1688902333cbaaecd8068525104"
+      EXPECTED_BASE64_SHA256: "73465f56265da220a402d75a35c1a00f33af1fe95373bf8f9a228cffbb4765d7"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,10 +39,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          wc -c .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
+          sha256sum .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03
           cat .v14/patch00 .v14/patch01 .v14/patch02 .v14/patch03 \
-            | base64 --decode \
+            | tr -d '\r\n\t ' > "$RUNNER_TEMP/v14.patch.gz.b64"
+          encoded_actual="$(sha256sum "$RUNNER_TEMP/v14.patch.gz.b64" | awk '{print $1}')"
+          echo "combined base64 sha256=$encoded_actual"
+          test "$encoded_actual" = "$EXPECTED_BASE64_SHA256"
+          base64 --decode "$RUNNER_TEMP/v14.patch.gz.b64" \
             | gzip --decompress > "$RUNNER_TEMP/v14.patch"
           actual="$(sha256sum "$RUNNER_TEMP/v14.patch" | awk '{print $1}')"
+          echo "decoded patch sha256=$actual"
           test "$actual" = "$EXPECTED_PATCH_SHA256"
           git apply --check "$RUNNER_TEMP/v14.patch"
           git apply "$RUNNER_TEMP/v14.patch"
