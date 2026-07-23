@@ -97,6 +97,8 @@ android {
 
 configurations.configureEach {
     exclude(group = "org.apache.tika")
+    exclude(group = "xmlpull", module = "xmlpull")
+    exclude(group = "net.sf.kxml", module = "kxml2")
 }
 
 dependencies {
@@ -117,7 +119,8 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Public, established readers: Mozilla charset detection and pure-Java JChm.
+    // Mature public EPUB/CHM parsers.
+    implementation("io.documentnode:epub4j-core:4.2.3")
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
     implementation("com.sorrowblue.sevenzipjbinding:7-Zip-JBinding-4Android:16.02-2.4")

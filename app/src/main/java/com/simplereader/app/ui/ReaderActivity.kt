@@ -1,4 +1,4 @@
-﻿package com.simplereader.app.ui
+package com.simplereader.app.ui
 
 import android.net.Uri
 import android.content.Intent
@@ -6,11 +6,13 @@ import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -112,7 +114,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         readerControls = findViewById(R.id.readerControls)
         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
         loadReaderPrefs()
-        applyReaderPalette(currentBackgroundColor, currentTextColor)
+        applyActiveReaderMode(ReaderAppearance.palette(this))
         gestureDetector = GestureDetector(this, this)
         readerScrollView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
@@ -143,16 +145,23 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        menu.add(Menu.NONE, MENU_PANEL, Menu.NONE, "目录/书签")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-        menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-        menu.add(Menu.NONE, MENU_BOOKMARKS, Menu.NONE, "书签列表")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-        menu.add(Menu.NONE, MENU_TOC, Menu.NONE, "目录")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+        val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
+        addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        addItem.actionView = TextView(this).apply {
+            text = "添"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            contentDescription = "添加书签"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(239, 122, 40))
+            }
+            layoutParams = android.widget.FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(8)
+            }
+            setOnClickListener { addBookmark() }
+        }
         return true
     }
 
@@ -446,7 +455,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     contentResolver.openInputStream(targetUri)?.use { input ->
                         when (selectedBook.format.uppercase()) {
                             "EPUB" -> EpubParser.readChapterText(input, chapter.name)
-                            "CHM" -> ChmParser.readChapterText(input, chapter.name)
+                            "CHM" -> ChmParser.readChapterText(input, chapter.name, cacheDir)
                             else -> ""
                         }
                     }.orEmpty()
@@ -532,12 +541,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 )
                             }
                             "CHM" -> {
-                                val entries = ChmParser.readChapterIndex(input)
-                                val chapters = entries.map { path ->
-                                    EpubChapter(
-                                        name = path,
-                                        text = path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path }
-                                    )
+                                val entries = ChmParser.readChapterIndex(input, cacheDir)
+                                val chapters = entries.map { chapter ->
+                                    EpubChapter(name = chapter.path, text = chapter.title)
                                 }
                                 val progress = database.readProgressDao().getProgress(bookId)
                                 val targetIndex = (progress?.epubSpineIndex ?: 0)
@@ -545,7 +551,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 val targetOffset = progress?.epubChapterOffset ?: 0
                                 val chapterText = chapters.getOrNull(targetIndex)?.name?.let { chapterName ->
                                     contentResolver.openInputStream(documentFile.uri)?.use { chapterInput ->
-                                        ChmParser.readChapterText(chapterInput, chapterName)
+                                        ChmParser.readChapterText(chapterInput, chapterName, cacheDir)
                                     }
                                 }.orEmpty()
                                 LoadedContent(
@@ -632,7 +638,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             toggleReaderSettingsPanel()
         }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
-            applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
+            applyActiveReaderMode(ReaderAppearance.toggleMode(this))
         }
         findViewById<TextView>(R.id.moreReaderButton).setOnClickListener {
             showReaderMoreActions()
@@ -775,12 +781,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun applyReaderPalette(backgroundColor: Int, textColor: Int) {
-        currentBackgroundColor = backgroundColor
-        currentTextColor = textColor
-        contentView.setBackgroundColor(backgroundColor)
-        contentView.setTextColor(textColor)
-        window.decorView.setBackgroundColor(backgroundColor)
-        ReaderAppearance.savePalette(this, backgroundColor, textColor)
+        ReaderAppearance.saveDayPalette(this, backgroundColor, textColor)
+        applyActiveReaderMode(ReaderAppearance.palette(this))
+    }
+
+    private fun applyActiveReaderMode(palette: ReaderAppearance.Palette) {
+        currentBackgroundColor = palette.backgroundColor
+        currentTextColor = palette.textColor
+        contentView.setBackgroundColor(palette.backgroundColor)
+        contentView.setTextColor(palette.textColor)
+        window.decorView.setBackgroundColor(palette.backgroundColor)
+        updateThemeControls()
     }
 
     private fun loadReaderPrefs() {
@@ -797,8 +808,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         getSharedPreferences(READER_PREFS, MODE_PRIVATE)
             .edit()
             .putFloat(PREF_TEXT_SIZE, readerTextSize)
-            .putInt(PREF_BACKGROUND, currentBackgroundColor)
-            .putInt(PREF_TEXT_COLOR, currentTextColor)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
             .apply()
@@ -1274,7 +1283,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun showCatalogBookmarkPanelV2(showBookmarksFirst: Boolean = false) {
         lifecycleScope.launch {
-            val bookmarks = withContext(Dispatchers.IO) {
+            var bookmarks = withContext(Dispatchers.IO) {
                 database.bookmarkDao().getBookmarks(bookId).first()
             }
             var showingCatalog = !showBookmarksFirst
@@ -1407,7 +1416,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
                     } else {
                         epubChapters.mapIndexed { index, chapter ->
-                            val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+                            val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
                             val position = epubChapterStartPositions.getOrElse(index) { 0 }
                             catalogLabel(index, title, position, index == currentChapter)
                         }
@@ -1452,7 +1461,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         }
                     }
                     listView.setOnItemLongClickListener { _, _, which, _ ->
-                        bookmarks.getOrNull(which)?.let { confirmDeleteBookmark(it) }
+                        bookmarks.getOrNull(which)?.let { bookmark ->
+                            confirmDeleteBookmark(bookmark) {
+                                bookmarks = bookmarks.filterNot { it.id == bookmark.id }
+                                render()
+                            }
+                        }
                         true
                     }
                 }
@@ -1510,30 +1524,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun showReaderSettingsV2() {
-        val items = arrayOf("字号减小", "字号增大", "浅色背景", "护眼背景", "黑色夜间", "白色背景")
+        val items = arrayOf("字号减小", "字号增大", "纸张背景（日间）", "护眼背景（日间）", "白色背景（日间）", "切换日间 / 夜间")
         AlertDialog.Builder(this)
             .setTitle("阅读设置")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> {
                         readerTextSize = (readerTextSize - 2f).coerceAtLeast(14f)
+                        saveReaderPrefs()
                         displayContent()
                     }
                     1 -> {
                         readerTextSize = (readerTextSize + 2f).coerceAtMost(34f)
+                        saveReaderPrefs()
                         displayContent()
                     }
                     2 -> applyReaderPalette(Color.rgb(245, 233, 200), Color.rgb(59, 52, 40))
                     3 -> applyReaderPalette(Color.rgb(218, 238, 205), Color.rgb(48, 60, 42))
-                    4 -> applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
-                    5 -> applyReaderPalette(Color.WHITE, Color.rgb(35, 35, 35))
+                    4 -> applyReaderPalette(Color.WHITE, Color.rgb(35, 35, 35))
+                    5 -> applyActiveReaderMode(ReaderAppearance.toggleMode(this))
                 }
             }
             .setNegativeButton("关闭", null)
             .show()
     }
 
-    private fun confirmDeleteBookmark(bookmark: Bookmark) {
+    private fun confirmDeleteBookmark(bookmark: Bookmark, onDeleted: () -> Unit = {}) {
         AlertDialog.Builder(this)
             .setTitle("删除书签")
             .setMessage(bookmark.content.ifBlank { "位置 ${bookmark.position}" })
@@ -1543,6 +1559,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     withContext(Dispatchers.IO) {
                         database.bookmarkDao().delete(bookmark)
                     }
+                    onDeleted()
                     Toast.makeText(this@ReaderActivity, "已删除书签", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -1569,7 +1586,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         val items = epubChapters.mapIndexed { index, chapter ->
-            val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+            val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
             "${index + 1}. $title"
         }.toTypedArray()
         AlertDialog.Builder(this)
@@ -1844,8 +1861,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             saveReaderPrefs()
         }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
-            applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
-            saveReaderPrefs()
+            applyActiveReaderMode(ReaderAppearance.toggleMode(this))
         }
         findViewById<TextView>(R.id.turnModeOverlapButton).setOnClickListener { setTurnMode(TURN_MODE_OVERLAP) }
         findViewById<TextView>(R.id.turnModeSimulateButton).setOnClickListener { setTurnMode(TURN_MODE_SIMULATE) }
@@ -1877,7 +1893,20 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         Toast.makeText(this, "阅读模式：$label", Toast.LENGTH_SHORT).show()
     }
 
+    private fun updateThemeControls() {
+        val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
+        listOf(R.id.themePaperButton, R.id.themeEyeButton, R.id.themeWhiteButton).forEach { id ->
+            findViewById<TextView>(id).apply {
+                isEnabled = !night
+                alpha = if (night) 0.35f else 1f
+            }
+        }
+        findViewById<TextView>(R.id.themeNightButton).text = if (night) "切到日间" else "切到夜间"
+        findViewById<TextView>(R.id.nightButton).text = if (night) "日间" else "夜间"
+    }
+
     private fun updateSettingsLabels() {
+        updateThemeControls()
         findViewById<TextView>(R.id.fontSizeLabel).text = readerTextSize.toInt().toString()
         findViewById<TextView>(R.id.volumeKeyToggleButton).text =
             if (volumeKeyTurnEnabled) "音量键翻页 开" else "音量键翻页 关"
@@ -2349,6 +2378,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
         }
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
