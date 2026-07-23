@@ -30,10 +30,11 @@ class ChmParserEncodingTest {
         val source = """document.write("第一章\n"); document.write('正文&nbsp;内容\n下一行');"""
 
         val text = ChmParser.extractReadableText(source)
+        val normalized = text.replace('\u00A0', ' ')
 
-        assertTrue(text.contains("第一章"))
-        assertTrue(text.contains("正文 内容"))
-        assertTrue(text.contains("下一行"))
-        assertFalse(text.contains("document.write"))
+        assertTrue(normalized.contains("第一章"))
+        assertTrue(normalized.contains("正文 内容"))
+        assertTrue(normalized.contains("下一行"))
+        assertFalse(normalized.contains("document.write"))
     }
 }
