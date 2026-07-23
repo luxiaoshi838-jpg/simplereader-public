@@ -50,7 +50,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/apply_v13_ui.py
-          rm -f tools/apply_v13_ui.py
+          python3 tools/fix_v13_test.py
+          rm -f tools/apply_v13_ui.py tools/fix_v13_test.py
           rm -f .github/workflows/apply-v13-fixes.yml
           rm -f .github/workflows/export-v13-source.yml
           chmod +x ./gradlew
