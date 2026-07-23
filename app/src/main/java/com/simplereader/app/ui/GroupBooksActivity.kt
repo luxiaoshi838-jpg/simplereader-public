@@ -63,11 +63,15 @@ class GroupBooksActivity : AppCompatActivity() {
     }
 
     private fun createContentView(): View {
+        val statusBarHeight = resources.getIdentifier("status_bar_height", "dimen", "android")
+            .takeIf { it > 0 }
+            ?.let { resources.getDimensionPixelSize(it) }
+            ?: 0
         return LinearLayout(this).apply {
             this@GroupBooksActivity.rootView = this
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderAppearance.palette(this@GroupBooksActivity).backgroundColor)
-            setPadding(dp(16), dp(18), dp(16), dp(8))
+            setPadding(dp(16), statusBarHeight + dp(12), dp(16), dp(8))
 
             addView(LinearLayout(this@GroupBooksActivity).apply {
                 orientation = LinearLayout.HORIZONTAL

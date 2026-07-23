@@ -732,10 +732,164 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 if (query.isBlank()) {
                     Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
                 } else {
-                    showContentSearchResults(query)
+                    showAllContentSearchResults(query)
                 }
             }
             .show()
+    }
+
+    private fun showAllContentSearchResults(query: String) {
+        val density = resources.displayMetrics.density
+        fun localDp(value: Int) = (value * density + 0.5f).toInt()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(localDp(8), localDp(4), localDp(8), localDp(4))
+        }
+        val statusView = TextView(this).apply {
+            text = "正在搜索..."
+            textSize = 14f
+            setTextColor(Color.rgb(110, 100, 84))
+            setPadding(localDp(12), localDp(8), localDp(12), localDp(8))
+        }
+        val layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+        val recyclerView = androidx.recyclerview.widget.RecyclerView(this).apply {
+            this.layoutManager = layoutManager
+            itemAnimator = null
+            isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+
+        container.addView(statusView)
+        container.addView(
+            recyclerView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.68f).toInt()
+            )
+        )
+
+        var dialog: AlertDialog? = null
+        var loadJob: Job? = null
+        val adapter = ReaderSearchResultAdapter { hit ->
+            dialog?.dismiss()
+            if (txtStreamingMode) {
+                showStreamingTxtPage(hit.position, saveImmediately = true)
+            } else {
+                currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
+                displayContent()
+                markProgressDirty()
+                saveProgressNow()
+                readerControls.visibility = View.GONE
+            }
+        }
+        recyclerView.adapter = adapter
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("\"$query\" 的搜索结果")
+            .setView(container)
+            .setNegativeButton("关闭", null)
+            .create()
+        dialog?.setOnDismissListener { loadJob?.cancel() }
+        dialog?.show()
+
+        loadJob = lifecycleScope.launch {
+            val results = mutableListOf<ReaderSearchHit>()
+            try {
+                withContext(Dispatchers.IO) {
+                    if (txtStreamingMode) {
+                        val selectedBook = book
+                        val charsetName = txtCharsetName
+                            ?: selectedBook?.txtCharset
+                            ?: Charsets.UTF_8.name()
+                        var nextPosition = 0L
+                        var finished = selectedBook == null
+                        while (!finished) {
+                            val page = contentResolver.openInputStream(Uri.parse(selectedBook!!.filePath))?.use { stream ->
+                                val parsed = TxtParser.findTextPage(
+                                    inputStream = stream,
+                                    charsetName = charsetName,
+                                    query = query,
+                                    startByte = nextPosition,
+                                    pageSize = SEARCH_RESULT_PAGE_SIZE
+                                )
+                                ReaderSearchPage(
+                                    hits = parsed.hits.map { hit ->
+                                        val percent = if (txtTotalBytes > 0L) {
+                                            ((hit.byteOffset.toDouble() / txtTotalBytes) * 100).toInt()
+                                                .coerceIn(0, 100)
+                                        } else {
+                                            0
+                                        }
+                                        ReaderSearchHit(
+                                            stableKey = "byte:${hit.byteOffset}",
+                                            position = hit.byteOffset,
+                                            positionLabel = "约 $percent% · 字节 ${hit.byteOffset}",
+                                            preview = hit.preview
+                                        )
+                                    },
+                                    nextPosition = parsed.nextByte,
+                                    endReached = parsed.endReached
+                                )
+                            }
+                            if (page == null) {
+                                finished = true
+                            } else {
+                                results += page.hits
+                                val ordered = results.distinctBy { it.stableKey }.sortedBy { it.position }
+                                withContext(Dispatchers.Main) {
+                                    adapter.submitList(ordered)
+                                    statusView.text = "正在搜索，已找到 ${ordered.size} 条..."
+                                }
+                                finished = page.endReached || page.nextPosition <= nextPosition
+                                nextPosition = page.nextPosition
+                            }
+                        }
+                    } else {
+                        results += findInMemorySearchAll(query)
+                    }
+                }
+
+                val ordered = results.distinctBy { it.stableKey }.sortedBy { it.position }
+                adapter.submitList(ordered)
+                statusView.text = if (ordered.isEmpty()) {
+                    "没有找到 \"$query\""
+                } else {
+                    "共 ${ordered.size} 条结果"
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                val message = "搜索失败：${error.message ?: error.javaClass.simpleName}"
+                statusView.text = message
+                Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun findInMemorySearchAll(query: String): List<ReaderSearchHit> {
+        if (query.isBlank() || currentContent.isEmpty()) return emptyList()
+        val hits = mutableListOf<ReaderSearchHit>()
+        var cursor = 0
+        while (cursor < currentContent.length) {
+            val index = currentContent.indexOf(query, startIndex = cursor, ignoreCase = true)
+            if (index < 0) break
+            val previewStart = (index - 45).coerceAtLeast(0)
+            val previewEnd = (index + query.length + 90).coerceAtMost(currentContent.length)
+            val preview = currentContent.substring(previewStart, previewEnd)
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            val percent = ((index.toDouble() / currentContent.length) * 100).toInt().coerceIn(0, 100)
+            hits += ReaderSearchHit(
+                stableKey = "char:$index",
+                position = index.toLong(),
+                positionLabel = "约 $percent% · 位置 $index",
+                preview = preview.ifBlank { "位置 $index" }
+            )
+            cursor = (index + query.length.coerceAtLeast(1)).coerceAtMost(currentContent.length)
+        }
+        return hits
     }
 
     private fun showContentSearchResults(query: String) {
@@ -1870,6 +2024,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
         private const val TXT_STREAM_WINDOW_BYTES = 64 * 1024
         private const val MAX_CACHED_TXT_CHAPTERS = 5000
+        private const val SEARCH_RESULT_PAGE_SIZE = 200
         private const val RECOVER_SCAN_LIMIT = 10000
         private const val READER_PREFS = "reader_prefs"
         private const val PREF_TEXT_SIZE = "text_size"
