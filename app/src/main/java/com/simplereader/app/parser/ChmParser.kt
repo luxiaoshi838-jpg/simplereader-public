@@ -22,7 +22,7 @@ import java.nio.charset.CodingErrorAction
 data class ChmChapter(val path: String, val title: String)
 
 object ChmParser {
-    private const val MAX_DOCUMENT_ENTRIES = 4000
+    private const val MAX_DOCUMENT_ENTRIES = 20000
     private const val MAX_TOTAL_TEXT_CHARS = 32 * 1024 * 1024
     private const val MAX_ENTRY_BYTES = 8 * 1024 * 1024L
 
@@ -97,7 +97,7 @@ object ChmParser {
                 ?: archive.getTitleOfObject(resolved.path.orEmpty())
                     ?.trim()?.takeIf { it.isNotBlank() && it != resolved.path }
             val title = if (archiveTitle == null || looksGarbled(archiveTitle)) {
-                extractPageTitle(readEntrySource(archive, resolved))
+                extractPageTitle(readEntrySource(archive, resolved, TITLE_PREFIX_BYTES))
                     .ifBlank { path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path } }
             } else {
                 archiveTitle
@@ -128,8 +128,18 @@ object ChmParser {
         return cleanText(htmlOrPlainText(readEntrySource(archive, entry)))
     }
 
-    private fun readEntrySource(archive: ChmFile, entry: ChmUnitInfo): String {
-        val buffer = runCatching { archive.retrieveObject(entry) }.getOrNull() ?: return ""
+    private fun readEntrySource(
+        archive: ChmFile,
+        entry: ChmUnitInfo,
+        maxBytes: Long? = null
+    ): String {
+        val buffer = runCatching {
+            if (maxBytes == null || entry.length <= maxBytes) {
+                archive.retrieveObject(entry)
+            } else {
+                archive.retrieveObject(entry, 0L, maxBytes)
+            }
+        }.getOrNull() ?: return ""
         val bytes = byteBufferBytes(buffer)
         return decodeDocumentBytes(bytes, archive.encoding)
     }
@@ -213,10 +223,17 @@ object ChmParser {
     }
 
     private fun extractPageTitle(source: String): String {
-        val match = Regex("(?is)<title[^>]*>(.*?)</title>").find(source)
+        val htmlTitle = Regex("(?is)<title[^>]*>(.*?)</title>").find(source)
             ?: Regex("(?is)<h[1-3][^>]*>(.*?)</h[1-3]>").find(source)
-            ?: return ""
-        return cleanText(Html.fromHtml(match.groupValues[1], Html.FROM_HTML_MODE_LEGACY).toString())
+        if (htmlTitle != null) {
+            return cleanText(Html.fromHtml(htmlTitle.groupValues[1], Html.FROM_HTML_MODE_LEGACY).toString())
+        }
+        return extractReadableText(source)
+            .lineSequence()
+            .map(String::trim)
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+            .take(160)
     }
 
     private fun resolveEntry(archive: ChmFile, rawPath: String): ChmUnitInfo? {
@@ -249,15 +266,84 @@ object ChmParser {
         return block(ChmFile(chmFile.absolutePath))
     }
 
-    private fun htmlOrPlainText(source: String): String {
-        val sample = source.take(4096).lowercase()
-        val isHtml = "<html" in sample || "<body" in sample || "<p" in sample || "<div" in sample
-        if (!isHtml) return source
-        val cleanedHtml = source
-            .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
-            .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
-            .replace(Regex("(?is)<head\\b[^>]*>.*?</head>"), "")
-        return Html.fromHtml(cleanedHtml, Html.FROM_HTML_MODE_LEGACY).toString()
+    private fun htmlOrPlainText(source: String): String = extractReadableText(source)
+
+    /**
+     * Some Chinese CHM generators store each chapter as JavaScript-only text:
+     * document.write("chapter"); document.write('body'). Reconstruct those
+     * string arguments before HTML/entity decoding instead of showing script.
+     */
+    fun extractReadableText(source: String): String {
+        val documentWrites = DOCUMENT_WRITE_PATTERN.findAll(source)
+            .map { match ->
+                val encoded = match.groups[1]?.value ?: match.groups[2]?.value.orEmpty()
+                decodeJavaScriptString(encoded)
+            }
+            .filter(String::isNotBlank)
+            .toList()
+        val readableSource = if (documentWrites.isNotEmpty()) {
+            documentWrites.joinToString("\n")
+        } else {
+            source
+                .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
+                .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+                .replace(Regex("(?is)<head\\b[^>]*>.*?</head>"), "")
+        }
+        val sample = readableSource.take(4096).lowercase()
+        val hasMarkup = listOf("<html", "<body", "<p", "<div", "<br", "&nbsp;", "&#")
+            .any(sample::contains)
+        return if (hasMarkup) {
+            Html.fromHtml(readableSource, Html.FROM_HTML_MODE_LEGACY).toString()
+        } else {
+            readableSource
+        }
+    }
+
+    private fun decodeJavaScriptString(encoded: String): String {
+        val output = StringBuilder(encoded.length)
+        var index = 0
+        while (index < encoded.length) {
+            val current = encoded[index]
+            if (current != '\\' || index + 1 >= encoded.length) {
+                output.append(current)
+                index += 1
+                continue
+            }
+            val escaped = encoded[index + 1]
+            when (escaped) {
+                'n' -> output.append('\n')
+                'r' -> output.append('\r')
+                't' -> output.append('\t')
+                'b' -> output.append('\b')
+                'f' -> output.append('\u000C')
+                '\\' -> output.append('\\')
+                '\'' -> output.append('\'')
+                '"' -> output.append('"')
+                'u' -> {
+                    val hexEnd = (index + 6).coerceAtMost(encoded.length)
+                    val hex = encoded.substring(index + 2, hexEnd)
+                    if (hex.length == 4 && hex.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' }) {
+                        output.append(hex.toInt(16).toChar())
+                        index += 4
+                    } else {
+                        output.append('u')
+                    }
+                }
+                'x' -> {
+                    val hexEnd = (index + 4).coerceAtMost(encoded.length)
+                    val hex = encoded.substring(index + 2, hexEnd)
+                    if (hex.length == 2 && hex.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' }) {
+                        output.append(hex.toInt(16).toChar())
+                        index += 2
+                    } else {
+                        output.append('x')
+                    }
+                }
+                else -> output.append(escaped)
+            }
+            index += 2
+        }
+        return output.toString()
     }
 
     private fun cleanText(text: String): String = text
@@ -286,5 +372,9 @@ object ChmParser {
         return normalized.endsWith(".htm") || normalized.endsWith(".html") || normalized.endsWith(".xhtml") || normalized.endsWith(".txt")
     }
 
+    private const val TITLE_PREFIX_BYTES = 32L * 1024L
+    private val DOCUMENT_WRITE_PATTERN = Regex(
+        """(?is)document\.write(?:ln)?\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*\)"""
+    )
     private const val CHAPTER_SEPARATOR = "\n\n"
 }
