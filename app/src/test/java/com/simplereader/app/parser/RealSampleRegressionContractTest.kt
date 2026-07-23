@@ -23,6 +23,8 @@ class RealSampleRegressionContractTest {
         assertTrue(source.contains("GB18030"))
         assertTrue(source.contains("charset"))
         assertFalse(source.contains("retrieveObjectAsString(entry)"))
+        assertTrue(source.contains("MAX_DOCUMENT_ENTRIES = 20000"))
+        assertTrue(source.contains("DOCUMENT_WRITE_PATTERN"))
     }
 
     @Test
