@@ -37,4 +37,13 @@ class ChmParserEncodingTest {
         assertTrue(normalized.contains("下一行"))
         assertFalse(normalized.contains("document.write"))
     }
+
+    @Test
+    fun `chapter model retains toc hierarchy metadata`() {
+        val fields = ChmChapter::class.java.declaredFields.map { it.name }.toSet()
+        assertTrue(
+            "CHM table-of-contents entries must retain depth or parent metadata",
+            "depth" in fields || "parentPath" in fields || "parentId" in fields
+        )
+    }
 }
