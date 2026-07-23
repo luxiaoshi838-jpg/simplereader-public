@@ -1,0 +1,1 @@
+Work in progress. No v14 APK is considered releasable until real-sample root causes are covered by tests, Debug/Release builds pass, and the final APK is verified with the existing signing certificate.
