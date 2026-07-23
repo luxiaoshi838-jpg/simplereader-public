@@ -1,4 +1,4 @@
-﻿package com.simplereader.app.ui
+package com.simplereader.app.ui
 
 import android.net.Uri
 import android.content.Intent
@@ -532,11 +532,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 )
                             }
                             "CHM" -> {
-                                val entries = ChmParser.readChapterIndex(input)
-                                val chapters = entries.map { path ->
+                                val chapters = ChmParser.readChapterIndex(input).map { chapter ->
                                     EpubChapter(
-                                        name = path,
-                                        text = path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path }
+                                        name = chapter.path,
+                                        text = chapter.title
                                     )
                                 }
                                 val progress = database.readProgressDao().getProgress(bookId)
@@ -632,7 +631,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             toggleReaderSettingsPanel()
         }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
-            applyReaderPalette(ReaderAppearance.NIGHT_BACKGROUND, ReaderAppearance.NIGHT_TEXT)
+            val palette = ReaderAppearance.nextDayNightPalette(currentBackgroundColor)
+            applyReaderPalette(palette.backgroundColor, palette.textColor)
         }
         findViewById<TextView>(R.id.moreReaderButton).setOnClickListener {
             showReaderMoreActions()
@@ -779,8 +779,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         currentTextColor = textColor
         contentView.setBackgroundColor(backgroundColor)
         contentView.setTextColor(textColor)
+        readerScrollView.setBackgroundColor(backgroundColor)
         window.decorView.setBackgroundColor(backgroundColor)
         ReaderAppearance.savePalette(this, backgroundColor, textColor)
+        findViewById<TextView>(R.id.nightButton).apply {
+            text = ReaderAppearance.dayNightButtonLabel(backgroundColor)
+            contentDescription = "${text}模式"
+        }
     }
 
     private fun loadReaderPrefs() {
@@ -1407,7 +1412,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
                     } else {
                         epubChapters.mapIndexed { index, chapter ->
-                            val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+                            val title = chapter.text.ifBlank {
+                                chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+                            }
                             val position = epubChapterStartPositions.getOrElse(index) { 0 }
                             catalogLabel(index, title, position, index == currentChapter)
                         }
@@ -1569,7 +1576,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         val items = epubChapters.mapIndexed { index, chapter ->
-            val title = chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+            val title = chapter.text.ifBlank {
+                chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+            }
             "${index + 1}. $title"
         }.toTypedArray()
         AlertDialog.Builder(this)

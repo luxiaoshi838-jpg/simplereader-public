@@ -311,20 +311,18 @@ class MainActivity : AppCompatActivity() {
         val cover = GridLayout(this).apply {
             columnCount = 2
             rowCount = 2
+            alignmentMode = GridLayout.ALIGN_BOUNDS
+            useDefaultMargins = false
             setPadding(dp(8), dp(8), dp(8), dp(8))
             setBackgroundColor(Color.rgb(232, 229, 220))
-            sortedBooks.take(4).forEach { book ->
-                addView(createBookCover(book.title, book.format, compact = true))
-            }
-            repeat((4 - sortedBooks.take(4).size).coerceAtLeast(0)) {
-                addView(TextView(this@MainActivity).apply {
+            repeat(4) { index ->
+                val preview = sortedBooks.getOrNull(index)?.let { book ->
+                    createBookCover(book.title, book.format, compact = true)
+                } ?: TextView(this@MainActivity).apply {
                     setBackgroundColor(Color.rgb(205, 202, 194))
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = dp(42)
-                        height = dp(48)
-                        setMargins(dp(2), dp(2), dp(2), dp(2))
-                    }
-                })
+                }
+                preview.layoutParams = groupPreviewCellLayoutParams(index)
+                addView(preview)
             }
         }
         card.addView(cover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112)))
@@ -370,6 +368,18 @@ class MainActivity : AppCompatActivity() {
         shelfGrid.addView(card)
     }
 
+    private fun groupPreviewCellLayoutParams(index: Int): GridLayout.LayoutParams {
+        return GridLayout.LayoutParams(
+            GridLayout.spec(index / 2, 1, 1f),
+            GridLayout.spec(index % 2, 1, 1f)
+        ).apply {
+            width = 0
+            height = 0
+            setGravity(Gravity.FILL)
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+    }
+
     private fun createBookCover(title: String, format: String, compact: Boolean): TextView {
         val cover = TextView(this).apply {
             text = if (compact) {
@@ -381,6 +391,7 @@ class MainActivity : AppCompatActivity() {
             textSize = if (compact) 7.5f else 12f
             gravity = Gravity.CENTER
             maxLines = if (compact) 4 else 5
+            includeFontPadding = false
             setPadding(dp(6), dp(8), dp(6), dp(8))
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
