@@ -117,7 +117,10 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Public, established readers: Mozilla charset detection and pure-Java JChm.
+    // Mature public parsers: epub4j follows OPF spine order; jchmlib handles CHM TOC and encoding.
+    implementation("io.documentnode:epub4j-core:4.2.3") {
+        exclude(group = "xmlpull")
+    }
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
     implementation("com.sorrowblue.sevenzipjbinding:7-Zip-JBinding-4Android:16.02-2.4")
@@ -130,4 +133,3 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
-
