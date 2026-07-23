@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 class GroupBooksActivity : AppCompatActivity() {
     private lateinit var bookRepository: BookRepository
     private lateinit var adapter: GroupBookAdapter
+    private lateinit var rootView: LinearLayout
     private var groupId: Long = 0L
     private var groupName: String = ""
 
@@ -56,10 +57,16 @@ class GroupBooksActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        applyShelfAppearance()
+    }
+
     private fun createContentView(): View {
         return LinearLayout(this).apply {
+            this@GroupBooksActivity.rootView = this
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(242, 239, 230))
+            setBackgroundColor(ReaderAppearance.palette(this@GroupBooksActivity).backgroundColor)
             setPadding(dp(16), dp(18), dp(16), dp(8))
 
             addView(LinearLayout(this@GroupBooksActivity).apply {
@@ -74,7 +81,7 @@ class GroupBooksActivity : AppCompatActivity() {
                     text = "‹"
                     textSize = 34f
                     gravity = Gravity.CENTER
-                    setTextColor(Color.rgb(36, 33, 28))
+                    setTextColor(ReaderAppearance.shelfTextColor(this@GroupBooksActivity))
                     layoutParams = LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.MATCH_PARENT)
                     setOnClickListener { finish() }
                 })
@@ -82,7 +89,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(TextView(this@GroupBooksActivity).apply {
                     text = groupName
                     textSize = 27f
-                    setTextColor(Color.rgb(36, 33, 28))
+                    setTextColor(ReaderAppearance.shelfTextColor(this@GroupBooksActivity))
                     gravity = Gravity.CENTER_VERTICAL
                     maxLines = 1
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
@@ -100,6 +107,25 @@ class GroupBooksActivity : AppCompatActivity() {
                     1f
                 )
             })
+        }
+    }
+
+    private fun applyShelfAppearance() {
+        val palette = ReaderAppearance.palette(this)
+        rootView.setBackgroundColor(palette.backgroundColor)
+        window.decorView.setBackgroundColor(palette.backgroundColor)
+        tintTextViews(rootView)
+        adapter.notifyDataSetChanged()
+    }
+
+    private fun tintTextViews(view: View) {
+        when (view) {
+            is TextView -> view.setTextColor(ReaderAppearance.shelfTextColor(this))
+            is ViewGroup -> {
+                for (index in 0 until view.childCount) {
+                    tintTextViews(view.getChildAt(index))
+                }
+            }
         }
     }
 
@@ -231,7 +257,9 @@ class GroupBooksActivity : AppCompatActivity() {
         fun bind(book: ShelfBookItem) {
             cover.text = book.title.take(22)
             title.text = book.title
+            title.setTextColor(ReaderAppearance.shelfTextColor(context))
             progress.text = "已读 ${book.progressPercent()}%"
+            progress.setTextColor(ReaderAppearance.shelfSecondaryTextColor(context))
         }
 
         private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

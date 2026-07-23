@@ -1,6 +1,7 @@
 package com.simplereader.app.ui
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -17,6 +18,7 @@ import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
@@ -75,6 +77,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
     private var pendingSeekProgress: Int? = null
+
+    private val recoverSourceFolderLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            recoverCurrentBookFromSourceFolder(uri)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -176,7 +186,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
                 if (documentFile == null) {
                     markBookUnavailableSafely("PERMISSION_LOST")
-                    showError("无法访问原书籍文件。请重新导入该书，或重新选择原文件夹以恢复访问权限。")
+                    showRecoverableAccessError("无法访问原书籍文件。请选择包含该书及其他小说文件的总文件夹以恢复访问权限。")
                     return@launch
                 }
 
@@ -185,7 +195,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 throw cancelled
             } catch (security: SecurityException) {
                 markBookUnavailableSafely("PERMISSION_LOST")
-                showError("书籍文件访问权限已失效。请重新导入该书，或重新选择原文件夹。")
+                showRecoverableAccessError("书籍文件访问权限已失效。请选择包含该书及其他小说文件的总文件夹。")
             } catch (error: Exception) {
                 markBookUnavailableSafely("OPEN_FAILED")
                 showError("打开书籍失败：${error.message ?: "未知错误"}")
@@ -244,6 +254,153 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             runCatching { it.exists() && it.isFile }.getOrDefault(false)
         }
     }
+
+    private fun showRecoverableAccessError(message: String) {
+        contentView.text = "$message\n\n点击“选择总文件夹”后，程序会按备份里的相对路径和文件名恢复当前书。"
+        AlertDialog.Builder(this)
+            .setTitle("恢复书籍访问")
+            .setMessage(contentView.text)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("选择总文件夹") { _, _ ->
+                recoverSourceFolderLauncher.launch(null)
+            }
+            .show()
+    }
+
+    private fun recoverCurrentBookFromSourceFolder(rootUri: Uri) {
+        val selectedBook = book
+        if (selectedBook == null) {
+            Toast.makeText(this, "书籍记录不存在", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            contentResolver.takePersistableUriPermission(rootUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val root = DocumentFile.fromTreeUri(this, rootUri)
+        if (root == null || !root.isDirectory) {
+            Toast.makeText(this, "无法读取所选总文件夹", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val indexedFiles = scanRecoverableFiles(root)
+                val allBooks = database.bookDao().getAllBooks().first()
+                var updatedCount = 0
+                var currentBookAfterUpdate: Book? = null
+
+                allBooks.forEach { candidateBook ->
+                    val recovered = findRecoveredDocument(candidateBook, indexedFiles) ?: return@forEach
+                    val recoveredUri = recovered.file.uri.toString()
+                    val existing = database.bookDao().getByFilePath(recoveredUri)
+                    if (existing != null && existing.id != candidateBook.id) return@forEach
+
+                    val updatedBook = candidateBook.copy(
+                        filePath = recoveredUri,
+                        fileName = recovered.file.name ?: candidateBook.fileName,
+                        fileSize = recovered.file.length().takeIf { it >= 0L },
+                        lastModified = recovered.file.lastModified().takeIf { it > 0L },
+                        sourceTreeUri = rootUri.toString(),
+                        relativePath = recovered.relativeParentPath,
+                        fileStatus = "AVAILABLE"
+                    )
+                    database.bookDao().update(updatedBook)
+                    updatedCount++
+                    if (candidateBook.id == selectedBook.id) {
+                        currentBookAfterUpdate = updatedBook
+                    }
+                }
+                updatedCount to currentBookAfterUpdate
+            }
+            val (updatedCount, recoveredBook) = result
+            if (recoveredBook == null) {
+                Toast.makeText(
+                    this@ReaderActivity,
+                    "未在所选总文件夹内找到《${selectedBook.title}》",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            book = recoveredBook
+            Toast.makeText(this@ReaderActivity, "已恢复 $updatedCount 本，正在打开当前书", Toast.LENGTH_SHORT).show()
+            loadBook()
+        }
+    }
+
+    private data class RecoveredDocument(
+        val file: DocumentFile,
+        val relativeParentPath: String
+    )
+
+    private fun scanRecoverableFiles(root: DocumentFile): List<RecoveredDocument> {
+        val result = mutableListOf<RecoveredDocument>()
+        val queue = java.util.ArrayDeque<Pair<DocumentFile, String>>()
+        queue.add(root to "")
+        while (queue.isNotEmpty() && result.size < RECOVER_SCAN_LIMIT) {
+            val (folder, relativePath) = queue.removeFirst()
+            folder.listFiles().forEach { child ->
+                if (result.size >= RECOVER_SCAN_LIMIT) return@forEach
+                val childName = child.name.orEmpty()
+                if (childName.isBlank() || childName.startsWith('.')) return@forEach
+                if (child.isDirectory) {
+                    queue.add(child to joinPath(relativePath, childName))
+                } else if (child.isFile && isSupportedBookName(childName)) {
+                    result += RecoveredDocument(child, relativePath)
+                }
+            }
+        }
+        return result
+    }
+
+    private fun findRecoveredDocument(
+        selectedBook: Book,
+        files: List<RecoveredDocument>
+    ): RecoveredDocument? {
+        val targetFileName = selectedBook.fileName.ifBlank {
+            Uri.parse(selectedBook.filePath).lastPathSegment?.substringAfterLast('/') ?: selectedBook.title
+        }
+        val pathSegments = selectedBook.relativePath
+            .orEmpty()
+            .replace('\\', '/')
+            .trim('/')
+            .split('/')
+            .filter { it.isNotBlank() }
+        files.firstOrNull { file ->
+            file.file.name.equals(targetFileName, ignoreCase = true) &&
+                pathMatches(pathSegments, file.relativeParentPath)
+        }?.let { return it }
+
+        val sameName = files.filter { file ->
+            file.file.name.equals(targetFileName, ignoreCase = true)
+        }
+        if (sameName.size == 1) return sameName.single()
+
+        val expectedSize = selectedBook.fileSize
+        if (expectedSize != null) {
+            val sameSize = sameName.filter { it.file.length() == expectedSize }
+            if (sameSize.size == 1) return sameSize.single()
+        }
+        return null
+    }
+
+    private fun pathMatches(savedSegments: List<String>, currentRelativePath: String): Boolean {
+        if (savedSegments.isEmpty()) return true
+        val saved = savedSegments.joinToString("/").lowercase()
+        val current = currentRelativePath.replace('\\', '/').trim('/').lowercase()
+        return current == saved || current.endsWith("/$saved") || saved.endsWith("/$current")
+    }
+
+    private fun isSupportedBookName(name: String): Boolean {
+        return name.endsWith(".txt", ignoreCase = true) ||
+            name.endsWith(".epub", ignoreCase = true) ||
+            name.endsWith(".chm", ignoreCase = true)
+    }
+
+    private fun joinPath(parent: String, child: String): String =
+        listOf(parent.trim('/'), child.trim('/'))
+            .filter { it.isNotBlank() }
+            .joinToString("/")
 
     private suspend fun markBookUnavailableSafely(status: String) {
         runCatching {
@@ -515,13 +672,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         contentView.setBackgroundColor(backgroundColor)
         contentView.setTextColor(textColor)
         window.decorView.setBackgroundColor(backgroundColor)
+        ReaderAppearance.savePalette(this, backgroundColor, textColor)
     }
 
     private fun loadReaderPrefs() {
         val prefs = getSharedPreferences(READER_PREFS, MODE_PRIVATE)
         readerTextSize = prefs.getFloat(PREF_TEXT_SIZE, 18f)
-        currentBackgroundColor = prefs.getInt(PREF_BACKGROUND, Color.rgb(245, 233, 200))
-        currentTextColor = prefs.getInt(PREF_TEXT_COLOR, Color.rgb(59, 52, 40))
+        val palette = ReaderAppearance.palette(this)
+        currentBackgroundColor = palette.backgroundColor
+        currentTextColor = palette.textColor
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
     }
@@ -1711,6 +1870,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
         private const val TXT_STREAM_WINDOW_BYTES = 64 * 1024
         private const val MAX_CACHED_TXT_CHAPTERS = 5000
+        private const val RECOVER_SCAN_LIMIT = 10000
         private const val READER_PREFS = "reader_prefs"
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_BACKGROUND = "background"

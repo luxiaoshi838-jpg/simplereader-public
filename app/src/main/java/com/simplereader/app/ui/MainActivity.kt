@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.LinearLayout
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var bookRepository: BookRepository
     private lateinit var bookGroupRepository: BookGroupRepository
+    private lateinit var mainRoot: View
     private lateinit var shelfGrid: GridLayout
     private lateinit var readingStatsTextView: TextView
     private lateinit var shelfTabTextView: TextView
@@ -137,6 +139,7 @@ class MainActivity : AppCompatActivity() {
         database = SimpleReaderDatabase.getDatabase(this)
         bookRepository = BookRepository(database.bookDao())
         bookGroupRepository = BookGroupRepository(database.bookGroupDao())
+        mainRoot = findViewById(R.id.mainRoot)
         shelfGrid = findViewById(R.id.shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
         shelfTabTextView = findViewById(R.id.shelfTabTextView)
@@ -185,6 +188,12 @@ class MainActivity : AppCompatActivity() {
         loadBooks()
     }
 
+    override fun onResume() {
+        super.onResume()
+        applyShelfAppearance()
+        updateUI()
+    }
+
     override fun onCreateOptionsMenu(menu: android.view.Menu?): Boolean = false
 
     @Deprecated("Deprecated in Java")
@@ -214,6 +223,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUI() {
+        applyShelfAppearance()
         shelfGrid.removeAllViews()
         val filteredBooks = books.filter {
             shelfSearchQuery.isBlank() || it.title.contains(shelfSearchQuery, ignoreCase = true)
@@ -266,6 +276,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun applyShelfAppearance() {
+        val palette = ReaderAppearance.palette(this)
+        val primaryText = ReaderAppearance.shelfTextColor(this)
+        val secondaryText = ReaderAppearance.shelfSecondaryTextColor(this)
+        mainRoot.setBackgroundColor(palette.backgroundColor)
+        window.decorView.setBackgroundColor(palette.backgroundColor)
+        shelfTabTextView.setTextColor(primaryText)
+        findViewById<TextView>(R.id.historyTabTextView).setTextColor(secondaryText)
+        findViewById<TextView>(R.id.readingStatsTextView).setTextColor(secondaryText)
+        findViewById<TextView>(R.id.searchButton).setTextColor(primaryText)
+        findViewById<TextView>(R.id.moreButton).setTextColor(primaryText)
+        findViewById<TextView>(R.id.exportButton).setTextColor(primaryText)
+        findViewById<TextView>(R.id.importButton).setTextColor(primaryText)
+        findViewById<TextView>(R.id.editButton).setTextColor(primaryText)
+    }
+
     private fun addGroupCard(group: BookGroup, groupBooks: List<ShelfBookItem>) {
         val sortedBooks = groupBooks.sortedByDescending(::activityTime)
         val card = createShelfCard()
@@ -292,13 +318,13 @@ class MainActivity : AppCompatActivity() {
         card.addView(TextView(this).apply {
             text = group.displayName.ifBlank { group.name }
             textSize = 18f
-            setTextColor(Color.rgb(30, 30, 30))
+            setTextColor(ReaderAppearance.shelfTextColor(this@MainActivity))
             maxLines = 2
         })
         card.addView(TextView(this).apply {
             text = "共 ${sortedBooks.size} 本"
             textSize = 14f
-            setTextColor(Color.rgb(130, 126, 118))
+            setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
         })
         card.setOnClickListener { showGroupBooksV2(group, sortedBooks) }
         card.setOnLongClickListener {
@@ -314,14 +340,14 @@ class MainActivity : AppCompatActivity() {
         card.addView(TextView(this).apply {
             text = book.title
             textSize = 18f
-            setTextColor(Color.rgb(30, 30, 30))
+            setTextColor(ReaderAppearance.shelfTextColor(this@MainActivity))
             maxLines = 2
         })
         card.addView(TextView(this).apply {
             val status = if (book.fileStatus == "AVAILABLE") "" else " · ${book.fileStatus}"
             text = "已读 ${book.progressPercent()}%$status"
             textSize = 14f
-            setTextColor(Color.rgb(130, 126, 118))
+            setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
         })
         card.setOnClickListener { openBook(book.id) }
         card.setOnLongClickListener {
