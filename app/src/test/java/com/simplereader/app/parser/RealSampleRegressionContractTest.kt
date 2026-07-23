@@ -6,8 +6,10 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Source-level contracts for the real-file regressions reported after v13.
- * The private user samples are never committed to the repository.
+ * Source-level guardrails for regressions reported after v13.
+ * These checks intentionally reject superficial implementations that only add
+ * parser names or a fixed three-chapter buffer without persistent/exportable
+ * cache and hierarchy-aware continuous reading.
  */
 class RealSampleRegressionContractTest {
     @Test
@@ -28,9 +30,41 @@ class RealSampleRegressionContractTest {
     }
 
     @Test
-    fun `structured navigation keeps adjacent chapters and avoids Int max previous offset`() {
-        val source = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
-        assertTrue(source.contains("StructuredReadingBuffer"))
-        assertFalse(source.contains("offset = Int.MAX_VALUE"))
+    fun `structured reading must not stop at a fixed adjacent chapter window`() {
+        val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+        assertTrue(reader.contains("StructuredReadingBuffer"))
+        assertFalse(reader.contains("offset = Int.MAX_VALUE"))
+        assertTrue(
+            "Vertical scrolling must trigger automatic buffer recentering near chapter boundaries",
+            reader.contains("maybeRecenterStructuredBuffer") || reader.contains("maybeShiftStructuredBuffer")
+        )
+    }
+
+    @Test
+    fun `chm table of contents must preserve hierarchy`() {
+        val parser = File("src/main/java/com/simplereader/app/parser/ChmParser.kt").readText()
+        assertTrue(
+            "CHM chapters must retain depth or parent information",
+            parser.contains("depth:") || parser.contains("parentPath:") || parser.contains("parentId:")
+        )
+    }
+
+    @Test
+    fun `structured chapter cache must be persistent and backup exportable`() {
+        val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+        val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
+        val decoder = File("src/main/java/com/simplereader/app/data/backup/SimpleReaderBackupDecoder.kt").readText()
+        assertTrue(
+            "Structured cache must live outside cacheDir so Android cache cleanup does not erase it",
+            reader.contains("filesDir") || reader.contains("StructuredBookCache")
+        )
+        assertTrue(
+            "Backup export must include structured chapter cache",
+            main.contains("structured_cache") || main.contains("structuredCache")
+        )
+        assertTrue(
+            "Backup decoder must accept structured chapter cache",
+            decoder.contains("structuredCache") || decoder.contains("structured_cache")
+        )
     }
 }
