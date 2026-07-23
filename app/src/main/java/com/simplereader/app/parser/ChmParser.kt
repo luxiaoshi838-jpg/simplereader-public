@@ -7,37 +7,80 @@ import org.jchmlib.ChmTopicsTree
 import org.jchmlib.ChmUnitInfo
 import java.io.File
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 
 /**
  * CHM reader backed by chimenchen/jchmlib v0.5.4.
- * Uses jchmlib's topics tree, title map and detected archive encoding.
+ *
+ * jchmlib is used for the archive structure and raw object retrieval. HTML is
+ * decoded here from the original entry bytes because many Chinese CHM files use
+ * GBK/GB2312 even when the archive-level encoding is incomplete or misleading.
  */
 data class ChmChapter(val path: String, val title: String)
 
 object ChmParser {
     private const val MAX_DOCUMENT_ENTRIES = 4000
-    private const val MAX_TOTAL_TEXT_CHARS = 12 * 1024 * 1024
+    private const val MAX_TOTAL_TEXT_CHARS = 32 * 1024 * 1024
     private const val MAX_ENTRY_BYTES = 8 * 1024 * 1024L
 
-    fun readText(inputStream: InputStream, cacheDirectory: File): String {
-        return withTemporaryChm(inputStream, cacheDirectory) { archive ->
-            val combined = StringBuilder()
-            chapterEntries(archive).forEach { chapter ->
-                if (combined.length >= MAX_TOTAL_TEXT_CHARS) return@forEach
-                val text = readEntryText(archive, chapter.path)
-                if (text.isBlank()) return@forEach
-                if (combined.isNotEmpty()) combined.append("\n\n")
-                combined.append(text)
+    /**
+     * Creates one reusable CHM source in the app cache. A 200+ MB book must not
+     * be copied again every time the user opens a chapter.
+     */
+    fun prepareCachedFile(inputStream: InputStream, cacheDirectory: File, cacheKey: String): File {
+        val directory = cacheDirectory.resolve("chm_sources").apply { mkdirs() }
+        val safeKey = cacheKey.replace(Regex("[^A-Za-z0-9._-]"), "_").take(160)
+        val target = directory.resolve("$safeKey.chm")
+        if (target.isFile && target.length() > 0L) return target
+
+        val temporary = directory.resolve("$safeKey.${System.nanoTime()}.tmp")
+        try {
+            temporary.outputStream().buffered().use { output -> inputStream.copyTo(output) }
+            check(temporary.length() > 0L) { "CHM 缓存文件为空" }
+            if (!temporary.renameTo(target)) {
+                temporary.copyTo(target, overwrite = true)
             }
-            cleanText(combined.toString()).ifBlank { error("CHM 中没有读取到可显示内容") }
+            return target
+        } finally {
+            if (temporary.exists()) temporary.delete()
         }
     }
 
-    fun readChapterIndex(inputStream: InputStream, cacheDirectory: File): List<ChmChapter> =
-        withTemporaryChm(inputStream, cacheDirectory, ::chapterEntries)
+    fun readText(chmFile: File): String = withArchive(chmFile) { archive ->
+        val combined = StringBuilder()
+        chapterEntries(archive).forEach { chapter ->
+            if (combined.length >= MAX_TOTAL_TEXT_CHARS) return@forEach
+            val text = readEntryText(archive, chapter.path)
+            if (text.isBlank()) return@forEach
+            if (combined.isNotEmpty()) combined.append(CHAPTER_SEPARATOR)
+            combined.append(text)
+        }
+        cleanText(combined.toString()).ifBlank { error("CHM 中没有读取到可显示内容") }
+    }
 
-    fun readChapterText(inputStream: InputStream, chapterPath: String, cacheDirectory: File): String =
-        withTemporaryChm(inputStream, cacheDirectory) { archive -> readEntryText(archive, chapterPath) }
+    fun readChapterIndex(chmFile: File): List<ChmChapter> = withArchive(chmFile, ::chapterEntries)
+
+    fun readChapterText(chmFile: File, chapterPath: String): String =
+        withArchive(chmFile) { archive -> readEntryText(archive, chapterPath) }
+
+    // Compatibility overloads retained for callers/tests that have not migrated.
+    fun readText(inputStream: InputStream, cacheDirectory: File): String {
+        val file = prepareCachedFile(inputStream, cacheDirectory, "legacy_${System.nanoTime()}")
+        return try { readText(file) } finally { file.delete() }
+    }
+
+    fun readChapterIndex(inputStream: InputStream, cacheDirectory: File): List<ChmChapter> {
+        val file = prepareCachedFile(inputStream, cacheDirectory, "legacy_${System.nanoTime()}")
+        return try { readChapterIndex(file) } finally { file.delete() }
+    }
+
+    fun readChapterText(inputStream: InputStream, chapterPath: String, cacheDirectory: File): String {
+        val file = prepareCachedFile(inputStream, cacheDirectory, "legacy_${System.nanoTime()}")
+        return try { readChapterText(file, chapterPath) } finally { file.delete() }
+    }
 
     private fun chapterEntries(archive: ChmFile): List<ChmChapter> {
         val result = mutableListOf<ChmChapter>()
@@ -49,11 +92,17 @@ object ChmParser {
             if (!seen.add(path.lowercase())) return
             val resolved = resolveEntry(archive, path) ?: return
             if (resolved.length !in 1L..MAX_ENTRY_BYTES) return
-            val title = titleValue?.trim()?.takeIf { it.isNotBlank() && it != "<Top>" }
+
+            val archiveTitle = titleValue?.trim()?.takeIf { it.isNotBlank() && it != "<Top>" }
                 ?: archive.getTitleOfObject(resolved.path.orEmpty())
                     ?.trim()?.takeIf { it.isNotBlank() && it != resolved.path }
-                ?: path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path }
-            result += ChmChapter(resolved.path.orEmpty(), title)
+            val title = if (archiveTitle == null || looksGarbled(archiveTitle)) {
+                extractPageTitle(readEntrySource(archive, resolved))
+                    .ifBlank { path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path } }
+            } else {
+                archiveTitle
+            }
+            result += ChmChapter(resolved.path.orEmpty(), cleanText(title))
         }
 
         fun walk(node: ChmTopicsTree?) {
@@ -76,7 +125,98 @@ object ChmParser {
     private fun readEntryText(archive: ChmFile, path: String): String {
         val entry = resolveEntry(archive, path) ?: return ""
         if (entry.length !in 1L..MAX_ENTRY_BYTES) return ""
-        return cleanText(htmlOrPlainText(archive.retrieveObjectAsString(entry).orEmpty()))
+        return cleanText(htmlOrPlainText(readEntrySource(archive, entry)))
+    }
+
+    private fun readEntrySource(archive: ChmFile, entry: ChmUnitInfo): String {
+        val buffer = runCatching { archive.retrieveObject(entry) }.getOrNull() ?: return ""
+        val bytes = byteBufferBytes(buffer)
+        return decodeDocumentBytes(bytes, archive.encoding)
+    }
+
+    /** Visible for deterministic unit tests of Chinese CHM page decoding. */
+    fun decodeDocumentBytes(bytes: ByteArray, archiveEncoding: String? = null): String {
+        if (bytes.isEmpty()) return ""
+        val declared = declaredCharset(bytes)
+        val candidates = linkedSetOf<Charset>()
+
+        listOfNotNull(declared, archiveEncoding).forEach { name ->
+            charsetOrNull(name)?.let(candidates::add)
+        }
+        runCatching { CharsetDetector.detectCharset(bytes) }.getOrNull()?.let(candidates::add)
+        listOf("UTF-8", "GB18030", "Big5").mapNotNull(::charsetOrNull).forEach(candidates::add)
+
+        val decoded = candidates.mapNotNull { charset ->
+            decodeStrict(bytes, charset)?.let { text -> charset to text }
+        }
+        if (decoded.isNotEmpty()) {
+            return decoded.maxByOrNull { (_, text) -> decodedQuality(text) }!!.second
+        }
+        return String(bytes, charsetOrNull("GB18030") ?: Charsets.UTF_8)
+    }
+
+    private fun declaredCharset(bytes: ByteArray): String? {
+        val head = String(bytes, 0, minOf(bytes.size, 16384), Charsets.ISO_8859_1)
+        val patterns = listOf(
+            Regex("(?is)<meta[^>]+charset\\s*=\\s*[\\\"']?\\s*([A-Za-z0-9._-]+)"),
+            Regex("(?is)content\\s*=\\s*[\\\"'][^\\\"']*charset\\s*=\\s*([A-Za-z0-9._-]+)")
+        )
+        return patterns.firstNotNullOfOrNull { pattern ->
+            pattern.find(head)?.groupValues?.getOrNull(1)?.trim()
+        }
+    }
+
+    private fun charsetOrNull(name: String): Charset? {
+        val normalized = when (name.trim().uppercase()) {
+            "GB2312", "HZ-GB-2312", "GBK", "CP936", "WINDOWS-936" -> "GB18030"
+            "UTF8" -> "UTF-8"
+            else -> name.trim()
+        }
+        return runCatching { Charset.forName(normalized) }.getOrNull()
+    }
+
+    private fun decodeStrict(bytes: ByteArray, charset: Charset): String? {
+        return try {
+            charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: CharacterCodingException) {
+            null
+        }
+    }
+
+    private fun decodedQuality(text: String): Long {
+        var score = 0L
+        text.forEach { char ->
+            score += when {
+                char == '\uFFFD' -> -1000L
+                char == '\u0000' -> -200L
+                char.code in 0..31 && char !in setOf('\n', '\r', '\t') -> -100L
+                Character.UnicodeScript.of(char.code) == Character.UnicodeScript.HAN -> 8L
+                char.isLetterOrDigit() -> 3L
+                char.isWhitespace() -> 1L
+                else -> 0L
+            }
+        }
+        if (text.contains("锟斤拷")) score -= 5000L
+        return score
+    }
+
+    private fun byteBufferBytes(buffer: ByteBuffer): ByteArray {
+        val copy = buffer.duplicate()
+        copy.rewind()
+        val bytes = ByteArray(copy.remaining())
+        copy.get(bytes)
+        return bytes
+    }
+
+    private fun extractPageTitle(source: String): String {
+        val match = Regex("(?is)<title[^>]*>(.*?)</title>").find(source)
+            ?: Regex("(?is)<h[1-3][^>]*>(.*?)</h[1-3]>").find(source)
+            ?: return ""
+        return cleanText(Html.fromHtml(match.groupValues[1], Html.FROM_HTML_MODE_LEGACY).toString())
     }
 
     private fun resolveEntry(archive: ChmFile, rawPath: String): ChmUnitInfo? {
@@ -104,34 +244,35 @@ object ChmParser {
         return entries
     }
 
-    private fun <T> withTemporaryChm(
-        inputStream: InputStream,
-        cacheDirectory: File,
-        block: (ChmFile) -> T
-    ): T {
-        cacheDirectory.mkdirs()
-        val temporaryFile = File.createTempFile("simplereader_", ".chm", cacheDirectory)
-        return try {
-            temporaryFile.outputStream().buffered().use { output ->
-                inputStream.use { input -> input.copyTo(output) }
-            }
-            block(ChmFile(temporaryFile.absolutePath))
-        } finally {
-            temporaryFile.delete()
-        }
+    private fun <T> withArchive(chmFile: File, block: (ChmFile) -> T): T {
+        require(chmFile.isFile && chmFile.length() > 0L) { "CHM 缓存文件不可用" }
+        return block(ChmFile(chmFile.absolutePath))
     }
 
     private fun htmlOrPlainText(source: String): String {
         val sample = source.take(4096).lowercase()
         val isHtml = "<html" in sample || "<body" in sample || "<p" in sample || "<div" in sample
-        return if (isHtml) Html.fromHtml(source, Html.FROM_HTML_MODE_LEGACY).toString() else source
+        if (!isHtml) return source
+        val cleanedHtml = source
+            .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
+            .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+            .replace(Regex("(?is)<head\\b[^>]*>.*?</head>"), "")
+        return Html.fromHtml(cleanedHtml, Html.FROM_HTML_MODE_LEGACY).toString()
     }
 
     private fun cleanText(text: String): String = text
+        .replace('\u0000', ' ')
         .replace('\u00A0', ' ')
         .replace(Regex("[ \\t]+\\n"), "\n")
         .replace(Regex("\\n{3,}"), "\n\n")
         .trim()
+
+    private fun looksGarbled(text: String): Boolean {
+        if (text.contains('\uFFFD') || text.contains("锟斤拷")) return true
+        val latinNoise = text.count { it.code in 0x80..0xFF }
+        val controls = text.count { it.code in 0..31 && it !in setOf('\n', '\r', '\t') }
+        return controls > 0 || (text.isNotEmpty() && latinNoise * 3 > text.length)
+    }
 
     private fun normalizePath(value: String): String {
         val cleaned = value.substringBefore('#').substringBefore('?').replace('\\', '/').trim()
@@ -144,4 +285,6 @@ object ChmParser {
         val normalized = path.substringBefore('?').lowercase()
         return normalized.endsWith(".htm") || normalized.endsWith(".html") || normalized.endsWith(".xhtml") || normalized.endsWith(".txt")
     }
+
+    private const val CHAPTER_SEPARATOR = "\n\n"
 }

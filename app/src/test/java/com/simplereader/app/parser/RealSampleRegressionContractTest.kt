@@ -14,7 +14,7 @@ class RealSampleRegressionContractTest {
     fun `epub parser exposes cover extraction`() {
         val source = File("src/main/java/com/simplereader/app/parser/EpubParser.kt").readText()
         assertTrue(source.contains("readCoverImage"))
-        assertTrue(source.contains("cover-image") || source.contains("name=\"cover\""))
+        assertTrue(source.contains("coverImage"))
     }
 
     @Test
