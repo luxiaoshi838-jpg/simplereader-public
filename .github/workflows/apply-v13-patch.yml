@@ -75,12 +75,14 @@ jobs:
           git commit -m "Apply v13 verified changes"
           git push origin HEAD:agent/v13-reader-theme-shelf
 
-      - name: Upload unsigned v13 release
+      - name: Upload v13 build diagnostics and APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader_v13_unsigned
+          name: SimpleReader_v13_build_${{ github.run_number }}
           path: |
             app/build/outputs/apk/release/*.apk
+            app/build/reports/tests/
             v13-gradle-build.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
