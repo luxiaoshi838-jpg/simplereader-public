@@ -1,0 +1,284 @@
+name: Export real sample parser verifier
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Create standalone verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verifier/src/main/kotlin
+          cat > verifier/settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { mavenCentral(); maven("https://jitpack.io") }
+          }
+          rootProject.name = "real-sample-verifier"
+          EOF
+          cat > verifier/build.gradle.kts <<'EOF'
+          plugins {
+              kotlin("jvm") version "1.9.10"
+              application
+          }
+          kotlin { jvmToolchain(17) }
+          dependencies {
+              implementation("io.documentnode:epub4j-core:4.2.3")
+              implementation("com.github.chimenchen:jchmlib:v0.5.4")
+              implementation("org.jsoup:jsoup:1.18.3")
+          }
+          application { mainClass.set("VerifierKt") }
+          tasks.jar {
+              manifest { attributes["Main-Class"] = "VerifierKt" }
+              duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+              from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+          }
+          EOF
+          cat > verifier/src/main/kotlin/Verifier.kt <<'EOF'
+          import io.documentnode.epub4j.epub.EpubReader
+          import org.jchmlib.ChmFile
+          import org.jchmlib.ChmTopicsTree
+          import org.jchmlib.ChmUnitInfo
+          import org.jsoup.Jsoup
+          import java.io.File
+          import java.nio.ByteBuffer
+          import java.nio.charset.CharacterCodingException
+          import java.nio.charset.Charset
+          import java.nio.charset.CodingErrorAction
+          import java.util.Locale
+
+          private const val MAX_ENTRY_BYTES = 8L * 1024 * 1024
+          private val documentWritePattern = Regex("""(?is)document\.write(?:ln)?\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*\)""")
+
+          fun main(args: Array<String>) {
+              require(args.size == 2) { "usage: epub|chm file" }
+              when (args[0].lowercase()) {
+                  "epub" -> verifyEpub(File(args[1]))
+                  "chm" -> verifyChm(File(args[1]))
+                  else -> error("unknown mode")
+              }
+          }
+
+          private fun verifyEpub(file: File) {
+              val started = System.nanoTime()
+              val book = file.inputStream().buffered().use { EpubReader().readEpub(it) }
+              val coverBytes = book.coverImage?.data
+              val chapters = book.spine.spineReferences
+                  .mapNotNull { it.resource }
+                  .filter { href ->
+                      val value = href.href.substringBefore('#').lowercase()
+                      value.endsWith(".xhtml") || value.endsWith(".html") || value.endsWith(".htm")
+                  }
+              var totalChars = 0L
+              var empty = 0
+              var replacement = 0
+              var mojibake = 0
+              val titles = mutableListOf<String>()
+              chapters.forEach { resource ->
+                  val source = resource.reader.use { it.readText() }
+                  val text = Jsoup.parse(source).text()
+                  totalChars += text.length
+                  if (text.isBlank()) empty++
+                  replacement += text.count { it == '\uFFFD' }
+                  if (text.contains("锟斤拷")) mojibake++
+                  titles += resource.title?.takeIf { it.isNotBlank() }
+                      ?: Jsoup.parse(source).title().takeIf { it.isNotBlank() }
+                      ?: resource.href
+              }
+              println("TYPE=EPUB")
+              println("SPINE=${chapters.size}")
+              println("COVER_BYTES=${coverBytes?.size ?: 0}")
+              println("TOTAL_TEXT_CHARS=$totalChars")
+              println("EMPTY_CHAPTERS=$empty")
+              println("REPLACEMENT_CHARS=$replacement")
+              println("MOJIBAKE_CHAPTERS=$mojibake")
+              println("FIRST_TITLES=${titles.take(8).joinToString(" | ")}")
+              println("LAST_TITLES=${titles.takeLast(5).joinToString(" | ")}")
+              println("ELAPSED_MS=${(System.nanoTime() - started) / 1_000_000}")
+          }
+
+          private data class TocNode(val path: String?, val title: String?, val depth: Int)
+
+          private fun verifyChm(file: File) {
+              val started = System.nanoTime()
+              val archive = ChmFile(file.absolutePath)
+              val nodes = mutableListOf<TocNode>()
+              walk(archive.topicsTree, 0, nodes)
+              val seen = linkedSetOf<String>()
+              var readable = 0
+              var sectionNodes = 0
+              var empty = 0
+              var badEncoding = 0
+              var failures = 0
+              var totalChars = 0L
+              val samples = mutableListOf<String>()
+              val topTitles = nodes.filter { it.depth == 0 }.mapNotNull { it.title?.takeIf(String::isNotBlank) }
+              nodes.forEach { node ->
+                  val path = normalizePath(node.path.orEmpty())
+                  val entry = if (isReadableDocument(path)) resolveEntry(archive, path) else null
+                  if (entry == null || entry.length !in 1L..MAX_ENTRY_BYTES) {
+                      sectionNodes++
+                      return@forEach
+                  }
+                  if (!seen.add(entry.path.orEmpty().lowercase(Locale.ROOT))) return@forEach
+                  readable++
+                  try {
+                      val bytes = byteBufferBytes(archive.retrieveObject(entry))
+                      val decoded = decodeDocumentBytes(bytes, archive.encoding)
+                      val text = extractReadableText(decoded)
+                      totalChars += text.length
+                      if (text.isBlank()) empty++
+                      if (text.contains('\uFFFD') || text.contains("锟斤拷")) badEncoding++
+                      if (samples.size < 15) {
+                          samples += "${node.depth}:${node.title.orEmpty()}:${text.take(60).replace('\n', ' ')}"
+                      }
+                  } catch (_: Throwable) {
+                      failures++
+                  }
+              }
+              println("TYPE=CHM")
+              println("TREE_NODES=${nodes.size}")
+              println("READABLE_CHAPTERS=$readable")
+              println("SECTION_NODES=$sectionNodes")
+              println("MAX_DEPTH=${nodes.maxOfOrNull { it.depth } ?: 0}")
+              println("TOP_LEVEL_COUNT=${topTitles.size}")
+              println("TOP_LEVEL_TITLES=${topTitles.take(40).joinToString(" | ")}")
+              println("TOTAL_TEXT_CHARS=$totalChars")
+              println("EMPTY_CHAPTERS=$empty")
+              println("BAD_ENCODING_CHAPTERS=$badEncoding")
+              println("READ_FAILURES=$failures")
+              println("SAMPLES=${samples.joinToString(" || ")}")
+              println("ELAPSED_MS=${(System.nanoTime() - started) / 1_000_000}")
+          }
+
+          private fun walk(node: ChmTopicsTree?, depth: Int, output: MutableList<TocNode>) {
+              node?.children?.forEach { child ->
+                  output += TocNode(child.path, child.title, depth)
+                  walk(child, depth + 1, output)
+              }
+          }
+
+          private fun resolveEntry(archive: ChmFile, rawPath: String): ChmUnitInfo? {
+              val normalized = normalizePath(rawPath)
+              val candidates = linkedSetOf(rawPath.substringBefore('#').substringBefore('?'), normalized)
+                  .filter(String::isNotBlank)
+              candidates.forEach { candidate -> archive.resolveObject(candidate)?.let { return it } }
+              return null
+          }
+
+          private fun decodeDocumentBytes(bytes: ByteArray, archiveEncoding: String?): String {
+              if (bytes.isEmpty()) return ""
+              val head = String(bytes, 0, minOf(bytes.size, 16384), Charsets.ISO_8859_1)
+              val declared = listOf(
+                  Regex("(?is)<meta[^>]+charset\\s*=\\s*[\\\"']?\\s*([A-Za-z0-9._-]+)"),
+                  Regex("(?is)content\\s*=\\s*[\\\"'][^\\\"']*charset\\s*=\\s*([A-Za-z0-9._-]+)")
+              ).firstNotNullOfOrNull { it.find(head)?.groupValues?.getOrNull(1) }
+              val candidates = linkedSetOf<Charset>()
+              listOfNotNull(declared, archiveEncoding, "UTF-8", "GB18030", "Big5").forEach { name ->
+                  charsetOrNull(name)?.let(candidates::add)
+              }
+              val decoded = candidates.mapNotNull { charset -> decodeStrict(bytes, charset)?.let { charset to it } }
+              return decoded.maxByOrNull { (_, text) -> decodedQuality(text) }?.second
+                  ?: String(bytes, charsetOrNull("GB18030") ?: Charsets.UTF_8)
+          }
+
+          private fun charsetOrNull(name: String): Charset? {
+              val normalized = when (name.trim().uppercase()) {
+                  "GB2312", "HZ-GB-2312", "GBK", "CP936", "WINDOWS-936" -> "GB18030"
+                  "UTF8" -> "UTF-8"
+                  else -> name.trim()
+              }
+              return runCatching { Charset.forName(normalized) }.getOrNull()
+          }
+
+          private fun decodeStrict(bytes: ByteArray, charset: Charset): String? = try {
+              charset.newDecoder()
+                  .onMalformedInput(CodingErrorAction.REPORT)
+                  .onUnmappableCharacter(CodingErrorAction.REPORT)
+                  .decode(ByteBuffer.wrap(bytes)).toString()
+          } catch (_: CharacterCodingException) { null }
+
+          private fun decodedQuality(text: String): Long {
+              var score = 0L
+              text.forEach { char ->
+                  score += when {
+                      char == '\uFFFD' -> -1000L
+                      char == '\u0000' -> -200L
+                      char.code in 0..31 && char !in setOf('\n', '\r', '\t') -> -100L
+                      Character.UnicodeScript.of(char.code) == Character.UnicodeScript.HAN -> 8L
+                      char.isLetterOrDigit() -> 3L
+                      char.isWhitespace() -> 1L
+                      else -> 0L
+                  }
+              }
+              if (text.contains("锟斤拷")) score -= 5000L
+              return score
+          }
+
+          private fun extractReadableText(source: String): String {
+              val writes = documentWritePattern.findAll(source).map { match ->
+                  decodeJavaScriptString(match.groups[1]?.value ?: match.groups[2]?.value.orEmpty())
+              }.filter(String::isNotBlank).toList()
+              val readable = if (writes.isNotEmpty()) writes.joinToString("\n") else source
+                  .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
+                  .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+                  .replace(Regex("(?is)<head\\b[^>]*>.*?</head>"), "")
+              return Jsoup.parse(readable).text().replace('\u00A0', ' ').trim()
+          }
+
+          private fun decodeJavaScriptString(encoded: String): String {
+              val out = StringBuilder(encoded.length)
+              var i = 0
+              while (i < encoded.length) {
+                  val c = encoded[i]
+                  if (c != '\\' || i + 1 >= encoded.length) { out.append(c); i++; continue }
+                  when (val e = encoded[i + 1]) {
+                      'n' -> out.append('\n'); 'r' -> out.append('\r'); 't' -> out.append('\t')
+                      '\\' -> out.append('\\'); '\'' -> out.append('\''); '"' -> out.append('"')
+                      else -> out.append(e)
+                  }
+                  i += 2
+              }
+              return out.toString()
+          }
+
+          private fun byteBufferBytes(buffer: ByteBuffer): ByteArray {
+              val copy = buffer.duplicate(); copy.rewind(); return ByteArray(copy.remaining()).also(copy::get)
+          }
+
+          private fun normalizePath(value: String): String {
+              val cleaned = value.substringBefore('#').substringBefore('?').replace('\\', '/').trim()
+              return if (cleaned.isBlank()) "" else if (cleaned.startsWith('/')) cleaned else "/$cleaned"
+          }
+
+          private fun isReadableDocument(path: String): Boolean {
+              if (path.isBlank() || path.startsWith("/#") || path.startsWith("/$") || path.startsWith("::")) return false
+              val value = path.lowercase()
+              return value.endsWith(".htm") || value.endsWith(".html") || value.endsWith(".xhtml") || value.endsWith(".txt")
+          }
+          EOF
+
+      - name: Build fat jar
+        run: ./gradlew -p verifier clean jar --stacktrace --console=plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-sample-parser-verifier
+          path: verifier/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 1
