@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   apply:
+    # Run only for the dedicated v13 branch; the workflow deletes itself after success.
     if: github.actor != 'github-actions[bot]' && (github.head_ref == 'agent/v13-epub-chm-theme-grid' || github.ref_name == 'agent/v13-epub-chm-theme-grid')
     runs-on: ubuntu-latest
     timeout-minutes: 45
