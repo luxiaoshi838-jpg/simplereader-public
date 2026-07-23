@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/v14-real-epub-chm-continuous
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
