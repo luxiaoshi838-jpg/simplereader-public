@@ -1,0 +1,42 @@
+name: Inspect jchmlib API for v14
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Resolve dependency and inspect public API
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath --console=plain >/tmp/dependencies.txt
+          jar_path="$(find "$HOME/.gradle/caches/modules-2/files-2.1/com.github.chimenchen/jchmlib/v0.5.4" -type f -name '*.jar' ! -name '*sources*' | head -n1)"
+          test -s "$jar_path"
+          {
+            echo "JAR=$jar_path"
+            javap -classpath "$jar_path" -public org.jchmlib.ChmFile
+            javap -classpath "$jar_path" -public org.jchmlib.ChmUnitInfo
+            echo "--- package entries ---"
+            jar tf "$jar_path" | grep '^org/jchmlib/' | sort
+          } | tee /tmp/jchmlib-api.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jchmlib-v14-api
+          path: /tmp/jchmlib-api.txt
+          if-no-files-found: error
