@@ -1070,18 +1070,46 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             result.onSuccess { backup ->
-                pendingBackup = backup
-                Toast.makeText(
-                    this@MainActivity,
-                    "备份已完整识别。请选择一次原书总文件夹；选择完成前不会写入任何数据。",
-                    Toast.LENGTH_LONG
-                ).show()
-                backupRootLauncher.launch(null)
+                restoreBackupFromSavedLocations(backup)
             }.onFailure { error ->
                 pendingBackup = null
                 Toast.makeText(
                     this@MainActivity,
                     "备份识别失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun restoreBackupFromSavedLocations(
+        backup: SimpleReaderBackupDecoder.DecodedBackup
+    ) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    SimpleReaderBackupRestorer(
+                        context = this@MainActivity,
+                        database = database
+                    ).restore(
+                        backup = backup,
+                        scannedFiles = emptyList()
+                    )
+                }
+            }
+            result.onSuccess { summary ->
+                pendingBackup = null
+                selectedGroupId = null
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("旧备份恢复完成")
+                    .setMessage(summary.message())
+                    .setPositiveButton("确定", null)
+                    .show()
+            }.onFailure { error ->
+                pendingBackup = null
+                Toast.makeText(
+                    this@MainActivity,
+                    "恢复失败，数据库未完成写入：${error.message ?: "未知错误"}",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -1135,7 +1163,7 @@ class MainActivity : AppCompatActivity() {
                 arrayOf(
                     "选择按文件夹导入",
                     "选择单个或多个文件",
-                    "从旧备份恢复（随后选择一次原书总文件夹）"
+                    "从旧备份恢复（自动按备份位置）"
                 )
             ) { _, which ->
                 when (which) {

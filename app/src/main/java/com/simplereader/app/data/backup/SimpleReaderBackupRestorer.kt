@@ -11,9 +11,9 @@ import com.simplereader.app.data.model.PermissionStatus
 import org.json.JSONObject
 
 /**
- * Restores a fully decoded schema-v1 backup and binds it to one freshly scanned
- * local-library root. Groups are restored first and all legacy IDs are remapped
- * before books, progress, and bookmarks are written.
+ * Restores a fully decoded schema-v1 backup. If a freshly scanned library is
+ * supplied, books are relinked to those files; otherwise the original backup
+ * locations are preserved so groups, bookmarks, and progress remain usable.
  */
 class SimpleReaderBackupRestorer(
     context: Context,
@@ -36,7 +36,7 @@ class SimpleReaderBackupRestorer(
             append("书签 $restoredBookmarks 条、阅读进度 $restoredProgress 条。")
             append("\n扫描原书文件 $scannedFiles 个，成功关联 $linkedBooks 本。")
             if (missingBooks > 0) {
-                append("\n有 $missingBooks 本未在所选总目录中找到；其分组、书签和进度仍已保留。")
+                append("\n有 $missingBooks 本暂时不可直接读取；原始位置、分组、书签和进度仍已保留。")
             } else {
                 append("\n所有恢复书籍均已关联，可直接阅读。")
             }
@@ -157,6 +157,16 @@ class SimpleReaderBackupRestorer(
                         sourceTreeUri = row.stringOrNull("sourceTreeUri"),
                         relativePath = oldRelativePath,
                         fileStatus = "AVAILABLE"
+                    )
+                    !originalFilePath.isNullOrBlank() -> BookLocation(
+                        filePath = originalFilePath,
+                        fileName = fileName,
+                        format = format,
+                        fileSize = fileSize,
+                        lastModified = row.longOrNull("lastModified"),
+                        sourceTreeUri = row.stringOrNull("sourceTreeUri"),
+                        relativePath = oldRelativePath,
+                        fileStatus = "PERMISSION_REVOKED"
                     )
                     else -> BookLocation(
                         filePath = "backup://missing/$oldBookId/${Uri.encode(fileName)}",

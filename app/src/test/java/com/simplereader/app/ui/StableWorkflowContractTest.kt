@@ -28,13 +28,16 @@ class StableWorkflowContractTest {
     }
 
     @Test
-    fun `schema v1 is decoded before the single original-library folder selection`() {
+    fun `schema v1 restore uses saved backup locations before asking for a folder`() {
         val source = projectFile("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val prepare = source.substringAfter("private fun prepareBackupRestore(")
+            .substringBefore("private fun restoreBackupFromSavedLocations(")
+        val directRestore = source.substringAfter("private fun restoreBackupFromSavedLocations(")
             .substringBefore("private fun restoreBackupFromRoot(")
         assertTrue(prepare.contains("SimpleReaderBackupDecoder.decode(text)"))
-        assertTrue(prepare.contains("pendingBackup = backup"))
-        assertTrue(prepare.contains("backupRootLauncher.launch(null)"))
+        assertTrue(prepare.contains("restoreBackupFromSavedLocations(backup)"))
+        assertFalse(prepare.contains("backupRootLauncher.launch(null)"))
+        assertTrue(directRestore.contains("scannedFiles = emptyList()"))
         assertFalse(source.contains("补充关联未找到的书籍"))
         assertFalse(source.contains("relinkRestoredDataLauncher"))
     }
@@ -55,6 +58,17 @@ class StableWorkflowContractTest {
         assertTrue(source.contains("manifest.put(\"format\", \"SimpleReaderBackup\")"))
         assertTrue(source.contains("private const val BACKUP_SCHEMA_VERSION = 1"))
         assertTrue(source.contains("listOf(\"book_groups\", \"books\", \"bookmarks\", \"read_progress\")"))
+    }
+
+    @Test
+    fun `backup restore preserves original file locations when permission is missing`() {
+        val source = projectFile("src/main/java/com/simplereader/app/data/backup/SimpleReaderBackupRestorer.kt").readText()
+        val fallback = source.substringAfter("!originalFilePath.isNullOrBlank() -> BookLocation(")
+            .substringBefore("else -> BookLocation(")
+        assertTrue(fallback.contains("filePath = originalFilePath"))
+        assertTrue(fallback.contains("sourceTreeUri = row.stringOrNull(\"sourceTreeUri\")"))
+        assertTrue(fallback.contains("relativePath = oldRelativePath"))
+        assertTrue(fallback.contains("fileStatus = \"PERMISSION_REVOKED\""))
     }
 
     private fun projectFile(vararg candidates: String): File {
