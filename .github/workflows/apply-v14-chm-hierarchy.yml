@@ -1,0 +1,385 @@
+name: Apply v14 CHM hierarchy
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+    paths:
+      - ".github/workflows/apply-v14-chm-hierarchy.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+
+      - name: Preserve CHM hierarchy in parser and catalog
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          chm_path = Path('app/src/main/java/com/simplereader/app/parser/ChmParser.kt')
+          chm = chm_path.read_text(encoding='utf-8')
+          old_decl = 'data class ChmChapter(val path: String, val title: String)'
+          new_decl = '''data class ChmChapter(
+              val path: String,
+              val title: String,
+              val depth: Int = 0,
+              val isSection: Boolean = false,
+              val targetPath: String = path
+          )'''
+          assert old_decl in chm
+          chm = chm.replace(old_decl, new_decl, 1)
+
+          replacement = r'''    private fun chapterEntries(archive: ChmFile): List<ChmChapter> {
+              val result = mutableListOf<ChmChapter>()
+              val seenReadable = linkedSetOf<String>()
+
+              fun readableChapter(pathValue: String?, titleValue: String?, depth: Int): ChmChapter? {
+                  val path = normalizePath(pathValue.orEmpty())
+                  if (path.isBlank() || !isReadableDocument(path)) return null
+                  val resolved = resolveEntry(archive, path) ?: return null
+                  if (resolved.length !in 1L..MAX_ENTRY_BYTES) return null
+
+                  val archiveTitle = titleValue?.trim()?.takeIf { it.isNotBlank() && it != "<Top>" }
+                      ?: archive.getTitleOfObject(resolved.path.orEmpty())
+                          ?.trim()?.takeIf { it.isNotBlank() && it != resolved.path }
+                  val title = if (archiveTitle == null || looksGarbled(archiveTitle)) {
+                      extractPageTitle(readEntrySource(archive, resolved, TITLE_PREFIX_BYTES))
+                          .ifBlank { path.substringAfterLast('/').substringBeforeLast('.').ifBlank { path } }
+                  } else {
+                      archiveTitle
+                  }
+                  return ChmChapter(
+                      path = resolved.path.orEmpty(),
+                      title = cleanText(title),
+                      depth = depth.coerceAtLeast(0),
+                      isSection = false,
+                      targetPath = resolved.path.orEmpty()
+                  )
+              }
+
+              fun firstReadablePath(node: ChmTopicsTree?): String? {
+                  if (node == null) return null
+                  readableChapter(node.path, node.title, 0)?.path?.let { return it }
+                  node.children?.forEach { child ->
+                      firstReadablePath(child)?.let { return it }
+                  }
+                  return null
+              }
+
+              fun walk(node: ChmTopicsTree?, depth: Int) {
+                  node?.children?.forEach { child ->
+                      val readable = readableChapter(child.path, child.title, depth)
+                      if (readable != null) {
+                          if (seenReadable.add(readable.path.lowercase())) result += readable
+                      } else {
+                          val title = cleanText(child.title.orEmpty())
+                              .takeIf { it.isNotBlank() && it != "<Top>" }
+                          val target = firstReadablePath(child)
+                          if (title != null && target != null) {
+                              result += ChmChapter(
+                                  path = "",
+                                  title = title,
+                                  depth = depth.coerceAtLeast(0),
+                                  isSection = true,
+                                  targetPath = target
+                              )
+                          }
+                      }
+                      walk(child, depth + 1)
+                  }
+              }
+
+              runCatching { walk(archive.topicsTree, 0) }
+              if (result.none { !it.isSection }) {
+                  archive.homeFile?.let { home ->
+                      readableChapter(home, archive.title, 0)?.let { chapter ->
+                          if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                      }
+                  }
+                  readableEntries(archive).forEach { entry ->
+                      readableChapter(entry.path, archive.getTitleOfObject(entry.path.orEmpty()), 0)
+                          ?.let { chapter ->
+                              if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                          }
+                  }
+              }
+              return result.take(MAX_DOCUMENT_ENTRIES)
+          }
+
+          private fun readEntryText'''
+          chm, count = re.subn(
+              r'    private fun chapterEntries\(archive: ChmFile\): List<ChmChapter> \{.*?\n    private fun readEntryText',
+              replacement,
+              chm,
+              count=1,
+              flags=re.S,
+          )
+          assert count == 1
+          chm_path.write_text(chm, encoding='utf-8')
+
+          reader_path = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          reader = reader_path.read_text(encoding='utf-8')
+
+          old = '''    private var epubChapters: List<EpubChapter> = emptyList()
+              private var epubChapterStartPositions: List<Int> = emptyList()
+              private var structuredChapterIndex: Int = 0'''
+          new = '''    private var epubChapters: List<EpubChapter> = emptyList()
+              private var epubChapterStartPositions: List<Int> = emptyList()
+              private var structuredCatalogEntries: List<StructuredCatalogEntry> = emptyList()
+              private var structuredChapterIndex: Int = 0'''
+          assert old in reader
+          reader = reader.replace(old, new, 1)
+
+          old_chm = '''                                val entries = ChmParser.readChapterIndex(cachedFile)
+                                          val chapters = entries.map { chapter ->
+                                              EpubChapter(name = chapter.path, text = chapter.title)
+                                          }
+                                          check(chapters.isNotEmpty()) { "CHM 中没有可读取的章节" }'''
+          new_chm = '''                                val entries = ChmParser.readChapterIndex(cachedFile)
+                                          val readableEntries = entries
+                                              .filter { !it.isSection && it.path.isNotBlank() }
+                                              .distinctBy { it.path.lowercase() }
+                                          val chapters = readableEntries.map { chapter ->
+                                              EpubChapter(name = chapter.path, text = chapter.title)
+                                          }
+                                          check(chapters.isNotEmpty()) { "CHM 中没有可读取的章节" }
+                                          val chapterIndexByPath = readableEntries.mapIndexed { index, chapter ->
+                                              chapter.path.lowercase() to index
+                                          }.toMap()
+                                          val catalogEntries = entries.mapNotNull { entry ->
+                                              val targetIndex = chapterIndexByPath[entry.targetPath.lowercase()]
+                                                  ?: return@mapNotNull null
+                                              StructuredCatalogEntry(
+                                                  title = entry.title,
+                                                  depth = entry.depth,
+                                                  targetChapterIndex = targetIndex,
+                                                  isSection = entry.isSection
+                                              )
+                                          }'''
+          assert old_chm in reader
+          reader = reader.replace(old_chm, new_chm, 1)
+
+          old_loaded = '''                                    structuredReadingBuffer = buffer,
+                                              chmCachePath = cachedFile.absolutePath
+                                          )'''
+          new_loaded = '''                                    structuredReadingBuffer = buffer,
+                                              structuredCatalogEntries = catalogEntries,
+                                              chmCachePath = cachedFile.absolutePath
+                                          )'''
+          assert old_loaded in reader
+          reader = reader.replace(old_loaded, new_loaded, 1)
+
+          old_assign = '''                epubChapters = loadedContent.epubChapters
+                          epubChapterStartPositions = loadedContent.epubChapterStartPositions
+                          structuredChapterIndex = loadedContent.structuredChapterIndex'''
+          new_assign = '''                epubChapters = loadedContent.epubChapters
+                          epubChapterStartPositions = loadedContent.epubChapterStartPositions
+                          structuredCatalogEntries = loadedContent.structuredCatalogEntries
+                          structuredChapterIndex = loadedContent.structuredChapterIndex'''
+          assert old_assign in reader
+          reader = reader.replace(old_assign, new_assign, 1)
+
+          marker = '''            fun currentChapterIndex(): Int {
+                          if (epubChapterStartPositions.isEmpty()) return -1'''
+          helper = '''            fun structuredCatalogLabel(entry: StructuredCatalogEntry, position: Int, highlighted: Boolean): CharSequence {
+                          val indent = "　".repeat(entry.depth.coerceIn(0, 8))
+                          val marker = if (entry.depth == 0 || entry.isSection) "◆ " else "└ "
+                          val title = "$indent$marker${entry.title}"
+                          val label = "$title\\n${positionMeta(position)}"
+                          if (!highlighted) return label
+                          return SpannableString(label).apply {
+                              val titleEnd = label.indexOf('\\n').let { if (it >= 0) it else label.length }
+                              setSpan(StyleSpan(Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                              setSpan(RelativeSizeSpan(if (entry.depth == 0 || entry.isSection) 1.22f else 1.12f), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                          }
+                      }
+
+                      fun currentChapterIndex(): Int {
+                          if (epubChapterStartPositions.isEmpty()) return -1'''
+          assert marker in reader
+          reader = reader.replace(marker, helper, 1)
+
+          old_render = '''                if (showingCatalog) {
+                                  val currentChapter = currentChapterIndex()
+                                  val labels = if (epubChapters.isEmpty()) {
+                                      requestTxtCatalogScan { render() }
+                                      if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
+                                  } else {
+                                      epubChapters.mapIndexed { index, chapter ->
+                                          val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
+                                          val position = epubChapterStartPositions.getOrElse(index) { 0 }
+                                          catalogLabel(index, title, position, index == currentChapter)
+                                      }
+                                  }
+                                  listView.adapter = boundedLineAdapter(labels, currentChapter, maxLines = 2)
+                                  if (currentChapter >= 0) {
+                                      listView.post { listView.setSelection(currentChapter) }
+                                  }
+                                  listView.setOnItemClickListener { _, _, which, _ ->
+                                      if (epubChapters.isNotEmpty()) {
+                                          if (isStructuredChapterDocument()) {
+                                              loadStructuredChapter(which, offset = 0, saveImmediately = true)
+                                          } else {
+                                              currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+                                              if (txtStreamingMode) {
+                                              showStreamingTxtPage(
+                                                  currentPosition.toLong(),
+                                                  saveImmediately = true,
+                                                  keepContextBeforeTarget = true
+                                              )
+                                              } else {
+                                                  displayContent()
+                                                  markProgressDirty()
+                                                  saveProgressNow()
+                                              }
+                                          }
+                                          dialog?.dismiss()
+                                      }
+                                  }
+                                  listView.setOnItemLongClickListener(null)
+                              } else {'''
+          new_render = '''                if (showingCatalog) {
+                                  val currentChapter = currentChapterIndex()
+                                  val useHierarchicalChmCatalog = book?.format?.uppercase() == "CHM" && structuredCatalogEntries.isNotEmpty()
+                                  val highlightedCatalogIndex = if (useHierarchicalChmCatalog) {
+                                      structuredCatalogEntries.indexOfFirst { entry ->
+                                          !entry.isSection && entry.targetChapterIndex == currentChapter
+                                      }
+                                  } else {
+                                      currentChapter
+                                  }
+                                  val labels = if (epubChapters.isEmpty()) {
+                                      requestTxtCatalogScan { render() }
+                                      if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
+                                  } else if (useHierarchicalChmCatalog) {
+                                      structuredCatalogEntries.map { entry ->
+                                          val position = epubChapterStartPositions.getOrElse(entry.targetChapterIndex) { 0 }
+                                          structuredCatalogLabel(
+                                              entry = entry,
+                                              position = position,
+                                              highlighted = !entry.isSection && entry.targetChapterIndex == currentChapter
+                                          )
+                                      }
+                                  } else {
+                                      epubChapters.mapIndexed { index, chapter ->
+                                          val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
+                                          val position = epubChapterStartPositions.getOrElse(index) { 0 }
+                                          catalogLabel(index, title, position, index == currentChapter)
+                                      }
+                                  }
+                                  listView.adapter = boundedLineAdapter(labels, highlightedCatalogIndex, maxLines = 2)
+                                  if (highlightedCatalogIndex >= 0) {
+                                      listView.post { listView.setSelection(highlightedCatalogIndex) }
+                                  }
+                                  listView.setOnItemClickListener { _, _, which, _ ->
+                                      if (epubChapters.isNotEmpty()) {
+                                          if (isStructuredChapterDocument()) {
+                                              val targetChapter = if (useHierarchicalChmCatalog) {
+                                                  structuredCatalogEntries.getOrNull(which)?.targetChapterIndex
+                                              } else {
+                                                  which
+                                              }
+                                              if (targetChapter != null) {
+                                                  loadStructuredChapter(targetChapter, offset = 0, saveImmediately = true)
+                                              }
+                                          } else {
+                                              currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+                                              if (txtStreamingMode) {
+                                              showStreamingTxtPage(
+                                                  currentPosition.toLong(),
+                                                  saveImmediately = true,
+                                                  keepContextBeforeTarget = true
+                                              )
+                                              } else {
+                                                  displayContent()
+                                                  markProgressDirty()
+                                                  saveProgressNow()
+                                              }
+                                          }
+                                          dialog?.dismiss()
+                                      }
+                                  }
+                                  listView.setOnItemLongClickListener(null)
+                              } else {'''
+          assert old_render in reader
+          reader = reader.replace(old_render, new_render, 1)
+
+          old_loaded_decl = '''        val structuredWholeBookMode: Boolean = false,
+                  val structuredReadingBuffer: StructuredReadingBuffer? = null,
+                  val chmCachePath: String? = null'''
+          new_loaded_decl = '''        val structuredWholeBookMode: Boolean = false,
+                  val structuredReadingBuffer: StructuredReadingBuffer? = null,
+                  val structuredCatalogEntries: List<StructuredCatalogEntry> = emptyList(),
+                  val chmCachePath: String? = null'''
+          assert old_loaded_decl in reader
+          reader = reader.replace(old_loaded_decl, new_loaded_decl, 1)
+
+          marker_decl = '''    private data class TxtChapterIndex(
+                  val title: String,
+                  val start: Int
+              )'''
+          new_decl = '''    private data class StructuredCatalogEntry(
+                  val title: String,
+                  val depth: Int,
+                  val targetChapterIndex: Int,
+                  val isSection: Boolean
+              )
+
+              private data class TxtChapterIndex(
+                  val title: String,
+                  val start: Int
+              )'''
+          assert marker_decl in reader
+          reader = reader.replace(marker_decl, new_decl, 1)
+          reader_path.write_text(reader, encoding='utf-8')
+
+          test_path = Path('app/src/test/java/com/simplereader/app/parser/ChmHierarchyContractTest.kt')
+          test_path.write_text('''package com.simplereader.app.parser
+
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import java.io.File
+
+          class ChmHierarchyContractTest {
+              private fun source(path: String): String = File("src/main/java/com/simplereader/app/$path").readText()
+
+              @Test
+              fun `chm topics keep sections depth and target chapter`() {
+                  val parser = source("parser/ChmParser.kt")
+                  val reader = source("ui/ReaderActivity.kt")
+                  assertTrue(parser.contains("val depth: Int = 0"))
+                  assertTrue(parser.contains("val isSection: Boolean = false"))
+                  assertTrue(parser.contains("val targetPath: String = path"))
+                  assertTrue(parser.contains("firstReadablePath"))
+                  assertTrue(reader.contains("structuredCatalogEntries"))
+                  assertTrue(reader.contains("◆ "))
+                  assertTrue(reader.contains("targetChapterIndex"))
+              }
+          }
+          ''', encoding='utf-8')
+          PY
+
+      - name: Verify hierarchy patch
+        run: ./gradlew testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Commit hierarchy implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/parser/ChmParser.kt \
+                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+                  app/src/test/java/com/simplereader/app/parser/ChmHierarchyContractTest.kt
+          git commit -m "Preserve multi-book CHM hierarchy in reader catalog"
+          git push origin HEAD:agent/v14-real-epub-chm-continuous
