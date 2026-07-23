@@ -97,6 +97,9 @@ android {
 
 configurations.configureEach {
     exclude(group = "org.apache.tika")
+    // Android already supplies the XmlPull interfaces. Keeping the Maven copy
+    // makes R8 see the same class as both a platform and a program class.
+    exclude(group = "xmlpull", module = "xmlpull")
 }
 
 dependencies {
@@ -118,9 +121,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
 
     // Mature public parsers: epub4j follows OPF spine order; jchmlib handles CHM TOC and encoding.
-    implementation("io.documentnode:epub4j-core:4.2.3") {
-        exclude(group = "xmlpull")
-    }
+    implementation("io.documentnode:epub4j-core:4.2.3")
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
     implementation("com.sorrowblue.sevenzipjbinding:7-Zip-JBinding-4Android:16.02-2.4")
