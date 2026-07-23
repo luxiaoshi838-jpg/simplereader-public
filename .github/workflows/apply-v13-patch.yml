@@ -35,7 +35,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode .v13/v13.patch.gz.b64 | gzip --decompress > "$RUNNER_TEMP/v13.patch"
+          cat .v13/part00 .v13/part01 .v13/part02 .v13/part03 \
+            | base64 --decode \
+            | gzip --decompress > "$RUNNER_TEMP/v13.patch"
           actual="$(sha256sum "$RUNNER_TEMP/v13.patch" | awk '{print $1}')"
           test "$actual" = "$EXPECTED_PATCH_SHA256"
           git apply --check "$RUNNER_TEMP/v13.patch"
