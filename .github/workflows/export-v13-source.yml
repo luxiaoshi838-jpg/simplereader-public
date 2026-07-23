@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/v13-epub-chm-theme-grid
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,6 +14,7 @@ permissions:
 
 jobs:
   export:
+    if: github.head_ref == 'agent/v13-epub-chm-theme-grid' || github.ref_name == 'agent/v13-epub-chm-theme-grid'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
