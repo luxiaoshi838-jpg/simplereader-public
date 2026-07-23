@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/v13-reader-theme-shelf
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,7 +14,7 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, 'Apply v13 verified changes') }}
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Apply v13 verified changes') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -62,6 +65,7 @@ jobs:
           test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
 
       - name: Commit verified source changes
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
