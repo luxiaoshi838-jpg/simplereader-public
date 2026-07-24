@@ -29,6 +29,7 @@ jobs:
           python scripts/patch_catalog_page_ui.py
           python scripts/patch_catalog_pattern_guard.py
           python scripts/patch_catalog_parentheses_and_fixture.py
+          python scripts/patch_preferred_charset_stability.py
           python scripts/rewrite_catalog_ui_contract_test.py
 
       - name: Set up JDK 17
@@ -45,6 +46,9 @@ jobs:
           set +e
           timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
           code=$?
+          if [ $code -ne 0 ]; then
+            find app/build/test-results/testDebugUnitTest -name '*.xml' -maxdepth 1 -print -exec cat {} \; 2>/dev/null || true
+          fi
           tail -n 220 /tmp/debug-unit.log
           exit $code
 
