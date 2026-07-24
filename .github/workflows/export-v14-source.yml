@@ -1,0 +1,30 @@
+name: Export v14 source
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+    paths:
+      - ".github/workflows/export-v14-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+      - name: Pack source
+        run: |
+          tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-v14-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v14-source
+          path: /tmp/simplereader-v14-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1

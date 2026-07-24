@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.simplereader.app.data.backup.BackupFileMatcher.BackupBookIdentity
 import com.simplereader.app.data.backup.LocalLibraryScanner.LocalBookFile
+import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.model.PermissionStatus
 import org.json.JSONObject
@@ -19,7 +20,8 @@ class SimpleReaderBackupRestorer(
     context: Context,
     private val database: SimpleReaderDatabase
 ) {
-    private val contentResolver = context.contentResolver
+    private val appContext = context.applicationContext
+    private val contentResolver = appContext.contentResolver
 
     data class RestoreSummary(
         val scannedFiles: Int,
@@ -29,11 +31,13 @@ class SimpleReaderBackupRestorer(
         val linkedBooks: Int,
         val missingBooks: Int,
         val restoredBookmarks: Int,
-        val restoredProgress: Int
+        val restoredProgress: Int,
+        val restoredStructuredCaches: Int
     ) {
         fun message(): String = buildString {
             append("恢复完成：书籍 ${insertedBooks + mergedBooks} 本、分组 $insertedGroups 个、")
-            append("书签 $restoredBookmarks 条、阅读进度 $restoredProgress 条。")
+            append("书签 $restoredBookmarks 条、阅读进度 $restoredProgress 条、")
+            append("可读缓存 $restoredStructuredCaches 本。")
             append("\n扫描原书文件 $scannedFiles 个，成功关联 $linkedBooks 本。")
             if (missingBooks > 0) {
                 append("\n有 $missingBooks 本暂时不可直接读取；原始位置、分组、书签和进度仍已保留。")
@@ -54,11 +58,11 @@ class SimpleReaderBackupRestorer(
         var missingBooks = 0
         var restoredBookmarks = 0
         var restoredProgress = 0
+        val bookIdMap = mutableMapOf<Long, Long>()
 
         database.withTransaction {
             val db = database.openHelper.writableDatabase
             val groupIdMap = mutableMapOf<Long, Long>()
-            val bookIdMap = mutableMapOf<Long, Long>()
             val unusedFiles = scannedFiles.associateBy { it.uri }.toMutableMap()
 
             backup.groups.sortedBy { it.optInt("sortOrder", 0) }.forEach { row ->
@@ -321,6 +325,12 @@ class SimpleReaderBackupRestorer(
             }
         }
 
+        val restoredStructuredCaches = StructuredBookCache.restoreAll(
+            context = appContext,
+            entries = backup.structuredCache,
+            bookIdMap = bookIdMap
+        )
+
         return RestoreSummary(
             scannedFiles = scannedFiles.size,
             insertedGroups = insertedGroups,
@@ -329,7 +339,8 @@ class SimpleReaderBackupRestorer(
             linkedBooks = linkedBooks,
             missingBooks = missingBooks,
             restoredBookmarks = restoredBookmarks,
-            restoredProgress = restoredProgress
+            restoredProgress = restoredProgress,
+            restoredStructuredCaches = restoredStructuredCaches
         )
     }
 

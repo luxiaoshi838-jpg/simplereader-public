@@ -1,0 +1,203 @@
+name: Apply v14 CHM cache parser
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+    paths:
+      - ".github/workflows/apply-v14-chm-cache-parser.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+
+      - name: Preserve hierarchy and export readable chapters once
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('app/src/main/java/com/simplereader/app/parser/ChmParser.kt')
+          text = path.read_text(encoding='utf-8')
+
+          old = 'data class ChmChapter(val path: String, val title: String)'
+          new = '''data class ChmChapter(
+              val path: String,
+              val title: String,
+              val depth: Int = 0,
+              val isSection: Boolean = false,
+              val targetPath: String = path
+          )'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          text = text.replace(
+              'chapterEntries(archive).forEach { chapter ->',
+              'chapterEntries(archive).filterNot { it.isSection }.forEach { chapter ->',
+              1,
+          )
+
+          anchor = '''    fun readChapterText(chmFile: File, chapterPath: String): String =
+                  withArchive(chmFile) { archive -> readEntryText(archive, chapterPath) }
+          '''
+          replacement = '''    fun readChapterText(chmFile: File, chapterPath: String): String =
+                  withArchive(chmFile) { archive -> readEntryText(archive, chapterPath) }
+
+              /**
+               * Opens the CHM archive only once and sends each readable chapter to
+               * the persistent UTF-8 text cache writer.
+               */
+              fun exportReadableChapters(
+                  chmFile: File,
+                  consumer: (ChmChapter, String) -> Unit
+              ): List<ChmChapter> = withArchive(chmFile) { archive ->
+                  val entries = chapterEntries(archive)
+                  entries.asSequence()
+                      .filter { !it.isSection && it.path.isNotBlank() }
+                      .distinctBy { it.path.lowercase() }
+                      .forEach { chapter ->
+                          consumer(chapter, readEntryText(archive, chapter.path))
+                      }
+                  entries
+              }
+          '''
+          assert anchor in text
+          text = text.replace(anchor, replacement, 1)
+
+          replacement = r'''    private fun chapterEntries(archive: ChmFile): List<ChmChapter> {
+              val result = mutableListOf<ChmChapter>()
+              val seenReadable = linkedSetOf<String>()
+
+              fun readableChapter(pathValue: String?, titleValue: String?, depth: Int): ChmChapter? {
+                  val entryPath = normalizePath(pathValue.orEmpty())
+                  if (entryPath.isBlank() || !isReadableDocument(entryPath)) return null
+                  val resolved = resolveEntry(archive, entryPath) ?: return null
+                  if (resolved.length !in 1L..MAX_ENTRY_BYTES) return null
+
+                  val archiveTitle = titleValue?.trim()?.takeIf { it.isNotBlank() && it != "<Top>" }
+                      ?: archive.getTitleOfObject(resolved.path.orEmpty())
+                          ?.trim()?.takeIf { it.isNotBlank() && it != resolved.path }
+                  val title = if (archiveTitle == null || looksGarbled(archiveTitle)) {
+                      extractPageTitle(readEntrySource(archive, resolved, TITLE_PREFIX_BYTES))
+                          .ifBlank {
+                              entryPath.substringAfterLast('/').substringBeforeLast('.')
+                                  .ifBlank { entryPath }
+                          }
+                  } else {
+                      archiveTitle
+                  }
+                  return ChmChapter(
+                      path = resolved.path.orEmpty(),
+                      title = cleanText(title),
+                      depth = depth.coerceAtLeast(0),
+                      isSection = false,
+                      targetPath = resolved.path.orEmpty()
+                  )
+              }
+
+              fun firstReadablePath(node: ChmTopicsTree?): String? {
+                  if (node == null) return null
+                  readableChapter(node.path, node.title, 0)?.path?.let { return it }
+                  node.children?.forEach { child ->
+                      firstReadablePath(child)?.let { return it }
+                  }
+                  return null
+              }
+
+              fun walk(node: ChmTopicsTree?, depth: Int) {
+                  node?.children?.forEach { child ->
+                      val readable = readableChapter(child.path, child.title, depth)
+                      if (readable != null) {
+                          if (seenReadable.add(readable.path.lowercase())) result += readable
+                      } else {
+                          val title = cleanText(child.title.orEmpty())
+                              .takeIf { it.isNotBlank() && it != "<Top>" }
+                          val target = firstReadablePath(child)
+                          if (title != null && target != null) {
+                              result += ChmChapter(
+                                  path = "",
+                                  title = title,
+                                  depth = depth.coerceAtLeast(0),
+                                  isSection = true,
+                                  targetPath = target
+                              )
+                          }
+                      }
+                      walk(child, depth + 1)
+                  }
+              }
+
+              runCatching { walk(archive.topicsTree, 0) }
+              if (result.none { !it.isSection }) {
+                  archive.homeFile?.let { home ->
+                      readableChapter(home, archive.title, 0)?.let { chapter ->
+                          if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                      }
+                  }
+                  readableEntries(archive).forEach { entry ->
+                      readableChapter(
+                          entry.path,
+                          archive.getTitleOfObject(entry.path.orEmpty()),
+                          0
+                      )?.let { chapter ->
+                          if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                      }
+                  }
+              }
+              return result.take(MAX_DOCUMENT_ENTRIES)
+          }
+
+          private fun readEntryText'''
+          text, count = re.subn(
+              r'    private fun chapterEntries\(archive: ChmFile\): List<ChmChapter> \{.*?\n    private fun readEntryText',
+              replacement,
+              text,
+              count=1,
+              flags=re.S,
+          )
+          assert count == 1
+          path.write_text(text, encoding='utf-8')
+
+          test = Path('app/src/test/java/com/simplereader/app/parser/ChmHierarchyCacheContractTest.kt')
+          test.write_text('''package com.simplereader.app.parser
+
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import java.io.File
+
+          class ChmHierarchyCacheContractTest {
+              @Test
+              fun `chm parser preserves hierarchy and supports one pass cache export`() {
+                  val source = File("src/main/java/com/simplereader/app/parser/ChmParser.kt").readText()
+                  assertTrue(source.contains("val depth: Int = 0"))
+                  assertTrue(source.contains("val isSection: Boolean = false"))
+                  assertTrue(source.contains("val targetPath: String = path"))
+                  assertTrue(source.contains("exportReadableChapters"))
+                  assertTrue(source.contains("firstReadablePath"))
+              }
+          }
+          ''', encoding='utf-8')
+          PY
+
+      - name: Test parser and cache compilation
+        run: ./gradlew testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Commit verified parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/parser/ChmParser.kt \
+                  app/src/test/java/com/simplereader/app/parser/ChmHierarchyCacheContractTest.kt
+          git commit -m "Preserve CHM hierarchy for persistent text cache"
+          git push origin HEAD:agent/v14-real-epub-chm-continuous

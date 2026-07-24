@@ -1,0 +1,13 @@
+name: Superseded v14 CHM hierarchy patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  superseded:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Superseded by the unified persistent text cache implementation."

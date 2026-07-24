@@ -1,0 +1,67 @@
+name: Apply verified v14 continuous-reading patch
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+    paths:
+      - ".github/workflows/apply-v14-continuous-patch.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-v14-continuous-patch
+  cancel-in-progress: true
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Apply continuous-reading patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/patches/v14-continuous.patch.gz.b64 | gzip -dc > /tmp/v14-continuous.patch
+          patch -p1 --dry-run --batch < /tmp/v14-continuous.patch
+          patch -p1 --batch < /tmp/v14-continuous.patch
+          chmod +x ./gradlew
+
+      - name: Debug unit tests
+        run: timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain
+
+      - name: Release unit tests
+        run: timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain
+
+      - name: Assemble debug
+        run: timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain
+
+      - name: Assemble release
+        run: timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '# v14 continuous patch\n\nSTATUS: SUCCESS\n\nAll four Gradle stages completed within five minutes each.\n' > .github/v14-continuous-build-status.md
+          rm -f .github/patches/v14-continuous.patch.gz.b64
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java app/src/test/java .github/patches/v14-continuous.patch.gz.b64 .github/v14-continuous-build-status.md
+          git commit -m "Complete v14 continuous TXT and structured cache reading"
+          git push origin HEAD:agent/v14-real-epub-chm-continuous
+
+# retrigger after adding complete TXT regression files

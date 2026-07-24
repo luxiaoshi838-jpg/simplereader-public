@@ -2,6 +2,8 @@ package com.simplereader.app.ui
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -11,12 +13,15 @@ import android.view.inputmethod.EditorInfo
 import android.view.View
 import android.widget.EditText
 import android.widget.GridLayout
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.util.LruCache
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -24,9 +29,11 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
+import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
+import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.BookGroup
@@ -63,6 +70,9 @@ class MainActivity : AppCompatActivity() {
     private var shelfSearchQuery = ""
     private var selectedGroupId: Long? = null
     private var pendingBackup: SimpleReaderBackupDecoder.DecodedBackup? = null
+    private val coverBitmapCache = object : LruCache<Long, Bitmap>(12 * 1024) {
+        override fun sizeOf(key: Long, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+    }
 
     private val openFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -319,7 +329,7 @@ class MainActivity : AppCompatActivity() {
             repeat(4) { index ->
                 val preview = previewBooks.getOrNull(index)
                 val child = if (preview != null) {
-                    createBookCover(preview.title, preview.format, compact = true).apply {
+                    createBookCover(preview, compact = true).apply {
                         layoutParams = groupPreviewLayoutParams(index)
                     }
                 } else {
@@ -365,7 +375,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun addBookCard(book: ShelfBookItem) {
         val card = createShelfCard()
-        card.addView(createBookCover(book.title, book.format, compact = false))
+        card.addView(createBookCover(book, compact = false))
         card.addView(TextView(this).apply {
             text = book.title
             textSize = 18f
@@ -386,13 +396,9 @@ class MainActivity : AppCompatActivity() {
         shelfGrid.addView(card)
     }
 
-    private fun createBookCover(title: String, format: String, compact: Boolean): TextView {
-        val cover = TextView(this).apply {
-            text = if (compact) {
-                "${title.take(9)}"
-            } else {
-                "${title.take(22)}"
-            }
+    private fun createBookCover(book: ShelfBookItem, compact: Boolean): View {
+        val fallback = TextView(this).apply {
+            text = if (compact) book.title.take(9) else book.title.take(22)
             setTextColor(Color.rgb(232, 238, 244))
             textSize = if (compact) 7.5f else 12f
             gravity = Gravity.CENTER
@@ -405,7 +411,29 @@ class MainActivity : AppCompatActivity() {
                 cornerRadius = dp(if (compact) 3 else 5).toFloat()
             }
         }
-        cover.layoutParams = if (compact) {
+        val image = ImageView(this).apply {
+            visibility = View.GONE
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            contentDescription = "《${book.title}》封面"
+        }
+        val frame = FrameLayout(this).apply {
+            tag = book.id
+            addView(
+                fallback,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+            addView(
+                image,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        frame.layoutParams = if (compact) {
             GridLayout.LayoutParams().apply {
                 width = dp(42)
                 height = dp(48)
@@ -414,7 +442,36 @@ class MainActivity : AppCompatActivity() {
         } else {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112))
         }
-        return cover
+
+        fun showBitmap(bitmap: Bitmap) {
+            if (frame.tag != book.id) return
+            image.setImageBitmap(bitmap)
+            image.visibility = View.VISIBLE
+            fallback.visibility = View.GONE
+        }
+
+        coverBitmapCache.get(book.id)?.let(::showBitmap)
+        if (book.format.equals("EPUB", ignoreCase = true) && coverBitmapCache.get(book.id) == null) {
+            lifecycleScope.launch {
+                val bitmap = withContext(Dispatchers.IO) {
+                    runCatching {
+                        StructuredBookCache.coverFile(this@MainActivity, book.id)
+                            ?.takeIf { it.isFile }
+                            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                            ?: contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
+                                EpubParser.readCoverImage(input)?.let { bytes ->
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
+                            }
+                    }.getOrNull()
+                }
+                if (bitmap != null) {
+                    coverBitmapCache.put(book.id, bitmap)
+                    showBitmap(bitmap)
+                }
+            }
+        }
+        return frame
     }
 
     private fun createShelfCard(): LinearLayout {
@@ -1128,7 +1185,7 @@ class MainActivity : AppCompatActivity() {
                     manifest.put("encoding", "UTF-8")
                     manifest.put(
                         "includedData",
-                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress"))
+                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress", "structured_cache"))
                     )
 
                     relationships.put("books.groupId", "book_groups.id")
@@ -1171,9 +1228,11 @@ class MainActivity : AppCompatActivity() {
                         tablesJson.put(table, rows)
                     }
 
+                    val structuredCache = StructuredBookCache.exportAll(this@MainActivity)
                     root.put("manifest", manifest)
                     root.put("relationships", relationships)
                     root.put("tables", tablesJson)
+                    root.put("structuredCache", structuredCache)
 
                     val output = contentResolver.openOutputStream(targetUri, "wt")
                         ?: error("无法打开所选保存位置")
@@ -1185,8 +1244,9 @@ class MainActivity : AppCompatActivity() {
                     val groupCount = tablesJson.getJSONArray("book_groups").length()
                     val bookmarkCount = tablesJson.getJSONArray("bookmarks").length()
                     val progressCount = tablesJson.getJSONArray("read_progress").length()
+                    val cacheCount = structuredCache.length()
                     val action = if (isSync) "同步" else "导出"
-                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条"
+                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条、可读缓存 $cacheCount 本"
                 }
             }
 
@@ -1431,7 +1491,7 @@ class MainActivity : AppCompatActivity() {
         baseOptions: ImportPlanOptions = ImportPlanOptions()
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1561,7 +1621,7 @@ class MainActivity : AppCompatActivity() {
         selected: BooleanArray
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
             return
         }
         val labels = candidates.map { candidate ->
@@ -1966,7 +2026,6 @@ class MainActivity : AppCompatActivity() {
         return when {
             name.endsWith(".txt", ignoreCase = true) -> "TXT"
             name.endsWith(".epub", ignoreCase = true) -> "EPUB"
-            name.endsWith(".chm", ignoreCase = true) -> "CHM"
             else -> null
         }
     }

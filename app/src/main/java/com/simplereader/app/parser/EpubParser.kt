@@ -11,7 +11,8 @@ import java.io.InputStream
  */
 data class EpubChapter(
     val name: String,
-    val text: String
+    val text: String,
+    val content: String = ""
 )
 
 object EpubParser {
@@ -34,13 +35,31 @@ object EpubParser {
         return htmlToText(readResource(resource))
     }
 
+    /**
+     * Reads the whole spine once. This is used for EPUB continuous reading so a
+     * directory jump does not discard the chapters before or after the target.
+     */
     fun readChapters(inputStream: InputStream): List<EpubChapter> {
         val book = EpubReader().readEpub(inputStream)
-        return spineResources(book).mapNotNull { resource ->
+        return spineResources(book).map { resource ->
             val href = normalizedHref(resource.href)
-            val text = htmlToText(readResource(resource))
-            text.takeIf { it.isNotBlank() }?.let { EpubChapter(name = href, text = it) }
-        }
+            val html = runCatching { readResource(resource) }.getOrDefault("")
+            EpubChapter(
+                name = href,
+                text = chapterTitle(resource, href, html),
+                content = htmlToText(html)
+            )
+        }.distinctBy { it.name.lowercase() }
+    }
+
+    /** Returns the real cover image declared by the EPUB package, if present. */
+    fun readCoverImage(inputStream: InputStream): ByteArray? {
+        val book = EpubReader().readEpub(inputStream)
+        val cover = book.coverImage ?: return null
+        if (cover.size <= 0L || cover.size > MAX_COVER_BYTES) return null
+        return runCatching { cover.data }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() && it.size <= MAX_COVER_BYTES }
     }
 
     private fun spineResources(book: io.documentnode.epub4j.domain.Book): List<Resource> {
@@ -51,9 +70,9 @@ object EpubParser {
 
     private fun readResource(resource: Resource): String = resource.reader.use { it.readText() }
 
-    private fun chapterTitle(resource: Resource, href: String): String {
+    private fun chapterTitle(resource: Resource, href: String, knownHtml: String? = null): String {
         resource.title?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
-        val html = runCatching { readResource(resource) }.getOrDefault("")
+        val html = knownHtml ?: runCatching { readResource(resource) }.getOrDefault("")
         Regex("(?is)<title[^>]*>(.*?)</title>")
             .find(html)?.groupValues?.getOrNull(1)?.let(::htmlToText)
             ?.takeIf { it.isNotBlank() }?.let { return it }
@@ -72,11 +91,16 @@ object EpubParser {
     }
 
     private fun htmlToText(html: String): String {
-        return Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
+        val body = html
+            .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
+            .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+        return Html.fromHtml(body, Html.FROM_HTML_MODE_LEGACY)
             .toString()
             .replace('\u00A0', ' ')
             .replace(Regex("[ \\t]+\\n"), "\n")
             .replace(Regex("\\n{3,}"), "\n\n")
             .trim()
     }
+
+    private const val MAX_COVER_BYTES = 24 * 1024 * 1024
 }
