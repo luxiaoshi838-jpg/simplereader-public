@@ -1,0 +1,71 @@
+name: Restore previous reader search
+
+on:
+  push:
+    branches:
+      - agent/restore-reader-search-menu
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout restoration branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/restore-reader-search-menu
+          fetch-depth: 0
+
+      - name: Restore previous menu code
+        run: |
+          chmod +x ./gradlew
+          python scripts/restore_reader_search_menu.py
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare restoration version
+        run: |
+          echo "SIMPLE_READER_VERSION_CODE=$((2026075000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.v14.search.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Debug unit tests
+        run: timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain
+
+      - name: Release unit tests
+        run: timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain
+
+      - name: Assemble debug
+        run: timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain
+
+      - name: Assemble release
+        run: timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain
+
+      - name: Commit restored source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          git commit -m 'Restore previous reader search menu'
+          git push origin HEAD:agent/restore-reader-search-menu
+
+      - name: Upload verified APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-reader-search-restored-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 7
