@@ -24,6 +24,19 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Pack source snapshot
+        shell: bash
+        run: |
+          tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-v14-source.tar.gz .
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v14-source-${{ github.run_number }}
+          path: /tmp/simplereader-v14-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
