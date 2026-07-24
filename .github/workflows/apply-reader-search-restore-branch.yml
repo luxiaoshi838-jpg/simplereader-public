@@ -1,0 +1,108 @@
+name: Apply current-book search restoration
+
+on:
+  push:
+    branches:
+      - agent/reader-search-restore-current-book
+    paths:
+      - .github/reader-search-restore-trigger
+      - scripts/patch_reader_search_jump_and_retention.py
+      - .github/workflows/apply-reader-search-restore-branch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  restore-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/reader-search-restore-current-book
+          fetch-depth: 0
+
+      - name: Apply restored search behavior
+        run: python scripts/patch_reader_search_jump_and_retention.py
+
+      - name: Verify restored behavior in source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text(encoding='utf-8')
+          required = {
+              'result closes before jump': 'fun openHit(hit: ReaderSearchHit) {\n            dialog?.dismiss()',
+              'txt hit jump': 'showStreamingTxtPage(hit.position, saveImmediately = true, keepContextBeforeTarget = true)',
+              'epub full-book jump': 'hit.stableKey.startsWith("whole:")',
+              'query restored per book': 'retained?.query?.takeIf { it.isNotBlank() }?.let(::setText)',
+              'results retained per book': 'SEARCH_RESULTS_PREFS = "reader_search_results"',
+          }
+          missing = [name for name, token in required.items() if token not in text]
+          if missing:
+              raise SystemExit('Missing: ' + ', '.join(missing))
+          forbidden = [
+              'fun openHit(hit: ReaderSearchHit) {\n            pageTurnMode = TURN_MODE_VERTICAL',
+          ]
+          if any(token in text for token in forbidden):
+              raise SystemExit('Old forced vertical-mode search jump still exists')
+          print('source contract passed')
+          PY
+
+      - name: Commit restored source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          if ! git diff --cached --quiet; then
+            git commit -m "恢复当前书搜索跳转和搜索词保留"
+            git push origin HEAD:agent/reader-search-restore-current-book
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+
+      - name: Debug unit tests
+        run: timeout --signal=INT 5m gradle --no-daemon :app:testDebugUnitTest
+
+      - name: Release unit tests
+        run: timeout --signal=INT 5m gradle --no-daemon :app:testReleaseUnitTest
+
+      - name: Assemble debug
+        env:
+          SIMPLE_READER_VERSION_CODE: '2026075402'
+          SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.searchfix.402'
+        run: timeout --signal=INT 5m gradle --no-daemon :app:assembleDebug
+
+      - name: Assemble release
+        env:
+          SIMPLE_READER_VERSION_CODE: '2026075402'
+          SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.searchfix.402'
+        run: timeout --signal=INT 5m gradle --no-daemon :app:assembleRelease
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-current-book-search-402
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-current-book-search-402-logs
+          path: |
+            app/build/reports/tests
+            app/build/test-results
+          if-no-files-found: ignore
+          retention-days: 3
