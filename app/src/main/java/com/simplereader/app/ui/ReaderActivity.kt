@@ -161,6 +161,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         addItem.actionView = TextView(this).apply {
