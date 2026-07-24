@@ -25,9 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Pack source snapshot
-        shell: bash
-        run: |
-          tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-v14-source.tar.gz .
+        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-v14-source.tar.gz .
 
       - name: Upload source snapshot
         uses: actions/upload-artifact@v4
@@ -46,29 +44,29 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
-
-      - name: Generate test version
+      - name: Prepare version
         shell: bash
         run: |
+          chmod +x ./gradlew
           echo "SIMPLE_READER_VERSION_CODE=$((2026300000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
           echo "SIMPLE_READER_VERSION_NAME=2026.07.22.complete.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      - name: Run debug and release tests and builds
-        run: ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+      - name: Debug unit tests
+        run: timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain
 
-      - name: Verify build does not rewrite committed source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --exit-code -- \
-            app/src/main \
-            app/scripts \
-            app/build.gradle.kts \
-            settings.gradle.kts
+      - name: Release unit tests
+        run: timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain
 
-      - name: Upload preview and unsigned release APKs
+      - name: Assemble debug
+        run: timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain
+
+      - name: Assemble release
+        run: timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain
+
+      - name: Verify immutable source
+        run: git diff --exit-code -- app/src/main app/scripts app/build.gradle.kts settings.gradle.kts
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-complete-fix-${{ github.run_number }}
