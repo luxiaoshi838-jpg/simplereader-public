@@ -32,7 +32,7 @@ class ReaderCatalogAndProgressUiContractTest {
         assertFalse(layout.contains("@+id/readerProgressBar"))
         assertTrue(layout.contains("android:text=\"1/1\""))
         assertTrue(source.contains("private fun pageCountLabel()"))
-        assertTrue(source.contains("return \"$currentPage/$totalPages\""))
+        assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
     }
 }
 ''',
