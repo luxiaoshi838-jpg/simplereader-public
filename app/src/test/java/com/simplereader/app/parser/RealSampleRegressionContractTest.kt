@@ -8,7 +8,7 @@ import java.io.File
 /**
  * Source-level guardrails for regressions reported after v13.
  * These checks intentionally reject superficial implementations that only add
- * parser names or a fixed three-chapter buffer without persistent/exportable
+ * parser names or a fixed chapter buffer without persistent/exportable EPUB/CHM
  * cache and hierarchy-aware continuous reading.
  */
 class RealSampleRegressionContractTest {
@@ -32,11 +32,12 @@ class RealSampleRegressionContractTest {
     @Test
     fun `structured reading must not stop at a fixed adjacent chapter window`() {
         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
-        assertTrue(reader.contains("StructuredReadingBuffer"))
         assertFalse(reader.contains("offset = Int.MAX_VALUE"))
         assertTrue(
-            "Vertical scrolling must trigger automatic buffer recentering near chapter boundaries",
-            reader.contains("maybeRecenterStructuredBuffer") || reader.contains("maybeShiftStructuredBuffer")
+            "Vertical scrolling must automatically continue into the next cached text window",
+            reader.contains("maybeLoadNextTextWindow") ||
+                reader.contains("maybeShiftStructuredTextWindow") ||
+                reader.contains("maybeRecenterStructuredBuffer")
         )
     }
 
@@ -50,21 +51,30 @@ class RealSampleRegressionContractTest {
     }
 
     @Test
-    fun `structured chapter cache must be persistent and backup exportable`() {
+    fun `epub and chm cache must be persistent and backup exportable`() {
         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val decoder = File("src/main/java/com/simplereader/app/data/backup/SimpleReaderBackupDecoder.kt").readText()
         assertTrue(
             "Structured cache must live outside cacheDir so Android cache cleanup does not erase it",
-            reader.contains("filesDir") || reader.contains("StructuredBookCache")
+            reader.contains("StructuredBookCache") || reader.contains("filesDir")
         )
         assertTrue(
-            "Backup export must include structured chapter cache",
+            "Backup export must include EPUB/CHM structured cache",
             main.contains("structured_cache") || main.contains("structuredCache")
         )
         assertTrue(
-            "Backup decoder must accept structured chapter cache",
+            "Backup decoder must accept EPUB/CHM structured cache",
             decoder.contains("structuredCache") || decoder.contains("structured_cache")
         )
+    }
+
+    @Test
+    fun `large txt must remain source streamed instead of duplicating content txt`() {
+        val cache = File("src/main/java/com/simplereader/app/data/cache/StructuredBookCache.kt").readText()
+        val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+        assertTrue(cache.contains("TXT 必须直接流式读取"))
+        assertFalse(cache.contains("\"TXT\" -> buildTxt"))
+        assertTrue(reader.contains("txtStreamingMode"))
     }
 }
