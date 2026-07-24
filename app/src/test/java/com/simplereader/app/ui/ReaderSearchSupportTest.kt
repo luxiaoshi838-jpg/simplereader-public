@@ -8,7 +8,7 @@ class ReaderSearchSupportTest {
     fun choosesMatchNearestToRequestedAnchor() {
         val text = "目标文字 前文 前文 目标文字 后文"
         assertEquals(0, ReaderSearchSupport.nearestMatch(text, "目标文字", 1))
-        assertEquals(13, ReaderSearchSupport.nearestMatch(text, "目标文字", 16))
+        assertEquals(11, ReaderSearchSupport.nearestMatch(text, "目标文字", 16))
     }
 
     @Test
