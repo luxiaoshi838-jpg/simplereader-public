@@ -1,0 +1,86 @@
+name: Export SimpleReader search fix APK 402
+
+on:
+  push:
+    branches:
+      - agent/export-reader-search-apk-402
+    paths:
+      - .github/workflows/export-reader-search-apk-402.yml
+      - .github/export-reader-search-apk-402-trigger
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SIMPLE_READER_VERSION_CODE: '2026075402'
+      SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.searchfix.402'
+    steps:
+      - name: Checkout exact export revision
+        uses: actions/checkout@v4
+        with:
+          ref: agent/export-reader-search-apk-402
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Debug unit tests
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
+          code=$?
+          tail -n 180 /tmp/debug-unit.log
+          exit $code
+
+      - name: Release unit tests
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
+          code=$?
+          tail -n 180 /tmp/release-unit.log
+          exit $code
+
+      - name: Assemble debug
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
+          code=$?
+          tail -n 180 /tmp/assemble-debug.log
+          exit $code
+
+      - name: Assemble release
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
+          code=$?
+          tail -n 180 /tmp/assemble-release.log
+          exit $code
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-searchfix-402
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-searchfix-402-logs
+          path: /tmp/*.log
+          if-no-files-found: warn
+          retention-days: 3
