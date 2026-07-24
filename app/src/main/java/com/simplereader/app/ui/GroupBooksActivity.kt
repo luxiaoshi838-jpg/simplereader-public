@@ -2,12 +2,16 @@ package com.simplereader.app.ui
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.net.Uri
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -15,9 +19,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.model.ShelfBookItem
 import com.simplereader.app.data.repository.BookRepository
+import com.simplereader.app.parser.EpubParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -216,9 +222,11 @@ class GroupBooksActivity : AppCompatActivity() {
     }
 
     private class BookCardView(parent: ViewGroup) : LinearLayout(parent.context) {
-        private val cover = TextView(context)
+        private val coverFallback = TextView(context)
+        private val coverImage = ImageView(context)
         private val title = TextView(context)
         private val progress = TextView(context)
+        private var boundBookId: Long = -1L
 
         init {
             orientation = VERTICAL
@@ -228,7 +236,10 @@ class GroupBooksActivity : AppCompatActivity() {
                 RecyclerView.LayoutParams.WRAP_CONTENT
             )
 
-            cover.apply {
+            val coverFrame = FrameLayout(context).apply {
+                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(148))
+            }
+            coverFallback.apply {
                 gravity = Gravity.CENTER
                 maxLines = 5
                 textSize = 11f
@@ -240,9 +251,20 @@ class GroupBooksActivity : AppCompatActivity() {
                 ).apply {
                     cornerRadius = dp(5).toFloat()
                 }
-                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(148))
             }
-            addView(cover)
+            coverImage.apply {
+                visibility = View.GONE
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            coverFrame.addView(
+                coverFallback,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            )
+            coverFrame.addView(
+                coverImage,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            )
+            addView(coverFrame)
 
             title.apply {
                 textSize = 15f
@@ -259,11 +281,38 @@ class GroupBooksActivity : AppCompatActivity() {
         }
 
         fun bind(book: ShelfBookItem) {
-            cover.text = book.title.take(22)
+            boundBookId = book.id
+            coverFallback.text = book.title.take(22)
+            coverFallback.visibility = View.VISIBLE
+            coverImage.visibility = View.GONE
+            coverImage.setImageDrawable(null)
+            coverImage.contentDescription = "《${book.title}》封面"
             title.text = book.title
             title.setTextColor(ReaderAppearance.shelfTextColor(context))
             progress.text = "已读 ${book.progressPercent()}%"
             progress.setTextColor(ReaderAppearance.shelfSecondaryTextColor(context))
+
+            if (!book.format.equals("EPUB", ignoreCase = true)) return
+            val activity = context as? AppCompatActivity ?: return
+            activity.lifecycleScope.launch {
+                val bitmap = withContext(Dispatchers.IO) {
+                    runCatching {
+                        StructuredBookCache.coverFile(context, book.id)
+                            ?.takeIf { it.isFile }
+                            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                            ?: context.contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
+                                EpubParser.readCoverImage(input)?.let { bytes ->
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
+                            }
+                    }.getOrNull()
+                }
+                if (boundBookId == book.id && bitmap != null) {
+                    coverImage.setImageBitmap(bitmap)
+                    coverImage.visibility = View.VISIBLE
+                    coverFallback.visibility = View.GONE
+                }
+            }
         }
 
         private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
