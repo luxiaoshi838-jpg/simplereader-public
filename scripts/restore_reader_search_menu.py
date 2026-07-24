@@ -3,7 +3,7 @@ from pathlib import Path
 path = Path("app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
 text = path.read_text(encoding="utf-8")
 
-current = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+current_menu = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         addItem.actionView = TextView(this).apply {
@@ -25,7 +25,7 @@ current = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
     }
 '''
 
-restored = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+restored_menu = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
@@ -49,10 +49,32 @@ restored = '''    override fun onCreateOptionsMenu(menu: Menu): Boolean {
     }
 '''
 
-if restored in text:
-    print("Previous reader search entry is already restored")
-elif current in text:
-    path.write_text(text.replace(current, restored, 1), encoding="utf-8")
-    print("Restored previous MENU_SEARCH entry and retained bookmark action")
-else:
-    raise SystemExit("Reader menu block does not match the current implementation")
+if restored_menu not in text:
+    if current_menu not in text:
+        raise SystemExit("Reader menu block does not match the current implementation")
+    text = text.replace(current_menu, restored_menu, 1)
+
+text = text.replace("            var downX = 0f\n", "", 1)
+
+swipe_listener = '''            listView.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> downX = event.x
+                    MotionEvent.ACTION_UP -> {
+                        val delta = event.x - downX
+                        if (delta > 120) {
+                            showingCatalog = true
+                            render()
+                        } else if (delta < -120) {
+                            showingCatalog = false
+                            render()
+                        }
+                    }
+                }
+                false
+            }
+'''
+if swipe_listener in text:
+    text = text.replace(swipe_listener, "", 1)
+
+path.write_text(text, encoding="utf-8")
+print("Restored previous search entry and disabled catalog/bookmark swipe switching")
