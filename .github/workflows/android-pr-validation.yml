@@ -100,16 +100,22 @@ jobs:
         if: env.PATCH_APPLIED == '1'
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           printf '# v14 continuous reading\n\nSTATUS: SUCCESS\n\nDebug tests, release tests, debug build and release build each completed within five minutes.\n' > .github/v14-continuous-build-status.md
           rm -f .github/patches/v14-inc-0{0..5}.b64
           rm -f .github/patches/v14-fix1.b64
           rm -f .github/patches/v14-continuous.patch.gz.b64
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/src/main app/src/test .github/patches .github/v14-continuous-build-status.md
-          git commit -m "Complete v14 continuous TXT and structured cache reading"
-          git push origin HEAD:agent/v14-real-epub-chm-continuous
+          {
+            git status --short
+            git add -A -- app/src/main app/src/test .github/patches .github/v14-continuous-build-status.md
+            git commit -m "Complete v14 continuous TXT and structured cache reading"
+            git push origin HEAD:agent/v14-real-epub-chm-continuous
+          } > /tmp/commit.log 2>&1
+          code=$?
+          cat /tmp/commit.log
+          exit $code
 
       - name: Verify clean working tree
         run: git diff --exit-code && test -z "$(git status --porcelain)"
@@ -122,6 +128,7 @@ jobs:
           path: |
             /tmp/*-unit.log
             /tmp/assemble-*.log
+            /tmp/commit.log
             app/build/reports/tests
           if-no-files-found: warn
           retention-days: 2
