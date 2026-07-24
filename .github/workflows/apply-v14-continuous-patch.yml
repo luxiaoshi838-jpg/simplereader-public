@@ -32,48 +32,51 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Apply patch, test and write report
-        id: verify
         shell: bash
         run: |
           set +e
           patch_b64=".github/patches/v14-continuous.patch.gz.b64"
           report=".github/v14-continuous-build-status.md"
-          rm -f "$report"
+          report_tmp="/tmp/v14-continuous-build-status.md"
+          : > /tmp/apply.log
+          : > /tmp/build.log
           if [ ! -f "$patch_b64" ]; then
-            printf '# v14 continuous patch\n\nPatch file is already consumed.\n' > "$report"
+            printf '# v14 continuous patch\n\nSTATUS: FAILURE\n\nPatch file is already consumed.\n' > "$report_tmp"
             exit_code=2
           else
             base64 --decode "$patch_b64" | gzip -dc > /tmp/v14-continuous.patch
-            git apply --check /tmp/v14-continuous.patch > /tmp/apply.log 2>&1
+            patch -p1 --dry-run --batch < /tmp/v14-continuous.patch > /tmp/apply.log 2>&1
             apply_code=$?
             if [ $apply_code -eq 0 ]; then
-              git apply /tmp/v14-continuous.patch >> /tmp/apply.log 2>&1
+              patch -p1 --batch < /tmp/v14-continuous.patch >> /tmp/apply.log 2>&1
               chmod +x ./gradlew
               ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain > /tmp/build.log 2>&1
               exit_code=$?
             else
               exit_code=$apply_code
-              : > /tmp/build.log
             fi
             if [ $exit_code -eq 0 ]; then
-              printf '# v14 continuous patch\n\nSTATUS: SUCCESS\n\nAll Debug/Release tests and builds passed.\n' > "$report"
+              printf '# v14 continuous patch\n\nSTATUS: SUCCESS\n\nAll Debug/Release tests and builds passed.\n' > "$report_tmp"
             else
-              printf '# v14 continuous patch\n\nSTATUS: FAILURE\n\nExit code: %s\n\n## Patch output\n```text\n' "$exit_code" > "$report"
-              tail -n 120 /tmp/apply.log >> "$report"
-              printf '\n```\n\n## Build output\n```text\n' >> "$report"
-              tail -n 240 /tmp/build.log >> "$report"
-              printf '\n```\n' >> "$report"
+              printf '# v14 continuous patch\n\nSTATUS: FAILURE\n\nExit code: %s\n\n## Patch output\n```text\n' "$exit_code" > "$report_tmp"
+              tail -n 120 /tmp/apply.log >> "$report_tmp"
+              printf '\n```\n\n## Build output\n```text\n' >> "$report_tmp"
+              tail -n 240 /tmp/build.log >> "$report_tmp"
+              printf '\n```\n' >> "$report_tmp"
             fi
           fi
+
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           if [ "${exit_code:-2}" -eq 0 ]; then
+            cp "$report_tmp" "$report"
             rm -f "$patch_b64"
             git add app/src/main/java app/src/test/java "$patch_b64" "$report"
             git commit -m "Complete v14 continuous TXT and structured cache reading"
           else
             git reset --hard HEAD
             git clean -fd app/src/main/java app/src/test/java
+            cp "$report_tmp" "$report"
             git add "$report"
             git commit -m "Report v14 continuous patch verification failure"
           fi
