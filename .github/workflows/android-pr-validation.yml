@@ -4,27 +4,33 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches-ignore:
-      - main
+    branches:
+      - agent/restore-reader-search-menu
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: android-pr-validation-${{ github.ref }}
+  group: restore-reader-search-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    name: Five-minute staged Android validation
+    name: Five-minute reader search restoration validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout current revision
+      - name: Checkout restoration branch
         uses: actions/checkout@v4
         with:
+          ref: agent/restore-reader-search-menu
           fetch-depth: 0
+
+      - name: Restore previous reader search menu
+        run: |
+          chmod +x ./gradlew
+          python scripts/restore_reader_search_menu.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -35,11 +41,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare validation version
+      - name: Prepare restoration version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_CODE=$((2026075000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.v14.search.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Debug unit tests
         shell: bash
@@ -77,11 +83,26 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
+      - name: Commit restored source
+        if: github.actor != 'github-actions[bot]'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          if git diff --cached --quiet; then
+            echo "Search menu already restored"
+          else
+            git commit -m "Restore previous reader search menu"
+            git push origin HEAD:agent/restore-reader-search-menu
+          fi
+
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-validation-logs-${{ github.run_number }}
+          name: SimpleReader-search-restoration-logs-${{ github.run_number }}
           path: |
             /tmp/*-unit.log
             /tmp/assemble-*.log
@@ -92,7 +113,7 @@ jobs:
       - name: Upload verified APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-validation-${{ github.run_number }}
+          name: SimpleReader-search-restored-${{ github.run_number }}
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/*.apk
