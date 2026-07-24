@@ -1,0 +1,105 @@
+name: Reader catalog and page UI verify
+
+on:
+  pull_request:
+    branches:
+      - agent/catalog-page-ui-base
+    paths:
+      - .github/run-reader-catalog-page-ui
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SIMPLE_READER_VERSION_CODE: '2026075404'
+      SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.catalogui.404'
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply catalog and UI patch
+        run: |
+          python scripts/patch_catalog_page_ui.py
+          python scripts/patch_catalog_pattern_guard.py
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Debug unit tests
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
+          code=$?
+          tail -n 220 /tmp/debug-unit.log
+          exit $code
+
+      - name: Release unit tests
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
+          code=$?
+          tail -n 220 /tmp/release-unit.log
+          exit $code
+
+      - name: Assemble debug
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
+          code=$?
+          tail -n 220 /tmp/assemble-debug.log
+          exit $code
+
+      - name: Assemble release
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
+          code=$?
+          tail -n 220 /tmp/assemble-release.log
+          exit $code
+
+      - name: Commit verified business files
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
+            app/src/main/res/layout/activity_reader.xml \
+            app/src/test/java/com/simplereader/app/parser/TxtChapterAndEncodingRegressionTest.kt \
+            app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt
+          if ! git diff --cached --quiet; then
+            git commit -m '修复TXT目录识别并简化阅读页进度显示'
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+
+      - name: Upload verified APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-catalog-page-ui-404
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-catalog-page-ui-404-logs
+          path: /tmp/*.log
+          if-no-files-found: warn
+          retention-days: 3
