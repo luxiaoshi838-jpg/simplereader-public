@@ -1640,7 +1640,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 database.bookmarkDao().getBookmarks(bookId).first()
             }
             var showingCatalog = !showBookmarksFirst
-            var downX = 0f
             var catalogInitialPositionApplied = false
             val container = LinearLayout(this@ReaderActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1883,22 +1882,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             bookmarkButton.setOnClickListener {
                 showingCatalog = false
                 render()
-            }
-            listView.setOnTouchListener { _, event ->
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> downX = event.x
-                    MotionEvent.ACTION_UP -> {
-                        val delta = event.x - downX
-                        if (delta > 120) {
-                            showingCatalog = true
-                            render()
-                        } else if (delta < -120) {
-                            showingCatalog = false
-                            render()
-                        }
-                    }
-                }
-                false
             }
             render()
             dialog = AlertDialog.Builder(this@ReaderActivity)
