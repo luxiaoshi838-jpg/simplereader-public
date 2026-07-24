@@ -1,0 +1,41 @@
+name: Fix reader search regex once
+
+on:
+  push:
+    branches:
+      - agent/reader-search-restore-current-book
+    paths:
+      - scripts/fix_reader_search_regex_escape.py
+      - .github/workflows/fix-reader-search-regex-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/reader-search-restore-current-book
+          fetch-depth: 0
+      - run: python scripts/fix_reader_search_regex_escape.py
+      - name: Verify and clean temporary files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text(encoding='utf-8')
+          if 'Regex("\\\\s+")' not in text:
+              raise SystemExit('correct regex escape missing')
+          if 'Regex("\\s+")' in text:
+              raise SystemExit('illegal regex escape remains')
+          PY
+          rm scripts/fix_reader_search_regex_escape.py
+          rm .github/workflows/fix-reader-search-regex-once.yml
+      - name: Commit fixed source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "修复搜索正则转义"
+          git push origin HEAD:agent/reader-search-restore-current-book
