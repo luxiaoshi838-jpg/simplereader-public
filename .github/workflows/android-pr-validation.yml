@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-pr-validation-${{ github.ref }}
@@ -16,28 +16,15 @@ concurrency:
 
 jobs:
   validate:
-    name: Five-minute EPUB hotfix validation
+    name: Five-minute staged Android validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout current hotfix branch
+      - name: Checkout current revision
         uses: actions/checkout@v4
         with:
-          ref: agent/v14-epub-open-group-cover-fix
           fetch-depth: 0
-
-      - name: Ensure EPUB opening and group cover fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          if grep -q 'structuredWholeText' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            && grep -q 'coverImage' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt; then
-            echo 'Hotfix already present'
-          else
-            python scripts/apply_v14_epub_hotfix.py
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -48,11 +35,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare hotfix version
+      - name: Prepare validation version
         shell: bash
         run: |
           echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.v14.hotfix.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Debug unit tests
         shell: bash
@@ -90,21 +77,11 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
-      - name: Upload verified source files
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v14-epub-hotfix-sources-${{ github.run_number }}
-          path: |
-            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
-          if-no-files-found: error
-          retention-days: 2
-
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v14-epub-hotfix-logs-${{ github.run_number }}
+          name: SimpleReader-validation-logs-${{ github.run_number }}
           path: |
             /tmp/*-unit.log
             /tmp/assemble-*.log
@@ -115,7 +92,7 @@ jobs:
       - name: Upload verified APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v14-epub-hotfix-${{ github.run_number }}
+          name: SimpleReader-validation-${{ github.run_number }}
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/*.apk
