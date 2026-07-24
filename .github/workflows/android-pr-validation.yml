@@ -83,31 +83,12 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
-      - name: Commit restored source
-        if: github.actor != 'github-actions[bot]'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          if git diff --cached --quiet; then
-            echo "Search menu already restored"
-          else
-            git commit -m "Restore previous reader search menu"
-            git push origin HEAD:agent/restore-reader-search-menu
-          fi
-
-      - name: Upload validation logs
-        if: always()
+      - name: Upload verified source
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-search-restoration-logs-${{ github.run_number }}
-          path: |
-            /tmp/*-unit.log
-            /tmp/assemble-*.log
-            app/build/reports/tests
-          if-no-files-found: warn
+          name: SimpleReader-search-restoration-source-${{ github.run_number }}
+          path: app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          if-no-files-found: error
           retention-days: 2
 
       - name: Upload verified APKs
@@ -119,3 +100,34 @@ jobs:
             app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Attempt restored source commit
+        if: github.actor != 'github-actions[bot]'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          if git diff --cached --quiet; then
+            echo "Search menu already restored" | tee /tmp/commit.log
+          else
+            { git commit -m "Restore previous reader search and click-only catalog tabs" && git push origin HEAD:agent/restore-reader-search-menu; } > /tmp/commit.log 2>&1
+            code=$?
+            cat /tmp/commit.log
+            exit $code
+          fi
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-search-restoration-logs-${{ github.run_number }}
+          path: |
+            /tmp/*-unit.log
+            /tmp/assemble-*.log
+            /tmp/commit.log
+            app/build/reports/tests
+          if-no-files-found: warn
+          retention-days: 2
