@@ -1,14 +1,14 @@
 name: Apply reader search session panel
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/search-session-panel-highlight
+      - agent/search-session-panel-base
     paths:
       - .github/reader-search-session-panel-trigger
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch-test-build:
@@ -18,10 +18,10 @@ jobs:
       SIMPLE_READER_VERSION_CODE: '2026075403'
       SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.searchpanel.403'
     steps:
-      - name: Checkout branch
+      - name: Checkout exact PR head
         uses: actions/checkout@v4
         with:
-          ref: agent/search-session-panel-highlight
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Set up JDK 17
@@ -68,17 +68,16 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
-      - name: Commit verified ReaderActivity
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          if git diff --cached --quiet; then
-            echo 'ReaderActivity already patched'
-          else
-            git commit -m '实现会话式书内搜索面板与命中高亮'
-            git push origin HEAD:agent/search-session-panel-highlight
-          fi
+      - name: Upload verified source
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-searchpanel-403-source
+          path: |
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderSearchSupport.kt
+            app/src/test/java/com/simplereader/app/ui/ReaderSearchSupportTest.kt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
