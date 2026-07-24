@@ -58,16 +58,40 @@ jobs:
           echo "SIMPLE_READER_VERSION_NAME=2026.07.24.v14.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Debug unit tests
-        run: timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
+          code=$?
+          tail -n 180 /tmp/debug-unit.log
+          exit $code
 
       - name: Release unit tests
-        run: timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
+          code=$?
+          tail -n 180 /tmp/release-unit.log
+          exit $code
 
       - name: Assemble debug
-        run: timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
+          code=$?
+          tail -n 180 /tmp/assemble-debug.log
+          exit $code
 
       - name: Assemble release
-        run: timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
+          code=$?
+          tail -n 180 /tmp/assemble-release.log
+          exit $code
 
       - name: Commit verified v14 implementation
         if: env.PATCH_APPLIED == '1'
@@ -85,6 +109,18 @@ jobs:
 
       - name: Verify clean working tree
         run: git diff --exit-code && test -z "$(git status --porcelain)"
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v14-validation-logs-${{ github.run_number }}
+          path: |
+            /tmp/*-unit.log
+            /tmp/assemble-*.log
+            app/build/reports/tests
+          if-no-files-found: warn
+          retention-days: 2
 
       - name: Upload verified APKs
         uses: actions/upload-artifact@v4
