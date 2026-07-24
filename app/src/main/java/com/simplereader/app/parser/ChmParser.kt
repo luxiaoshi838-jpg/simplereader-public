@@ -19,7 +19,13 @@ import java.nio.charset.CodingErrorAction
  * decoded here from the original entry bytes because many Chinese CHM files use
  * GBK/GB2312 even when the archive-level encoding is incomplete or misleading.
  */
-data class ChmChapter(val path: String, val title: String)
+data class ChmChapter(
+    val path: String,
+    val title: String,
+    val depth: Int = 0,
+    val isSection: Boolean = false,
+    val targetPath: String = path
+)
 
 object ChmParser {
     private const val MAX_DOCUMENT_ENTRIES = 20000
@@ -51,7 +57,7 @@ object ChmParser {
 
     fun readText(chmFile: File): String = withArchive(chmFile) { archive ->
         val combined = StringBuilder()
-        chapterEntries(archive).forEach { chapter ->
+        chapterEntries(archive).filterNot { it.isSection }.forEach { chapter ->
             if (combined.length >= MAX_TOTAL_TEXT_CHARS) return@forEach
             val text = readEntryText(archive, chapter.path)
             if (text.isBlank()) return@forEach
@@ -65,6 +71,24 @@ object ChmParser {
 
     fun readChapterText(chmFile: File, chapterPath: String): String =
         withArchive(chmFile) { archive -> readEntryText(archive, chapterPath) }
+
+    /**
+     * Opens the archive once and emits each readable chapter to the persistent
+     * UTF-8 text-cache writer. Section-only rows remain in the returned catalog.
+     */
+    fun exportReadableChapters(
+        chmFile: File,
+        consumer: (ChmChapter, String) -> Unit
+    ): List<ChmChapter> = withArchive(chmFile) { archive ->
+        val entries = chapterEntries(archive)
+        entries.asSequence()
+            .filter { !it.isSection && it.path.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .forEach { chapter ->
+                consumer(chapter, readEntryText(archive, chapter.path))
+            }
+        entries
+    }
 
     // Compatibility overloads retained for callers/tests that have not migrated.
     fun readText(inputStream: InputStream, cacheDirectory: File): String {
@@ -84,14 +108,13 @@ object ChmParser {
 
     private fun chapterEntries(archive: ChmFile): List<ChmChapter> {
         val result = mutableListOf<ChmChapter>()
-        val seen = linkedSetOf<String>()
+        val seenReadable = linkedSetOf<String>()
 
-        fun add(pathValue: String?, titleValue: String?) {
+        fun readableChapter(pathValue: String?, titleValue: String?, depth: Int): ChmChapter? {
             val path = normalizePath(pathValue.orEmpty())
-            if (path.isBlank() || !isReadableDocument(path)) return
-            if (!seen.add(path.lowercase())) return
-            val resolved = resolveEntry(archive, path) ?: return
-            if (resolved.length !in 1L..MAX_ENTRY_BYTES) return
+            if (path.isBlank() || !isReadableDocument(path)) return null
+            val resolved = resolveEntry(archive, path) ?: return null
+            if (resolved.length !in 1L..MAX_ENTRY_BYTES) return null
 
             val archiveTitle = titleValue?.trim()?.takeIf { it.isNotBlank() && it != "<Top>" }
                 ?: archive.getTitleOfObject(resolved.path.orEmpty())
@@ -102,21 +125,59 @@ object ChmParser {
             } else {
                 archiveTitle
             }
-            result += ChmChapter(resolved.path.orEmpty(), cleanText(title))
+            return ChmChapter(
+                path = resolved.path.orEmpty(),
+                title = cleanText(title),
+                depth = depth.coerceAtLeast(0),
+                isSection = false,
+                targetPath = resolved.path.orEmpty()
+            )
         }
 
-        fun walk(node: ChmTopicsTree?) {
+        fun firstReadablePath(node: ChmTopicsTree?): String? {
+            if (node == null) return null
+            readableChapter(node.path, node.title, 0)?.path?.let { return it }
+            node.children?.forEach { child ->
+                firstReadablePath(child)?.let { return it }
+            }
+            return null
+        }
+
+        fun walk(node: ChmTopicsTree?, depth: Int) {
             node?.children?.forEach { child ->
-                add(child.path, child.title)
-                walk(child)
+                val readable = readableChapter(child.path, child.title, depth)
+                if (readable != null) {
+                    if (seenReadable.add(readable.path.lowercase())) result += readable
+                } else {
+                    val title = cleanText(child.title.orEmpty())
+                        .takeIf { it.isNotBlank() && it != "<Top>" }
+                    val target = firstReadablePath(child)
+                    if (title != null && target != null) {
+                        result += ChmChapter(
+                            path = "",
+                            title = title,
+                            depth = depth.coerceAtLeast(0),
+                            isSection = true,
+                            targetPath = target
+                        )
+                    }
+                }
+                walk(child, depth + 1)
             }
         }
 
-        runCatching { walk(archive.topicsTree) }
-        if (result.isEmpty()) {
-            archive.homeFile?.let { add(it, archive.title) }
+        runCatching { walk(archive.topicsTree, 0) }
+        if (result.none { !it.isSection }) {
+            archive.homeFile?.let { home ->
+                readableChapter(home, archive.title, 0)?.let { chapter ->
+                    if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                }
+            }
             readableEntries(archive).forEach { entry ->
-                add(entry.path, archive.getTitleOfObject(entry.path.orEmpty()))
+                readableChapter(entry.path, archive.getTitleOfObject(entry.path.orEmpty()), 0)
+                    ?.let { chapter ->
+                        if (seenReadable.add(chapter.path.lowercase())) result += chapter
+                    }
             }
         }
         return result.take(MAX_DOCUMENT_ENTRIES)
