@@ -1414,7 +1414,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             val previewStart = (index - 45).coerceAtLeast(0)
             val previewEnd = (index + query.length + 90).coerceAtMost(wholeText.length)
             val preview = wholeText.substring(previewStart, previewEnd)
-                .replace(Regex("\s+"), " ")
+                .replace(Regex("\\s+"), " ")
                 .trim()
             val chapterIndex = epubChapterStartPositions.indexOfLast { it <= index }
                 .coerceAtLeast(0)
