@@ -11,6 +11,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.text.style.BackgroundColorSpan
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -21,6 +22,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -104,6 +106,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pendingSeekProgress: Int? = null
     private var currentReadableDocument: DocumentFile? = null
     private var chapterScanJob: Job? = null
+    private var readerSearchSession: ReaderSearchSession? = null
+    private var pendingReaderSearchHighlight: ReaderSearchHighlight? = null
+    private var activeReaderSearchHighlight: Boolean = false
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -135,6 +140,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             pageTurnMode != TURN_MODE_VERTICAL
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            clearReaderSearchHighlightOnUserScroll()
             updateVerticalScrollProgress(scrollY)
             maybeExtendTxtContinuousBuffer(scrollY)
             maybeExtendStructuredContinuousBuffer(scrollY)
@@ -915,6 +921,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun displayContent() {
+        activeReaderSearchHighlight = false
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
         updateStructuredLocationFromCurrentPosition()
         if (txtStreamingMode) {
@@ -940,6 +947,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 0
             }
             updateProgressViews(progress.coerceIn(0, 1000))
+            scheduleReaderSearchHighlight()
             return
         }
 
@@ -965,6 +973,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (currentContent.isNotEmpty()) {
             updateProgressViews(progressForCurrentPosition())
         }
+        scheduleReaderSearchHighlight()
     }
 
     private fun updateProgressViews(progress: Int) {
@@ -1189,64 +1198,72 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             Toast.makeText(this, "当前没有可搜索的内容", Toast.LENGTH_SHORT).show()
             return
         }
-        val retained = loadRetainedSearch()
-        val input = EditText(this).apply {
-            hint = "输入要查找的文字"
-            setSingleLine(true)
-            retained?.query?.takeIf { it.isNotBlank() }?.let(::setText)
-            setSelection(text.length)
-        }
-        val builder = AlertDialog.Builder(this)
-            .setTitle("搜索书内内容")
-            .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("重新搜索") { _, _ ->
-                val query = input.text.toString().trim()
-                if (query.isBlank()) {
-                    Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
-                } else {
-                    showAllContentSearchResults(query)
-                }
-            }
-        if (retained != null && retained.hits.isNotEmpty()) {
-            builder.setNeutralButton("上次结果（${retained.hits.size}）") { _, _ ->
-                showAllContentSearchResults(retained.query, retained.hits)
-            }
-        }
-        builder.show()
+        showReaderSearchPanel()
     }
 
-    private fun showAllContentSearchResults(
-        query: String,
-        retainedHits: List<ReaderSearchHit>? = null
-    ) {
+    private fun showReaderSearchPanel() {
         val density = resources.displayMetrics.density
         fun localDp(value: Int) = (value * density + 0.5f).toInt()
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(localDp(8), localDp(4), localDp(8), localDp(4))
+            setPadding(localDp(8), localDp(6), localDp(8), localDp(4))
         }
+        val searchRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val input = EditText(this).apply {
+            hint = "输入当前书内关键词"
+            setSingleLine(true)
+            setText(readerSearchSession?.query.orEmpty())
+            setSelection(text.length)
+        }
+        val searchButton = Button(this).apply {
+            text = "搜索"
+            isAllCaps = false
+        }
+        searchRow.addView(
+            input,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+        searchRow.addView(
+            searchButton,
+            LinearLayout.LayoutParams(
+                localDp(88),
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
         val statusView = TextView(this).apply {
-            text = "Searching..."
             textSize = 14f
             setTextColor(Color.rgb(110, 100, 84))
-            setPadding(localDp(12), localDp(8), localDp(12), localDp(8))
+            setPadding(localDp(12), localDp(6), localDp(12), localDp(6))
         }
-        val hits = mutableListOf<ReaderSearchHit>()
+        val rows = mutableListOf<ReaderSearchHit>().apply {
+            addAll(readerSearchSession?.hits.orEmpty())
+        }
         val listAdapter = object : BaseAdapter() {
-            override fun getCount(): Int = hits.size
-            override fun getItem(position: Int): ReaderSearchHit = hits[position]
-            override fun getItemId(position: Int): Long = hits[position].stableKey.hashCode().toLong()
+            override fun getCount(): Int = rows.size
+            override fun getItem(position: Int): ReaderSearchHit = rows[position]
+            override fun getItemId(position: Int): Long = rows[position].stableKey.hashCode().toLong()
 
-            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: android.view.ViewGroup
+            ): View {
                 val row = (convertView as? TextView) ?: TextView(parent.context).apply {
                     textSize = 15f
                     setTextColor(Color.rgb(38, 35, 31))
                     setPadding(localDp(14), localDp(10), localDp(14), localDp(10))
                     maxLines = 4
                 }
-                val hit = hits[position]
+                val hit = rows[position]
                 row.text = "${position + 1}. ${hit.positionLabel}\n${hit.preview}"
                 return row
             }
@@ -1254,176 +1271,307 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val listView = ListView(this).apply {
             adapter = listAdapter
             isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = false
         }
 
+        container.addView(searchRow)
         container.addView(statusView)
         container.addView(
             listView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                (resources.displayMetrics.heightPixels * 0.68f).toInt()
+                (resources.displayMetrics.heightPixels * 0.63f).toInt()
             )
         )
 
         var dialog: AlertDialog? = null
         var loadJob: Job? = null
 
-        fun refreshRows(ordered: List<ReaderSearchHit>, message: String, persist: Boolean = true) {
-            hits.clear()
-            hits.addAll(ordered)
-            listAdapter.notifyDataSetChanged()
-            statusView.text = message
-            if (persist) saveRetainedSearch(query, ordered)
+        fun saveListPosition() {
+            val session = readerSearchSession ?: return
+            session.listFirstVisible = listView.firstVisiblePosition.coerceAtLeast(0)
+            session.listTopOffset = listView.getChildAt(0)?.top ?: 0
         }
 
-        fun openHit(hit: ReaderSearchHit) {
-            dialog?.dismiss()
-            readerControls.visibility = View.GONE
-            when {
-                txtStreamingMode -> {
-                    showStreamingTxtPage(hit.position, saveImmediately = true, keepContextBeforeTarget = true)
-                }
-                isStructuredChapterDocument() && structuredWholeText != null &&
-                    hit.stableKey.startsWith("whole:") -> {
-                    val globalPosition = hit.position.toInt().coerceIn(0, structuredWholeText!!.length)
-                    val chapterIndex = epubChapterStartPositions.indexOfLast { it <= globalPosition }
-                        .coerceAtLeast(0)
-                        .coerceAtMost(epubChapters.lastIndex)
-                    val chapterStart = epubChapterStartPositions.getOrElse(chapterIndex) { 0 }
-                    loadStructuredChapter(
-                        chapterIndex = chapterIndex,
-                        offset = (globalPosition - chapterStart).coerceAtLeast(0),
-                        saveImmediately = true
-                    )
-                }
-                else -> {
-                    currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
-                    displayContent()
-                    markProgressDirty()
-                    saveProgressNow()
+        fun updateStatus() {
+            val session = readerSearchSession
+            statusView.text = when {
+                session == null || session.query.isBlank() ->
+                    "输入关键词后点击搜索"
+                session.loading ->
+                    "正在搜索……已加载 ${rows.size} 条"
+                session.endReached && rows.isEmpty() ->
+                    "没有找到结果 · 到底了"
+                session.endReached ->
+                    "共 ${rows.size} 条结果 · 到底了"
+                else ->
+                    "已加载 ${rows.size} 条，继续向下滑动加载更多"
+            }
+        }
+
+        fun refreshRows() {
+            rows.clear()
+            rows.addAll(readerSearchSession?.hits.orEmpty())
+            listAdapter.notifyDataSetChanged()
+            updateStatus()
+        }
+
+        fun loadNextPage() {
+            val session = readerSearchSession ?: return
+            if (session.loading || session.endReached || session.query.isBlank()) return
+            val remaining = MAX_SEARCH_RESULTS - session.hits.size
+            if (remaining <= 0) {
+                session.endReached = true
+                updateStatus()
+                return
+            }
+            session.loading = true
+            updateStatus()
+            val pageSize = minOf(SEARCH_RESULT_PAGE_SIZE, remaining)
+            loadJob?.cancel()
+            loadJob = lifecycleScope.launch {
+                try {
+                    val page = withContext(Dispatchers.IO) {
+                        when {
+                            txtStreamingMode -> {
+                                val selectedBook = book
+                                val charsetName = txtCharsetName
+                                    ?: selectedBook?.txtCharset
+                                    ?: Charsets.UTF_8.name()
+                                val parsed = selectedBook?.let { activeBook ->
+                                    contentResolver.openInputStream(Uri.parse(activeBook.filePath))?.use { stream ->
+                                        TxtParser.findTextPage(
+                                            inputStream = stream,
+                                            charsetName = charsetName,
+                                            query = session.query,
+                                            startByte = session.nextPosition,
+                                            pageSize = pageSize
+                                        )
+                                    }
+                                }
+                                if (parsed == null) {
+                                    ReaderSearchPage(emptyList(), session.nextPosition, true)
+                                } else {
+                                    ReaderSearchPage(
+                                        hits = parsed.hits.map { hit ->
+                                            val percent = if (txtTotalBytes > 0L) {
+                                                ((hit.byteOffset.toDouble() / txtTotalBytes) * 100)
+                                                    .toInt()
+                                                    .coerceIn(0, 100)
+                                            } else {
+                                                0
+                                            }
+                                            ReaderSearchHit(
+                                                stableKey = "byte:${hit.byteOffset}",
+                                                position = hit.byteOffset,
+                                                positionLabel = "约 $percent% · 字节 ${hit.byteOffset}",
+                                                preview = hit.preview
+                                            )
+                                        },
+                                        nextPosition = parsed.nextByte,
+                                        endReached = parsed.endReached
+                                    )
+                                }
+                            }
+                            isStructuredChapterDocument() && structuredWholeText != null ->
+                                findWholeStructuredSearchPage(
+                                    query = session.query,
+                                    startIndex = session.nextPosition.toInt(),
+                                    pageSize = pageSize
+                                )
+                            else ->
+                                findInMemorySearchPage(
+                                    query = session.query,
+                                    startIndex = session.nextPosition.toInt(),
+                                    pageSize = pageSize
+                                )
+                        }
+                    }
+                    if (readerSearchSession !== session) return@launch
+                    val merged = (session.hits + page.hits)
+                        .distinctBy { it.stableKey }
+                        .sortedBy { it.position }
+                        .take(MAX_SEARCH_RESULTS)
+                    session.hits.clear()
+                    session.hits.addAll(merged)
+                    val madeProgress = page.nextPosition > session.nextPosition
+                    session.nextPosition = page.nextPosition
+                    session.endReached = page.endReached ||
+                        !madeProgress ||
+                        session.hits.size >= MAX_SEARCH_RESULTS
+                    refreshRows()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    if (readerSearchSession === session) {
+                        session.endReached = true
+                        Toast.makeText(
+                            this@ReaderActivity,
+                            "搜索失败：${error.message ?: error.javaClass.simpleName}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } finally {
+                    if (readerSearchSession === session) {
+                        session.loading = false
+                        updateStatus()
+                    }
                 }
             }
         }
 
         listView.setOnItemClickListener { _, _, position, _ ->
-            hits.getOrNull(position)?.let { openHit(it) }
+            val session = readerSearchSession ?: return@setOnItemClickListener
+            val hit = rows.getOrNull(position) ?: return@setOnItemClickListener
+            saveListPosition()
+            pendingReaderSearchHighlight = ReaderSearchHighlight(
+                query = session.query,
+                stableKey = hit.stableKey,
+                position = hit.position
+            )
+            activeReaderSearchHighlight = false
+            dialog?.dismiss()
+            jumpToReaderSearchHit(hit)
+        }
+
+        listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(
+                view: android.widget.AbsListView?,
+                scrollState: Int
+            ) = Unit
+
+            override fun onScroll(
+                view: android.widget.AbsListView?,
+                firstVisibleItem: Int,
+                visibleItemCount: Int,
+                totalItemCount: Int
+            ) {
+                val session = readerSearchSession ?: return
+                session.listFirstVisible = firstVisibleItem.coerceAtLeast(0)
+                session.listTopOffset = listView.getChildAt(0)?.top ?: 0
+                if (
+                    totalItemCount > 0 &&
+                    firstVisibleItem + visibleItemCount >= totalItemCount - 4
+                ) {
+                    loadNextPage()
+                }
+            }
+        })
+
+        searchButton.setOnClickListener {
+            val query = input.text.toString().trim()
+            if (query.isBlank()) {
+                Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            clearReaderSearchHighlight()
+            readerSearchSession = ReaderSearchSession(query = query)
+            refreshRows()
+            loadNextPage()
         }
 
         dialog = AlertDialog.Builder(this)
-            .setTitle("Search results")
+            .setTitle("书内搜索")
             .setView(container)
-            .setNegativeButton("Close", null)
+            .setNegativeButton("关闭", null)
             .create()
-        dialog.setOnDismissListener { loadJob?.cancel() }
-        dialog.show()
-
-        if (retainedHits != null) {
-            val ordered = retainedHits.distinctBy { it.stableKey }
-                .sortedBy { it.position }
-                .take(MAX_SEARCH_RESULTS)
-            refreshRows(ordered, "已保留 ${ordered.size} 条结果", persist = false)
-            return
+        dialog?.setOnDismissListener {
+            saveListPosition()
+            loadJob?.cancel()
+            readerSearchSession?.loading = false
         }
+        dialog?.show()
 
-        loadJob = lifecycleScope.launch {
-            val results = mutableListOf<ReaderSearchHit>()
-            try {
-                withContext(Dispatchers.IO) {
-                    if (txtStreamingMode) {
-                        val selectedBook = book
-                        val charsetName = txtCharsetName ?: selectedBook?.txtCharset ?: Charsets.UTF_8.name()
-                        var nextPosition = 0L
-                        var finished = selectedBook == null
-                        while (!finished) {
-                            val page = contentResolver.openInputStream(Uri.parse(selectedBook!!.filePath))?.use { stream ->
-                                val parsed = TxtParser.findTextPage(
-                                    inputStream = stream,
-                                    charsetName = charsetName,
-                                    query = query,
-                                    startByte = nextPosition,
-                                    pageSize = SEARCH_RESULT_PAGE_SIZE
-                                )
-                                ReaderSearchPage(
-                                    hits = parsed.hits.map { hit ->
-                                        val percent = if (txtTotalBytes > 0L) {
-                                            ((hit.byteOffset.toDouble() / txtTotalBytes) * 100).toInt().coerceIn(0, 100)
-                                        } else {
-                                            0
-                                        }
-                                        ReaderSearchHit(
-                                            stableKey = "byte:${hit.byteOffset}",
-                                            position = hit.byteOffset,
-                                            positionLabel = "about $percent% - byte ${hit.byteOffset}",
-                                            preview = hit.preview
-                                        )
-                                    },
-                                    nextPosition = parsed.nextByte,
-                                    endReached = parsed.endReached
-                                )
-                            }
-                            if (page == null) {
-                                finished = true
-                            } else {
-                                results += page.hits
-                                val ordered = results.distinctBy { it.stableKey }
-                                    .sortedBy { it.position }
-                                    .take(MAX_SEARCH_RESULTS)
-                                withContext(Dispatchers.Main) {
-                                    refreshRows(ordered, "Searching... ${ordered.size} results")
-                                }
-                                finished = page.endReached ||
-                                    page.nextPosition <= nextPosition ||
-                                    ordered.size >= MAX_SEARCH_RESULTS
-                                nextPosition = page.nextPosition
-                            }
-                        }
-                    } else if (isStructuredChapterDocument() && structuredWholeText != null) {
-                        results += findWholeStructuredSearchAll(query)
-                    } else {
-                        results += findInMemorySearchAll(query)
-                    }
+        val session = readerSearchSession
+        updateStatus()
+        if (session != null) {
+            listView.post {
+                listView.setSelectionFromTop(
+                    session.listFirstVisible.coerceIn(0, rows.lastIndex.coerceAtLeast(0)),
+                    session.listTopOffset
+                )
+                if (rows.isEmpty() && !session.endReached) {
+                    loadNextPage()
                 }
-
-                val ordered = results.distinctBy { it.stableKey }
-                    .sortedBy { it.position }
-                    .take(MAX_SEARCH_RESULTS)
-                val message = when {
-                    ordered.isEmpty() -> "No results for \"$query\""
-                    ordered.size >= MAX_SEARCH_RESULTS -> "Showing first $MAX_SEARCH_RESULTS results. Use a longer keyword."
-                    else -> "${ordered.size} results"
-                }
-                refreshRows(ordered, message)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                val message = "Search failed: ${error.message ?: error.javaClass.simpleName}"
-                statusView.text = message
-                Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    private fun findWholeStructuredSearchAll(query: String): List<ReaderSearchHit> {
-        val wholeText = structuredWholeText ?: return emptyList()
-        if (query.isBlank() || wholeText.isEmpty()) return emptyList()
+    private fun jumpToReaderSearchHit(hit: ReaderSearchHit) {
+        readerControls.visibility = View.GONE
+        when {
+            txtStreamingMode -> {
+                showStreamingTxtPage(
+                    hit.position,
+                    saveImmediately = true,
+                    keepContextBeforeTarget = true
+                )
+            }
+            isStructuredChapterDocument() &&
+                structuredWholeText != null &&
+                hit.stableKey.startsWith("whole:") -> {
+                val wholeText = structuredWholeText ?: return
+                val globalPosition = hit.position.toInt().coerceIn(0, wholeText.length)
+                val chapterIndex = epubChapterStartPositions
+                    .indexOfLast { it <= globalPosition }
+                    .coerceAtLeast(0)
+                    .coerceAtMost(epubChapters.lastIndex)
+                val chapterStart = epubChapterStartPositions.getOrElse(chapterIndex) { 0 }
+                loadStructuredChapter(
+                    chapterIndex = chapterIndex,
+                    offset = (globalPosition - chapterStart).coerceAtLeast(0),
+                    saveImmediately = true
+                )
+            }
+            else -> {
+                currentPosition = hit.position.toInt().coerceIn(0, currentContent.length)
+                displayContent()
+                markProgressDirty()
+                saveProgressNow()
+            }
+        }
+    }
+
+    private fun findWholeStructuredSearchPage(
+        query: String,
+        startIndex: Int,
+        pageSize: Int
+    ): ReaderSearchPage {
+        val wholeText = structuredWholeText
+            ?: return ReaderSearchPage(emptyList(), startIndex.toLong(), true)
+        if (query.isBlank() || wholeText.isEmpty()) {
+            return ReaderSearchPage(emptyList(), startIndex.toLong(), true)
+        }
         val hits = mutableListOf<ReaderSearchHit>()
-        var cursor = 0
-        while (cursor < wholeText.length && hits.size < MAX_SEARCH_RESULTS) {
-            val index = wholeText.indexOf(query, startIndex = cursor, ignoreCase = true)
-            if (index < 0) break
+        var cursor = startIndex.coerceIn(0, wholeText.length)
+        var endReached = false
+        while (hits.size < pageSize) {
+            val index = wholeText.indexOf(
+                query,
+                startIndex = cursor,
+                ignoreCase = true
+            )
+            if (index < 0) {
+                endReached = true
+                break
+            }
             val previewStart = (index - 45).coerceAtLeast(0)
             val previewEnd = (index + query.length + 90).coerceAtMost(wholeText.length)
             val preview = wholeText.substring(previewStart, previewEnd)
                 .replace(Regex("\\s+"), " ")
                 .trim()
-            val chapterIndex = epubChapterStartPositions.indexOfLast { it <= index }
+            val chapterIndex = epubChapterStartPositions
+                .indexOfLast { it <= index }
                 .coerceAtLeast(0)
                 .coerceAtMost(epubChapters.lastIndex)
-            val chapterTitle = epubChapters.getOrNull(chapterIndex)?.text
-                ?.ifBlank { epubChapters.getOrNull(chapterIndex)?.name?.substringAfterLast('/') ?: "" }
+            val chapterTitle = epubChapters.getOrNull(chapterIndex)
+                ?.name
+                ?.substringAfterLast('/')
                 .orEmpty()
                 .ifBlank { "第 ${chapterIndex + 1} 章" }
-            val percent = ((index.toDouble() / wholeText.length) * 100).toInt().coerceIn(0, 100)
+            val percent = ((index.toDouble() / wholeText.length) * 100)
+                .toInt()
+                .coerceIn(0, 100)
             hits += ReaderSearchHit(
                 stableKey = "whole:$index",
                 position = index.toLong(),
@@ -1431,79 +1579,132 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 preview = preview.ifBlank { "位置 $index" }
             )
             cursor = (index + query.length.coerceAtLeast(1)).coerceAtMost(wholeText.length)
+            if (cursor >= wholeText.length) {
+                endReached = true
+                break
+            }
         }
-        return hits
+        return ReaderSearchPage(
+            hits = hits,
+            nextPosition = cursor.toLong(),
+            endReached = endReached
+        )
     }
 
-    private fun saveRetainedSearch(query: String, hits: List<ReaderSearchHit>) {
-        if (bookId <= 0L) return
-        val items = JSONArray()
-        hits.take(MAX_SEARCH_RESULTS).forEach { hit ->
-            items.put(
-                JSONObject()
-                    .put("stableKey", hit.stableKey)
-                    .put("position", hit.position)
-                    .put("positionLabel", hit.positionLabel)
-                    .put("preview", hit.preview)
+    private fun scheduleReaderSearchHighlight() {
+        val pending = pendingReaderSearchHighlight ?: return
+        contentView.post {
+            if (pendingReaderSearchHighlight == pending) {
+                applyReaderSearchHighlight(pending)
+            }
+        }
+    }
+
+    private fun applyReaderSearchHighlight(highlight: ReaderSearchHighlight) {
+        val displayedText = contentView.text.toString()
+        if (displayedText.isEmpty() || highlight.query.isBlank()) {
+            pendingReaderSearchHighlight = null
+            return
+        }
+        val anchor = readerSearchDisplayAnchor(highlight, displayedText.length)
+        val start = ReaderSearchSupport.nearestMatch(
+            text = displayedText,
+            query = highlight.query,
+            anchor = anchor,
+            ignoreCase = true
+        )
+        if (start < 0) {
+            pendingReaderSearchHighlight = null
+            return
+        }
+        val end = (start + highlight.query.length).coerceAtMost(displayedText.length)
+        val styled = SpannableString(displayedText).apply {
+            setSpan(
+                StyleSpan(Typeface.BOLD),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            setSpan(
+                BackgroundColorSpan(Color.rgb(255, 232, 125)),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
-        val payload = JSONObject()
-            .put("query", query)
-            .put("hits", items)
-        getSharedPreferences(SEARCH_RESULTS_PREFS, MODE_PRIVATE)
-            .edit()
-            .putString("book:$bookId", payload.toString())
-            .apply()
+        pendingReaderSearchHighlight = null
+        activeReaderSearchHighlight = true
+        contentView.text = styled
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            contentView.post {
+                val layout = contentView.layout ?: return@post
+                val line = layout.getLineForOffset(start.coerceIn(0, displayedText.length))
+                val lineTop = layout.getLineTop(line)
+                val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+                val targetScroll = (lineTop - readerScrollView.height / 3).coerceIn(0, maxScroll)
+                suppressNextScrollProgress = true
+                readerScrollView.scrollTo(0, targetScroll)
+                readerScrollView.post { suppressNextScrollProgress = false }
+            }
+        }
     }
 
-    private fun loadRetainedSearch(): RetainedReaderSearch? {
-        if (bookId <= 0L) return null
-        return runCatching {
-            val raw = getSharedPreferences(SEARCH_RESULTS_PREFS, MODE_PRIVATE)
-                .getString("book:$bookId", null)
-                ?: return null
-            val payload = JSONObject(raw)
-            val query = payload.optString("query")
-            val items = payload.optJSONArray("hits") ?: JSONArray()
-            val hits = buildList {
-                for (index in 0 until items.length()) {
-                    val item = items.optJSONObject(index) ?: continue
-                    add(
-                        ReaderSearchHit(
-                            stableKey = item.optString("stableKey"),
-                            position = item.optLong("position"),
-                            positionLabel = item.optString("positionLabel"),
-                            preview = item.optString("preview")
-                        )
-                    )
+    private fun readerSearchDisplayAnchor(
+        highlight: ReaderSearchHighlight,
+        displayLength: Int
+    ): Int {
+        val bufferPosition = when {
+            txtStreamingMode -> {
+                val byteSpan = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+                val fraction = (
+                    (highlight.position - txtCurrentPageStartByte).toDouble() /
+                        byteSpan.toDouble()
+                    ).coerceIn(0.0, 1.0)
+                (currentContent.length * fraction).toInt()
+            }
+            highlight.stableKey.startsWith("whole:") &&
+                isStructuredChapterDocument() -> {
+                val globalPosition = highlight.position.toInt().coerceAtLeast(0)
+                if (structuredWholeBookMode) {
+                    globalPosition
+                } else {
+                    val chapterIndex = epubChapterStartPositions
+                        .indexOfLast { it <= globalPosition }
+                        .coerceAtLeast(0)
+                        .coerceAtMost(epubChapters.lastIndex)
+                    val chapterStart = epubChapterStartPositions.getOrElse(chapterIndex) { 0 }
+                    structuredReadingBuffer
+                        ?.positionFor(chapterIndex, (globalPosition - chapterStart).coerceAtLeast(0))
+                        ?: currentPosition
                 }
             }
-            RetainedReaderSearch(query, hits)
-        }.getOrNull()
+            else -> highlight.position.toInt().coerceAtLeast(0)
+        }
+        val displayAnchor = if (
+            txtStreamingMode ||
+            pageTurnMode == TURN_MODE_VERTICAL
+        ) {
+            bufferPosition
+        } else {
+            bufferPosition - currentPosition
+        }
+        return displayAnchor.coerceIn(0, displayLength)
     }
 
-    private fun findInMemorySearchAll(query: String): List<ReaderSearchHit> {
-        if (query.isBlank() || currentContent.isEmpty()) return emptyList()
-        val hits = mutableListOf<ReaderSearchHit>()
-        var cursor = 0
-        while (cursor < currentContent.length && hits.size < MAX_SEARCH_RESULTS) {
-            val index = currentContent.indexOf(query, startIndex = cursor, ignoreCase = true)
-            if (index < 0) break
-            val previewStart = (index - 45).coerceAtLeast(0)
-            val previewEnd = (index + query.length + 90).coerceAtMost(currentContent.length)
-            val preview = currentContent.substring(previewStart, previewEnd)
-                .replace(Regex("\\s+"), " ")
-                .trim()
-            val percent = ((index.toDouble() / currentContent.length) * 100).toInt().coerceIn(0, 100)
-            hits += ReaderSearchHit(
-                stableKey = "char:$index",
-                position = index.toLong(),
-                positionLabel = "about $percent% - position $index",
-                preview = preview.ifBlank { "position $index" }
-            )
-            cursor = (index + query.length.coerceAtLeast(1)).coerceAtMost(currentContent.length)
+    private fun clearReaderSearchHighlightOnUserScroll() {
+        if (suppressNextScrollProgress || !activeReaderSearchHighlight) return
+        clearReaderSearchHighlight()
+    }
+
+    private fun clearReaderSearchHighlight() {
+        if (!activeReaderSearchHighlight) return
+        val oldScrollY = readerScrollView.scrollY
+        activeReaderSearchHighlight = false
+        contentView.text = contentView.text.toString()
+        contentView.post {
+            val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+            readerScrollView.scrollTo(0, oldScrollY.coerceIn(0, maxScroll))
         }
-        return hits
     }
 
     private fun showContentSearchResults(query: String) {
@@ -2909,6 +3110,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
+    override fun onDestroy() {
+        readerSearchSession = null
+        pendingReaderSearchHighlight = null
+        activeReaderSearchHighlight = false
+        super.onDestroy()
+    }
+
     override fun onStop() {
         super.onStop()
         val positionToSave = currentPosition
@@ -2934,11 +3142,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val STRUCTURED_PREFETCH_BACKWARD_FRACTION = 0.14f
         private const val STRUCTURED_CHAPTER_POSITION_STRIDE = 1_000_000
         private const val MAX_CACHED_TXT_CHAPTERS = 5000
-        private const val SEARCH_RESULT_PAGE_SIZE = 200
+        private const val SEARCH_RESULT_PAGE_SIZE = 40
         private const val MAX_SEARCH_RESULTS = 5000
         private const val RECOVER_SCAN_LIMIT = 10000
         private const val READER_PREFS = "reader_prefs"
-        private const val SEARCH_RESULTS_PREFS = "reader_search_results"
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_BACKGROUND = "background"
         private const val PREF_TEXT_COLOR = "text_color"
@@ -2956,9 +3163,20 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val MENU_SEARCH = 5
     }
 
-    private data class RetainedReaderSearch(
+    private data class ReaderSearchSession(
         val query: String,
-        val hits: List<ReaderSearchHit>
+        val hits: MutableList<ReaderSearchHit> = mutableListOf(),
+        var nextPosition: Long = 0L,
+        var endReached: Boolean = false,
+        var loading: Boolean = false,
+        var listFirstVisible: Int = 0,
+        var listTopOffset: Int = 0
+    )
+
+    private data class ReaderSearchHighlight(
+        val query: String,
+        val stableKey: String,
+        val position: Long
     )
 
     private data class LoadedContent(
