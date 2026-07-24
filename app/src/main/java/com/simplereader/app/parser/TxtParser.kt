@@ -54,7 +54,10 @@ object TxtParser {
         listOf(
             Regex("^\\s*[【\\[]?第\\s*[0-9零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[章节卷回部集篇].*"),
             Regex("^\\s*[卷部篇]\\s*[0-9零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+.*"),
-            Regex("^\\s*[0-9]{1,5}\\s*[、.．]\\s*\\S+.*"),
+            Regex("^\\s*[（(【\\[]?[0-9]{1,5}[）)】\\]]?\\s*[、.．:：—-]\\s*\\S+.*"),
+            Regex("^\\s*[（(【\\[][0-9]{1,5}[）)】\\]]\\s+\\S+.*"),
+            Regex("^\\s*[0-9]{1,5}\\s+(?![年月日点时分秒个次米])\\S.{0,100}$"),
+            Regex("^\\s*[一二三四五六七八九十百千万]+\\s*[、.．:：—-]\\s*\\S+.*"),
             Regex("^\\s*(Chapter|CHAPTER|chapter)\\s+[0-9IVXLCDMivxlcdm]+\\b.*"),
             Regex("^\\s*(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇).*"),
         )
@@ -188,6 +191,11 @@ object TxtParser {
 
         val preferred = preferredCharsetName
             ?.let { runCatching { Charset.forName(normalizeCharsetName(it)) }.getOrNull() }
+        preferred?.let { charset ->
+            decodeStrict(bytes, charset)?.let { decoded ->
+                if (!looksMojibake(decoded)) return decoded
+            }
+        }
         val locallyDetected = runCatching { CharsetDetector.detectCharset(bytes) }.getOrNull()
         val candidates = linkedSetOf<Charset>()
         listOfNotNull(locallyDetected, preferred).forEach(candidates::add)
@@ -382,7 +390,19 @@ object TxtParser {
             var lineStartOffset = 0L
             while (chapters.size < maxChapters && absoluteOffset < maxScanBytes) {
                 val read = stream.read()
-                if (read == -1) break
+                if (read == -1) {
+                    if (lineBytes.size() > 0 && chapters.size < maxChapters) {
+                        val line = decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim()
+                        val title = extractChapterTitle(line)
+                        if (title != null) {
+                            val last = chapters.lastOrNull()
+                            if (last == null || lineStartOffset - last.byteOffset > 80L) {
+                                chapters += TxtChapterHit(title, lineStartOffset)
+                            }
+                        }
+                    }
+                    break
+                }
                 absoluteOffset += 1L
                 if (read == '\n'.code) {
                     val line = decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim()
