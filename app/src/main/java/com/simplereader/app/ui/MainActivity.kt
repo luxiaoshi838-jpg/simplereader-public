@@ -33,6 +33,7 @@ import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
+import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.BookGroup
@@ -454,11 +455,14 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 val bitmap = withContext(Dispatchers.IO) {
                     runCatching {
-                        contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
-                            EpubParser.readCoverImage(input)?.let { bytes ->
-                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        StructuredBookCache.coverFile(this@MainActivity, book.id)
+                            ?.takeIf { it.isFile }
+                            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                            ?: contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
+                                EpubParser.readCoverImage(input)?.let { bytes ->
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
                             }
-                        }
                     }.getOrNull()
                 }
                 if (bitmap != null) {
@@ -1181,7 +1185,7 @@ class MainActivity : AppCompatActivity() {
                     manifest.put("encoding", "UTF-8")
                     manifest.put(
                         "includedData",
-                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress"))
+                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress", "structured_cache"))
                     )
 
                     relationships.put("books.groupId", "book_groups.id")
@@ -1224,9 +1228,11 @@ class MainActivity : AppCompatActivity() {
                         tablesJson.put(table, rows)
                     }
 
+                    val structuredCache = StructuredBookCache.exportAll(this@MainActivity)
                     root.put("manifest", manifest)
                     root.put("relationships", relationships)
                     root.put("tables", tablesJson)
+                    root.put("structuredCache", structuredCache)
 
                     val output = contentResolver.openOutputStream(targetUri, "wt")
                         ?: error("无法打开所选保存位置")
@@ -1238,8 +1244,9 @@ class MainActivity : AppCompatActivity() {
                     val groupCount = tablesJson.getJSONArray("book_groups").length()
                     val bookmarkCount = tablesJson.getJSONArray("bookmarks").length()
                     val progressCount = tablesJson.getJSONArray("read_progress").length()
+                    val cacheCount = structuredCache.length()
                     val action = if (isSync) "同步" else "导出"
-                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条"
+                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条、可读缓存 $cacheCount 本"
                 }
             }
 

@@ -35,9 +35,8 @@ class RealSampleRegressionContractTest {
         assertFalse(reader.contains("offset = Int.MAX_VALUE"))
         assertTrue(
             "Vertical scrolling must automatically continue into the next cached text window",
-            reader.contains("maybeLoadNextTextWindow") ||
-                reader.contains("maybeShiftStructuredTextWindow") ||
-                reader.contains("maybeRecenterStructuredBuffer")
+            reader.contains("maybeExtendTxtContinuousBuffer") &&
+                reader.contains("StructuredBookCache")
         )
     }
 

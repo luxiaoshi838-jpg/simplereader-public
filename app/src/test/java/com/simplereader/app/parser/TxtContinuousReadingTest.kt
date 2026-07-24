@@ -13,6 +13,7 @@ class TxtContinuousReadingTest {
     fun `sequential windows preserve every line without mojibake or blocking`() {
         val utf8 = Charsets.UTF_8
         val gb = Charset.forName("GB18030")
+        val expected = StringBuilder()
         val raw = ByteArrayOutputStream().apply {
             repeat(900) { index ->
                 val line = when {
@@ -20,6 +21,7 @@ class TxtContinuousReadingTest {
                     index % 7 == 0 -> "第${index}章 GB正文：没有乱码，也不能假装到达文末。\n"
                     else -> "普通段落${index}：连续滑动测试内容。\n"
                 }
+                expected.append(line)
                 write(line.toByteArray(if (index % 7 == 0 && index % 11 != 0) gb else utf8))
             }
         }.toByteArray()
@@ -41,6 +43,7 @@ class TxtContinuousReadingTest {
 
         val text = joined.toString()
         assertEquals(raw.size.toLong(), offset)
+        assertEquals(expected.toString(), text)
         assertTrue(text.contains("第0章 UTF-8正文"))
         assertTrue(text.contains("第896章 GB正文"))
         assertTrue(text.contains("普通段落899"))

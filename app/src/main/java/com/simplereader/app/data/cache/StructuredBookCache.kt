@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.Writer
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -18,8 +19,8 @@ data class CachedChapter(
     val source: String,
     val title: String,
     val depth: Int,
-    val startByte: Long,
-    val endByte: Long
+    val startChar: Int,
+    val endChar: Int
 )
 
 data class CachedCatalogEntry(
@@ -49,7 +50,7 @@ data class CachedBook(
  * plus a chapter/catalog manifest, then included in backup and sync data.
  */
 object StructuredBookCache {
-    private const val CACHE_VERSION = 1
+    private const val CACHE_VERSION = 2
     private const val ROOT_NAME = "structured_books"
     private const val MANIFEST_NAME = "manifest.json"
     private const val CONTENT_NAME = "content.txt"
@@ -208,20 +209,20 @@ object StructuredBookCache {
         require(parsed.isNotEmpty()) { "EPUB 中没有可读取的章节" }
         val contentFile = staging.resolve(CONTENT_NAME)
         val chapters = mutableListOf<CachedChapter>()
-        contentFile.outputStream().buffered().use { rawOutput ->
-            val output = CountingOutputStream(rawOutput)
+        contentFile.bufferedWriter(Charsets.UTF_8).use { rawWriter ->
+            val writer = CountingWriter(rawWriter)
             parsed.forEach { chapter ->
-                val start = output.count
-                writeChapter(output, chapter.text, chapter.content)
+                val start = writer.count
+                writeChapter(writer, chapter.text, chapter.content)
                 chapters += CachedChapter(
                     source = chapter.name,
                     title = chapter.text.ifBlank { chapter.name.substringAfterLast('/') },
                     depth = 0,
-                    startByte = start,
-                    endByte = output.count
+                    startChar = start,
+                    endChar = writer.count
                 )
             }
-            output.flush()
+            writer.flush()
         }
         sourceProvider().use(EpubParser::readCoverImage)?.let { bytes ->
             if (bytes.isNotEmpty()) staging.resolve(COVER_NAME).writeBytes(bytes)
@@ -260,23 +261,23 @@ object StructuredBookCache {
             val chapters = mutableListOf<CachedChapter>()
             val pathToChapter = linkedMapOf<String, Int>()
             var allEntries = emptyList<ChmChapter>()
-            contentFile.outputStream().buffered().use { rawOutput ->
-                val output = CountingOutputStream(rawOutput)
+            contentFile.bufferedWriter(Charsets.UTF_8).use { rawWriter ->
+                val writer = CountingWriter(rawWriter)
                 allEntries = ChmParser.exportReadableChapters(temporarySource) { chapter, text ->
                     if (text.isBlank()) return@exportReadableChapters
-                    val start = output.count
-                    writeChapter(output, chapter.title, text)
+                    val start = writer.count
+                    writeChapter(writer, chapter.title, text)
                     val index = chapters.size
                     chapters += CachedChapter(
                         source = chapter.path,
                         title = chapter.title,
                         depth = chapter.depth,
-                        startByte = start,
-                        endByte = output.count
+                        startChar = start,
+                        endChar = writer.count
                     )
                     pathToChapter[chapter.path.lowercase()] = index
                 }
-                output.flush()
+                writer.flush()
             }
             require(chapters.isNotEmpty()) { "CHM 中没有可读取的正文" }
             val catalog = allEntries.mapNotNull { entry ->
@@ -309,7 +310,7 @@ object StructuredBookCache {
         }
     }
 
-    private fun writeChapter(output: CountingOutputStream, titleValue: String, textValue: String) {
+    private fun writeChapter(output: CountingWriter, titleValue: String, textValue: String) {
         val title = titleValue.trim()
         val text = textValue.trim()
         val rendered = when {
@@ -318,8 +319,8 @@ object StructuredBookCache {
             text.startsWith(title) -> text
             else -> "$title\n\n$text"
         }
-        output.write(rendered.toByteArray(Charsets.UTF_8))
-        output.write("\n\n".toByteArray(Charsets.UTF_8))
+        output.write(rendered)
+        output.write("\n\n")
     }
 
     private fun writeManifest(
@@ -339,8 +340,8 @@ object StructuredBookCache {
                     .put("source", chapter.source)
                     .put("title", chapter.title)
                     .put("depth", chapter.depth)
-                    .put("startByte", chapter.startByte)
-                    .put("endByte", chapter.endByte)
+                    .put("startChar", chapter.startChar)
+                    .put("endChar", chapter.endChar)
             )
         }
         val catalogJson = JSONArray()
@@ -380,8 +381,8 @@ object StructuredBookCache {
                     source = item.optString("source"),
                     title = item.optString("title"),
                     depth = item.optInt("depth", 0),
-                    startByte = item.optLong("startByte", 0L),
-                    endByte = item.optLong("endByte", 0L)
+                    startChar = item.optInt("startChar", 0),
+                    endChar = item.optInt("endChar", 0)
                 )
             }
             val catalog = json.optJSONArray("catalog").toObjects().map { item ->
@@ -440,6 +441,19 @@ object StructuredBookCache {
         GZIPInputStream(compressed.inputStream()).use { input ->
             output.outputStream().buffered().use { target -> input.copyTo(target) }
         }
+    }
+
+    private class CountingWriter(private val delegate: Writer) : Writer() {
+        var count: Int = 0
+            private set
+
+        override fun write(buffer: CharArray, offset: Int, length: Int) {
+            delegate.write(buffer, offset, length)
+            count += length
+        }
+
+        override fun flush() = delegate.flush()
+        override fun close() = delegate.close()
     }
 
     private class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {
