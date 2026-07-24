@@ -63,7 +63,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private lateinit var contentView: TextView
     private lateinit var readerScrollView: NestedScrollView
     private lateinit var fontSizeSeekBar: SeekBar
-    private lateinit var readerProgressBar: SeekBar
     private lateinit var readerProgressLabel: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
@@ -128,7 +127,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         contentView = findViewById(R.id.contentView)
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
-        readerProgressBar = findViewById(R.id.readerProgressBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
         readerControls = findViewById(R.id.readerControls)
         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
@@ -168,6 +166,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
+            .setIcon(android.R.drawable.ic_menu_search)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
@@ -917,7 +916,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
         }
         fontSizeSeekBar.setOnSeekBarChangeListener(progressListener)
-        readerProgressBar.setOnSeekBarChangeListener(progressListener)
     }
 
     private fun displayContent() {
@@ -978,8 +976,47 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun updateProgressViews(progress: Int) {
         fontSizeSeekBar.progress = progress
-        readerProgressBar.progress = progress
-        readerProgressLabel.text = "${(progress / 10f).toInt()}%"
+        readerProgressLabel.text = pageCountLabel()
+    }
+
+    private fun pageCountLabel(): String {
+        val (positionUnits, totalUnits) = readerPageUnits()
+        val unitsPerPage = if (txtStreamingMode) {
+            estimatedTxtBytesPerPage()
+        } else {
+            pageSize.toLong()
+        }.coerceAtLeast(1L)
+        val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
+        val currentPage = (positionUnits / unitsPerPage + 1L).coerceIn(1L, totalPages)
+        return "$currentPage/$totalPages"
+    }
+
+    private fun readerPageUnits(): Pair<Long, Long> {
+        return when {
+            txtStreamingMode -> {
+                currentPosition.toLong().coerceAtLeast(0L) to txtTotalBytes.coerceAtLeast(1L)
+            }
+            isStructuredChapterDocument() && structuredWholeText != null -> {
+                val wholeText = structuredWholeText.orEmpty()
+                val location = currentStructuredLocation()
+                val chapterStart = epubChapterStartPositions.getOrElse(location.chapterIndex) { 0 }
+                (chapterStart + location.offset).toLong().coerceAtLeast(0L) to
+                    wholeText.length.toLong().coerceAtLeast(1L)
+            }
+            else -> {
+                currentPosition.toLong().coerceAtLeast(0L) to
+                    currentContent.length.toLong().coerceAtLeast(1L)
+            }
+        }
+    }
+
+    private fun estimatedTxtBytesPerPage(): Long {
+        val visibleBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+        val visibleCharacters = currentContent.length.coerceAtLeast(1)
+        val averageBytesPerCharacter = visibleBytes.toDouble() / visibleCharacters.toDouble()
+        return (pageSize * averageBytesPerCharacter)
+            .toLong()
+            .coerceAtLeast(pageSize.toLong())
     }
 
     private fun configureVerticalScrollIfNeeded() {
