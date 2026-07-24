@@ -7,6 +7,11 @@ on:
     paths:
       - .github/workflows/export-reader-search-apk-402.yml
       - .github/export-reader-search-apk-402-trigger
+  pull_request:
+    branches:
+      - agent/export-reader-search-apk-402
+    paths:
+      - .github/export-reader-search-apk-402-trigger
 
 permissions:
   contents: read
