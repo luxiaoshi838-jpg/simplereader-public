@@ -1,5 +1,5 @@
-# v14 continuous reading
+# v14 final validation
 
 STATUS: SUCCESS
 
-Debug tests, release tests, debug build and release build each completed within five minutes.
+TXT and EPUB continuous-reading tests passed. CHM import/opening was disabled because the real 231 MB sample produced zero readable chapters. All four Gradle stages completed within five minutes each.

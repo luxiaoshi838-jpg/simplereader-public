@@ -214,7 +214,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 title = selectedBook.title
                 supportActionBar?.title = selectedBook.title
 
-                val cachedStructured = if (selectedBook.format.uppercase() in setOf("EPUB", "CHM")) {
+                if (selectedBook.format.equals("CHM", ignoreCase = true)) {
+                    showError("当前版本已停止支持 CHM：真实样本无法稳定提取目录和正文，请改用 TXT 或 EPUB")
+                    return@launch
+                }
+
+                val cachedStructured = if (selectedBook.format.equals("EPUB", ignoreCase = true)) {
                     withContext(Dispatchers.IO) { StructuredBookCache.loadAny(this@ReaderActivity, bookId) }
                 } else {
                     null
@@ -446,8 +451,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun isSupportedBookName(name: String): Boolean {
         return name.endsWith(".txt", ignoreCase = true) ||
-            name.endsWith(".epub", ignoreCase = true) ||
-            name.endsWith(".chm", ignoreCase = true)
+            name.endsWith(".epub", ignoreCase = true)
     }
 
     private fun joinPath(parent: String, child: String): String =
@@ -469,7 +473,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun isStructuredChapterDocument(): Boolean {
         val format = book?.format?.uppercase().orEmpty()
-        return !txtStreamingMode && format in setOf("EPUB", "CHM") && epubChapters.isNotEmpty()
+        return !txtStreamingMode && format == "EPUB" && epubChapters.isNotEmpty()
     }
 
     private fun loadStructuredChapter(

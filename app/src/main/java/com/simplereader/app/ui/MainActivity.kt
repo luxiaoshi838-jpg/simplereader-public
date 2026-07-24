@@ -1491,7 +1491,7 @@ class MainActivity : AppCompatActivity() {
         baseOptions: ImportPlanOptions = ImportPlanOptions()
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1621,7 +1621,7 @@ class MainActivity : AppCompatActivity() {
         selected: BooleanArray
     ) {
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "未发现可导入的 TXT、EPUB 或 CHM 文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未发现可导入的 TXT 或 EPUB 文件", Toast.LENGTH_SHORT).show()
             return
         }
         val labels = candidates.map { candidate ->
@@ -2026,7 +2026,6 @@ class MainActivity : AppCompatActivity() {
         return when {
             name.endsWith(".txt", ignoreCase = true) -> "TXT"
             name.endsWith(".epub", ignoreCase = true) -> "EPUB"
-            name.endsWith(".chm", ignoreCase = true) -> "CHM"
             else -> null
         }
     }
