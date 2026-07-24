@@ -15,7 +15,7 @@ jobs:
   build-debug:
     name: Build public debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
 
     steps:
       - name: Checkout v14 branch source
@@ -43,11 +43,29 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+      - name: Export official Android signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$build_tools/apksigner"
+          test -x "$build_tools/zipalign"
+          test -x "$build_tools/aapt2"
+          tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools.tar.gz "$(basename "$build_tools")"
+
+      - name: Upload Android signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-build-tools-${{ github.run_number }}
+          path: /tmp/android-build-tools.tar.gz
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Build debug APK
-        run: ./gradlew clean assembleDebug --stacktrace --console=plain
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew clean assembleDebug --stacktrace --console=plain
 
       - name: Upload public debug artifact
         uses: actions/upload-artifact@v4
