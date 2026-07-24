@@ -1,0 +1,58 @@
+name: Apply verified v14 continuous-reading patch
+
+on:
+  push:
+    branches:
+      - agent/v14-real-epub-chm-continuous
+    paths:
+      - ".github/workflows/apply-v14-continuous-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-real-epub-chm-continuous
+          fetch-depth: 0
+
+      - name: Decode and apply local verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_b64=".github/patches/v14-continuous.patch.gz.b64"
+          if [ ! -f "$patch_b64" ]; then
+            echo "Patch already consumed"
+            exit 0
+          fi
+          base64 --decode "$patch_b64" | gzip -dc > /tmp/v14-continuous.patch
+          git apply --check /tmp/v14-continuous.patch
+          git apply /tmp/v14-continuous.patch
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run complete unit tests and builds
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Commit only verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/patches/v14-continuous.patch.gz.b64
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java app/src/test/java .github/patches/v14-continuous.patch.gz.b64
+          git commit -m "Complete v14 continuous TXT and structured cache reading"
+          git push origin HEAD:agent/v14-real-epub-chm-continuous
