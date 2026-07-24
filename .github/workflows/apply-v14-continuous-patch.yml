@@ -63,3 +63,5 @@ jobs:
           git add app/src/main/java app/src/test/java .github/patches/v14-continuous.patch.gz.b64 .github/v14-continuous-build-status.md
           git commit -m "Complete v14 continuous TXT and structured cache reading"
           git push origin HEAD:agent/v14-real-epub-chm-continuous
+
+# retrigger after adding complete TXT regression files
