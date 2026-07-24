@@ -27,12 +27,17 @@ jobs:
           ref: agent/v14-epub-open-group-cover-fix
           fetch-depth: 0
 
-      - name: Apply EPUB opening and group cover fix
+      - name: Ensure EPUB opening and group cover fix
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          python scripts/apply_v14_epub_hotfix.py
+          if grep -q 'structuredWholeText' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            && grep -q 'coverImage' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt; then
+            echo 'Hotfix already present'
+          else
+            python scripts/apply_v14_epub_hotfix.py
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -95,24 +100,6 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
-      - name: Attempt source commit
-        if: github.actor != 'github-actions[bot]'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A -- app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
-          if git diff --cached --quiet; then
-            echo 'No source changes to commit' | tee /tmp/commit.log
-          else
-            { git commit -m 'Fix EPUB opening and grouped shelf covers' && git push origin HEAD:agent/v14-epub-open-group-cover-fix; } > /tmp/commit.log 2>&1
-            code=$?
-            cat /tmp/commit.log
-            exit $code
-          fi
-
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -121,7 +108,6 @@ jobs:
           path: |
             /tmp/*-unit.log
             /tmp/assemble-*.log
-            /tmp/commit.log
             app/build/reports/tests
           if-no-files-found: warn
           retention-days: 2
