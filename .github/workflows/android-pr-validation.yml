@@ -85,19 +85,32 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
-      - name: Commit verified source fix
+      - name: Upload verified source files
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v14-epub-hotfix-sources-${{ github.run_number }}
+          path: |
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Attempt source commit
         if: github.actor != 'github-actions[bot]'
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A -- app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
           if git diff --cached --quiet; then
-            echo 'No source changes to commit'
+            echo 'No source changes to commit' | tee /tmp/commit.log
           else
-            git commit -m 'Fix EPUB opening and grouped shelf covers'
-            git push origin HEAD:agent/v14-epub-open-group-cover-fix
+            { git commit -m 'Fix EPUB opening and grouped shelf covers' && git push origin HEAD:agent/v14-epub-open-group-cover-fix; } > /tmp/commit.log 2>&1
+            code=$?
+            cat /tmp/commit.log
+            exit $code
           fi
 
       - name: Upload validation logs
@@ -108,6 +121,7 @@ jobs:
           path: |
             /tmp/*-unit.log
             /tmp/assemble-*.log
+            /tmp/commit.log
             app/build/reports/tests
           if-no-files-found: warn
           retention-days: 2
