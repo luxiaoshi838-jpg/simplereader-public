@@ -8,7 +8,7 @@ on:
       - .github/reader-search-session-panel-trigger
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   patch-test-build:
@@ -17,6 +17,7 @@ jobs:
     env:
       SIMPLE_READER_VERSION_CODE: '2026075403'
       SIMPLE_READER_VERSION_NAME: '2026.07.24.v14.searchpanel.403'
+      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@v4
@@ -33,8 +34,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply search panel patch
-        run: python scripts/patch_reader_search_session_panel.py
+      - name: Apply search panel patch once
+        run: |
+          if grep -Fq 'private var readerSearchSession: ReaderSearchSession?' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt; then
+            echo 'ReaderActivity already patched'
+          else
+            python scripts/patch_reader_search_session_panel.py
+          fi
 
       - name: Debug unit tests
         run: |
@@ -67,6 +73,18 @@ jobs:
           code=$?
           tail -n 180 /tmp/assemble-release.log
           exit $code
+
+      - name: Commit verified ReaderActivity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          if git diff --cached --quiet; then
+            echo 'No business source changes to commit'
+          else
+            git commit -m '实现会话式书内搜索面板与命中高亮'
+            git push origin HEAD:"$HEAD_BRANCH"
+          fi
 
       - name: Upload verified source
         uses: actions/upload-artifact@v4
