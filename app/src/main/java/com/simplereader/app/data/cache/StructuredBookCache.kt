@@ -5,7 +5,6 @@ import android.util.Base64
 import com.simplereader.app.parser.ChmChapter
 import com.simplereader.app.parser.ChmParser
 import com.simplereader.app.parser.EpubParser
-import com.simplereader.app.parser.TxtParser
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -38,17 +37,16 @@ data class CachedBook(
     val chapters: List<CachedChapter>,
     val catalog: List<CachedCatalogEntry>,
     val sourceSize: Long,
-    val sourceModified: Long,
-    val sourceCharsetName: String?
+    val sourceModified: Long
 )
 
 /**
- * Persistent normalized book cache.
+ * Persistent normalized cache for EPUB and CHM only.
  *
- * Every supported source is converted once into readable UTF-8 `content.txt`
- * plus a JSON chapter/catalog manifest under filesDir. The original CHM archive
- * is never kept in the persistent cache. This cache is also exportable and
- * restorable with SimpleReader backup data.
+ * TXT is deliberately excluded because copying a large TXT would duplicate the
+ * entire book. TXT remains source-streamed; only its small chapter index is
+ * cached. EPUB and CHM are normalized once into readable UTF-8 `content.txt`
+ * plus a chapter/catalog manifest, then included in backup and sync data.
  */
 object StructuredBookCache {
     private const val CACHE_VERSION = 1
@@ -57,6 +55,7 @@ object StructuredBookCache {
     private const val CONTENT_NAME = "content.txt"
     private const val COVER_NAME = "cover.bin"
     private const val CONTENT_ENCODING = "gzip+base64+utf8"
+    private val SUPPORTED_FORMATS = setOf("EPUB", "CHM")
 
     @Synchronized
     fun openOrBuild(
@@ -65,33 +64,26 @@ object StructuredBookCache {
         format: String,
         sourceSize: Long,
         sourceModified: Long,
-        preferredCharsetName: String? = null,
         sourceProvider: () -> InputStream
     ): CachedBook {
         val normalizedFormat = format.uppercase()
+        require(normalizedFormat in SUPPORTED_FORMATS) {
+            "持久正文缓存仅支持 EPUB/CHM，TXT 必须直接流式读取"
+        }
         val target = cacheDirectory(context, bookId)
         loadDirectory(target)?.takeIf { cached ->
             cached.format == normalizedFormat &&
                 cached.sourceSize == sourceSize &&
+                cached.sourceModified == sourceModified &&
                 cached.textFile.isFile &&
                 cached.textFile.length() > 0L
         }?.let { return it }
 
-        val staging = rootDirectory(context).resolve(
-            ".${bookId}.${System.nanoTime()}.tmp"
-        )
+        val staging = rootDirectory(context).resolve(".$bookId.${System.nanoTime()}.tmp")
         staging.deleteRecursively()
         staging.mkdirs()
         try {
-            val built = when (normalizedFormat) {
-                "TXT" -> buildTxt(
-                    staging = staging,
-                    bookId = bookId,
-                    sourceSize = sourceSize,
-                    sourceModified = sourceModified,
-                    preferredCharsetName = preferredCharsetName,
-                    sourceProvider = sourceProvider
-                )
+            when (normalizedFormat) {
                 "EPUB" -> buildEpub(
                     staging = staging,
                     bookId = bookId,
@@ -107,11 +99,8 @@ object StructuredBookCache {
                     sourceModified = sourceModified,
                     sourceProvider = sourceProvider
                 )
-                else -> error("不支持的缓存格式：$normalizedFormat")
             }
-            require(built.textFile.isFile && built.textFile.length() > 0L) {
-                "缓存正文为空"
-            }
+            require(staging.resolve(CONTENT_NAME).length() > 0L) { "缓存正文为空" }
             target.deleteRecursively()
             target.parentFile?.mkdirs()
             if (!staging.renameTo(target)) {
@@ -143,6 +132,7 @@ object StructuredBookCache {
             .sortedBy { it.name.toLongOrNull() }
             .forEach { directory ->
                 val cached = loadDirectory(directory) ?: return@forEach
+                if (cached.format !in SUPPORTED_FORMATS) return@forEach
                 val manifestFile = directory.resolve(MANIFEST_NAME)
                 val item = JSONObject()
                     .put("bookId", cached.bookId)
@@ -171,24 +161,27 @@ object StructuredBookCache {
             val newBookId = bookIdMap[oldBookId] ?: return@forEach
             if (item.optString("contentEncoding") != CONTENT_ENCODING) return@forEach
             val manifest = item.optJSONObject("manifest") ?: return@forEach
+            if (manifest.optString("format").uppercase() !in SUPPORTED_FORMATS) return@forEach
             val contentData = item.optString("contentData")
             if (contentData.isBlank()) return@forEach
 
             val directory = cacheDirectory(context, newBookId)
             val staging = rootDirectory(context).resolve(
-                ".restore.${newBookId}.${System.nanoTime()}.tmp"
+                ".restore.$newBookId.${System.nanoTime()}.tmp"
             )
             runCatching {
                 staging.deleteRecursively()
                 staging.mkdirs()
-                val restoredManifest = JSONObject(manifest.toString())
-                    .put("bookId", newBookId)
+                val restoredManifest = JSONObject(manifest.toString()).put("bookId", newBookId)
                 staging.resolve(MANIFEST_NAME)
                     .writeText(restoredManifest.toString(2), Charsets.UTF_8)
-                val compressed = Base64.decode(contentData, Base64.DEFAULT)
-                ungzipToFile(compressed, staging.resolve(CONTENT_NAME))
+                ungzipToFile(
+                    Base64.decode(contentData, Base64.DEFAULT),
+                    staging.resolve(CONTENT_NAME)
+                )
                 item.optString("coverData").takeIf(String::isNotBlank)?.let { coverData ->
-                    staging.resolve(COVER_NAME).writeBytes(Base64.decode(coverData, Base64.DEFAULT))
+                    staging.resolve(COVER_NAME)
+                        .writeBytes(Base64.decode(coverData, Base64.DEFAULT))
                 }
                 require(loadDirectory(staging) != null) { "恢复后的缓存无效" }
                 directory.deleteRecursively()
@@ -204,54 +197,13 @@ object StructuredBookCache {
         return restored
     }
 
-    private fun buildTxt(
-        staging: File,
-        bookId: Long,
-        sourceSize: Long,
-        sourceModified: Long,
-        preferredCharsetName: String?,
-        sourceProvider: () -> InputStream
-    ): CachedBook {
-        val contentFile = staging.resolve(CONTENT_NAME)
-        val transcode = sourceProvider().use { source ->
-            contentFile.outputStream().buffered().use { output ->
-                TxtParser.transcodeToUtf8(source, output, preferredCharsetName)
-            }
-        }
-        val chapters = transcode.chapters.mapIndexed { index, chapter ->
-            CachedChapter(
-                source = chapter.title,
-                title = chapter.title,
-                depth = 0,
-                startByte = chapter.byteOffset,
-                endByte = transcode.chapters.getOrNull(index + 1)?.byteOffset
-                    ?: contentFile.length()
-            )
-        }
-        val catalog = chapters.mapIndexed { index, chapter ->
-            CachedCatalogEntry(chapter.title, chapter.depth, index, false)
-        }
-        writeManifest(
-            staging = staging,
-            bookId = bookId,
-            format = "TXT",
-            sourceSize = sourceSize,
-            sourceModified = sourceModified,
-            sourceCharsetName = transcode.sourceCharsetName,
-            chapters = chapters,
-            catalog = catalog,
-            hasCover = false
-        )
-        return requireNotNull(loadDirectory(staging))
-    }
-
     private fun buildEpub(
         staging: File,
         bookId: Long,
         sourceSize: Long,
         sourceModified: Long,
         sourceProvider: () -> InputStream
-    ): CachedBook {
+    ) {
         val parsed = sourceProvider().use(EpubParser::readChapters)
         require(parsed.isNotEmpty()) { "EPUB 中没有可读取的章节" }
         val contentFile = staging.resolve(CONTENT_NAME)
@@ -283,12 +235,10 @@ object StructuredBookCache {
             format = "EPUB",
             sourceSize = sourceSize,
             sourceModified = sourceModified,
-            sourceCharsetName = "UTF-8",
             chapters = chapters,
             catalog = catalog,
             hasCover = staging.resolve(COVER_NAME).isFile
         )
-        return requireNotNull(loadDirectory(staging))
     }
 
     private fun buildChm(
@@ -298,7 +248,7 @@ object StructuredBookCache {
         sourceSize: Long,
         sourceModified: Long,
         sourceProvider: () -> InputStream
-    ): CachedBook {
+    ) {
         val temporarySource = context.cacheDir.resolve(
             "simplereader_chm_${bookId}_${System.nanoTime()}.chm"
         )
@@ -350,12 +300,10 @@ object StructuredBookCache {
                 format = "CHM",
                 sourceSize = sourceSize,
                 sourceModified = sourceModified,
-                sourceCharsetName = "UTF-8",
                 chapters = chapters,
                 catalog = catalog,
                 hasCover = false
             )
-            return requireNotNull(loadDirectory(staging))
         } finally {
             temporarySource.delete()
         }
@@ -380,7 +328,6 @@ object StructuredBookCache {
         format: String,
         sourceSize: Long,
         sourceModified: Long,
-        sourceCharsetName: String?,
         chapters: List<CachedChapter>,
         catalog: List<CachedCatalogEntry>,
         hasCover: Boolean
@@ -412,7 +359,6 @@ object StructuredBookCache {
             .put("format", format)
             .put("sourceSize", sourceSize)
             .put("sourceModified", sourceModified)
-            .put("sourceCharsetName", sourceCharsetName)
             .put("contentFile", CONTENT_NAME)
             .put("coverFile", if (hasCover) COVER_NAME else JSONObject.NULL)
             .put("chapters", chapterJson)
@@ -427,6 +373,8 @@ object StructuredBookCache {
             if (!manifestFile.isFile || !contentFile.isFile || contentFile.length() <= 0L) return null
             val json = JSONObject(manifestFile.readText(Charsets.UTF_8))
             if (json.optInt("cacheVersion", -1) != CACHE_VERSION) return null
+            val format = json.optString("format").uppercase()
+            if (format !in SUPPORTED_FORMATS) return null
             val chapters = json.optJSONArray("chapters").toObjects().map { item ->
                 CachedChapter(
                     source = item.optString("source"),
@@ -446,7 +394,7 @@ object StructuredBookCache {
             }
             CachedBook(
                 bookId = json.optLong("bookId"),
-                format = json.optString("format").uppercase(),
+                format = format,
                 textFile = contentFile,
                 coverFile = if (json.isNull("coverFile")) {
                     null
@@ -459,8 +407,7 @@ object StructuredBookCache {
                 chapters = chapters,
                 catalog = catalog,
                 sourceSize = json.optLong("sourceSize", -1L),
-                sourceModified = json.optLong("sourceModified", 0L),
-                sourceCharsetName = json.optString("sourceCharsetName").takeIf(String::isNotBlank)
+                sourceModified = json.optLong("sourceModified", 0L)
             )
         }.getOrNull()
     }
