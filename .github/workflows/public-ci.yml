@@ -18,19 +18,17 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout v14 branch source
+      - name: Checkout current source
         uses: actions/checkout@v4
-        with:
-          ref: agent/v14-real-epub-chm-continuous
 
-      - name: Pack exact branch source
-        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-v14-branch-source.tar.gz .
+      - name: Pack exact source
+        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
 
-      - name: Upload exact branch source
+      - name: Upload exact source
         uses: actions/upload-artifact@v4
         with:
-          name: simplereader-v14-branch-source-${{ github.run_number }}
-          path: /tmp/simplereader-v14-branch-source.tar.gz
+          name: simplereader-current-source-${{ github.run_number }}
+          path: /tmp/simplereader-current-source.tar.gz
           if-no-files-found: error
           retention-days: 1
 
