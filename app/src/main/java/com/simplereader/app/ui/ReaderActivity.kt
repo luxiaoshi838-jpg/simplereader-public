@@ -1224,7 +1224,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun setReaderChromeVisible(visible: Boolean) {
         readerChromeVisible = visible
         readerControls.visibility = if (visible) View.VISIBLE else View.GONE
-        readerSettingsPanel.visibility = View.GONE
+        readerProgressLabel.visibility = if (visible) View.GONE else View.VISIBLE
+        if (!visible) readerSettingsPanel.visibility = View.GONE
         if (visible) supportActionBar?.show() else supportActionBar?.hide()
     }
 
