@@ -1793,7 +1793,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 displayContent()
                 markProgressDirty()
                 saveProgressNow()
-                readerControls.visibility = View.GONE
+                setReaderChromeVisible(false)
             }
         }
         recyclerView.adapter = adapter
@@ -2903,7 +2903,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             if (target != null) {
                 showStreamingTxtPage(target, saveImmediately = true, keepContextBeforeTarget = true)
-                readerControls.visibility = View.GONE
+                setReaderChromeVisible(false)
             } else {
                 Toast.makeText(this@ReaderActivity, "没有找到：$query", Toast.LENGTH_SHORT).show()
             }
