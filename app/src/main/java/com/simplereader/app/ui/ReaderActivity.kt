@@ -108,6 +108,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerSearchSession: ReaderSearchSession? = null
     private var pendingReaderSearchHighlight: ReaderSearchHighlight? = null
     private var activeReaderSearchHighlight: Boolean = false
+    private var readerChromeVisible: Boolean = false
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -122,6 +123,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_reader)
         supportActionBar?.setBackgroundDrawable(ColorDrawable(Color.rgb(72, 67, 58)))
+        supportActionBar?.hide()
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
@@ -891,9 +893,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
             applyActiveReaderMode(ReaderAppearance.toggleMode(this))
         }
-        findViewById<TextView>(R.id.moreReaderButton).setOnClickListener {
-            showReaderMoreActions()
-        }
         findViewById<TextView>(R.id.previousChapterButton).setOnClickListener {
             jumpChapter(-1)
         }
@@ -1222,12 +1221,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
-    private fun toggleReaderControls() {
-        readerControls.visibility = if (readerControls.visibility == View.VISIBLE) {
-            View.GONE
-        } else {
-            View.VISIBLE
-        }
+    private fun setReaderChromeVisible(visible: Boolean) {
+        readerChromeVisible = visible
+        readerControls.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) readerSettingsPanel.visibility = View.GONE
+        if (visible) supportActionBar?.show() else supportActionBar?.hide()
+    }
+
+    private fun toggleReaderChrome() {
+        setReaderChromeVisible(!readerChromeVisible)
     }
 
     private fun showContentSearch() {
@@ -1535,7 +1537,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun jumpToReaderSearchHit(hit: ReaderSearchHit) {
-        readerControls.visibility = View.GONE
+        setReaderChromeVisible(false)
         when {
             txtStreamingMode -> {
                 showStreamingTxtPage(
@@ -2666,8 +2668,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 alpha = if (night) 0.35f else 1f
             }
         }
-        findViewById<TextView>(R.id.themeNightButton).text = if (night) "切到日间" else "切到夜间"
-        findViewById<TextView>(R.id.nightButton).text = if (night) "日间" else "夜间"
+        findViewById<TextView>(R.id.themeNightButton).apply {
+            text = if (night) "☀" else "☾"
+            setTextColor(Color.WHITE)
+        }
+        findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
     }
 
     private fun updateSettingsLabels() {
@@ -3081,21 +3086,29 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onDown(e: MotionEvent): Boolean = true
     override fun onShowPress(e: MotionEvent) {}
     override fun onSingleTapUp(e: MotionEvent): Boolean {
-        if (pageTurnMode == TURN_MODE_VERTICAL) {
-            toggleReaderControls()
+        val width = readerScrollView.width.takeIf { it > 0 } ?: return false
+        val height = readerScrollView.height.takeIf { it > 0 } ?: return false
+        val centerLeft = width / 4f
+        val centerRight = width * 3f / 4f
+        val centerTop = height / 4f
+        val centerBottom = height * 3f / 4f
+        val inCenter = e.x in centerLeft..centerRight && e.y in centerTop..centerBottom
+        if (inCenter) {
+            toggleReaderChrome()
             return true
         }
-        val width = readerScrollView.width.takeIf { it > 0 } ?: return false
-        val leftBoundary = width / 3
-        val rightBoundary = width * 2 / 3
-        if (e.x < leftBoundary) {
-            previousPage()
-        } else if (e.x > rightBoundary) {
-            nextPage()
-        } else {
-            toggleReaderControls()
+        if (pageTurnMode == TURN_MODE_VERTICAL) return false
+        return when {
+            e.x < centerLeft -> {
+                previousPage()
+                true
+            }
+            e.x > centerRight -> {
+                nextPage()
+                true
+            }
+            else -> false
         }
-        return true
     }
 
     override fun onScroll(
