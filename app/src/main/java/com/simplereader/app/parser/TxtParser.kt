@@ -50,6 +50,12 @@ object TxtParser {
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
     private const val WINDOW_LINE_CONTEXT_BYTES = 16 * 1024
+    private val standaloneChapterPatterns by lazy {
+        listOf(
+            Regex("^[\\p{L}\\p{N}]{2,39}篇$"),
+            Regex("^[\\p{L}\\p{N}]{1,20}之[\\p{L}\\p{N}]{1,20}$")
+        )
+    }
     private val chapterPrefixPatterns by lazy {
         listOf(
             Regex("^\\s*[【\\[]?第\\s*[0-9零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[章节卷回部集篇].*"),
@@ -58,6 +64,8 @@ object TxtParser {
             Regex("^\\s*[（(【\\[][0-9]{1,5}[）)】\\]]\\s+\\S+.*"),
             Regex("^\\s*[0-9]{1,5}\\s+(?![年月日点时分秒个次米])\\S.{0,100}$"),
             Regex("^\\s*[一二三四五六七八九十百千万]+\\s*[、.．:：—-]\\s*\\S+.*"),
+            Regex("^\\s*[（(【\\[]\\s*[零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[）)】\\]]\\s*[章篇](?:\\s*\\S.*)?$"),
+            Regex("^\\s*[零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[章篇](?:\\s*\\S.*)?$"),
             Regex("^\\s*(Chapter|CHAPTER|chapter)\\s+[0-9IVXLCDMivxlcdm]+\\b.*"),
             Regex("^\\s*(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇).*"),
         )
@@ -663,6 +671,9 @@ object TxtParser {
         if (normalized.contains("http", ignoreCase = true)) return null
         if (normalized.count { it == '，' || it == ',' || it == '。' || it == '；' || it == ';' } > 2) return null
         if (chapterPrefixPatterns.any { it.matches(normalized) }) {
+            return normalized.take(80)
+        }
+        if (standaloneChapterPatterns.any { it.matches(normalized) }) {
             return normalized.take(80)
         }
         return null

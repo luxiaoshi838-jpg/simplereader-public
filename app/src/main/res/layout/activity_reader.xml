@@ -301,9 +301,9 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
-                android:text="◑\n夜间"
+                android:text="☾"
                 android:textColor="#EEE9DD"
-                android:textSize="17sp" />
+                android:textSize="28sp" />
 
             <TextView
                 android:id="@+id/readerSearchButton"
@@ -312,16 +312,6 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="⬡\n设置"
-                android:textColor="#EEE9DD"
-                android:textSize="17sp" />
-
-            <TextView
-                android:id="@+id/moreReaderButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="⋯\n更多"
                 android:textColor="#EEE9DD"
                 android:textSize="17sp" />
         </LinearLayout>
