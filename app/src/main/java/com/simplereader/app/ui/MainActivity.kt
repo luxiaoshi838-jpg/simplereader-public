@@ -508,7 +508,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openBook(bookId: Long) {
-        startActivity(Intent(this, ReaderActivity::class.java).putExtra("bookId", bookId))
+        val targetActivity = if (
+            books.firstOrNull { it.id == bookId }
+                ?.format
+                .equals("EPUB", ignoreCase = true)
+        ) {
+            ReadiumEpubActivity::class.java
+        } else {
+            ReaderActivity::class.java
+        }
+        startActivity(Intent(this, targetActivity).putExtra("bookId", bookId))
     }
 
     private fun showGroupBooks(group: BookGroup, groupBooks: List<ShelfBookItem>) {
