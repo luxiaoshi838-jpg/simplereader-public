@@ -14,13 +14,15 @@ import com.simplereader.app.R
 import com.simplereader.app.readium.ReadiumSessionStore
 import kotlinx.coroutines.launch
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
+import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
-import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.toUri
+import kotlin.math.abs
 
 @OptIn(ExperimentalReadiumApi::class)
 class ReadiumEpubFragment : Fragment(),
@@ -48,6 +50,7 @@ class ReadiumEpubFragment : Fragment(),
         } else {
             session.navigatorFactory.createFragmentFactory(
                 initialLocator = session.initialLocator,
+                initialPreferences = EpubPreferences(scroll = true),
                 listener = this,
                 paginationListener = this,
                 configuration = EpubNavigatorFragment.Configuration(
@@ -84,6 +87,7 @@ class ReadiumEpubFragment : Fragment(),
         }
 
         navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as EpubNavigatorFragment
+        navigator.publicationView.overScrollMode = View.OVER_SCROLL_NEVER
         attachInputHandling()
         observeLocation()
         (activity as? Host)?.onReadiumNavigatorReady(this)
@@ -102,13 +106,13 @@ class ReadiumEpubFragment : Fragment(),
                 (activity as? Host)?.toggleReadiumChrome()
                 return true
             }
+
+            override fun onDrag(event: DragEvent): Boolean {
+                val horizontal = abs(event.offset.x)
+                val vertical = abs(event.offset.y)
+                return horizontal > 24f && horizontal > vertical * 1.25f
+            }
         })
-        navigator.addInputListener(
-            DirectionalNavigationAdapter(
-                navigator = navigator,
-                animatedTransition = true
-            )
-        )
     }
 
     private fun observeLocation() {
