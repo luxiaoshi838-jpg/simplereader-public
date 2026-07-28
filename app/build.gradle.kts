@@ -105,6 +105,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("com.google.android.material:material:1.10.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
@@ -119,7 +120,12 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Mature public EPUB/CHM parsers.
+    // Readium renders EPUB 2/3 XHTML, CSS, fonts and in-book images directly.
+    implementation("org.readium.kotlin-toolkit:readium-shared:3.0.0")
+    implementation("org.readium.kotlin-toolkit:readium-streamer:3.0.0")
+    implementation("org.readium.kotlin-toolkit:readium-navigator:3.0.0")
+
+    // Existing TXT/legacy metadata and CHM support.
     implementation("io.documentnode:epub4j-core:4.2.3")
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
@@ -133,4 +139,3 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
-
