@@ -5,10 +5,13 @@
     android:background="#F5E9C8"
     android:fitsSystemWindows="true">
 
-    <FrameLayout
-        android:id="@+id/epubReaderFragmentHost"
+    <WebView
+        android:id="@+id/epubWebView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:background="#F5E9C8"
+        android:overScrollMode="never"
+        android:scrollbars="none" />
 
     <TextView
         android:id="@+id/epubLoadingText"
@@ -37,7 +40,7 @@
         android:textColor="#6B6257"
         android:textSize="12sp" />
 
-    <!-- When the bars are visible this transparent layer blocks all touches to the book. -->
+    <!-- The controls sit above this blocker, so only the book surface is locked. -->
     <View
         android:id="@+id/epubTouchBlocker"
         android:layout_width="match_parent"
@@ -115,9 +118,9 @@
             android:id="@+id/epubProgressSeekBar"
             android:layout_width="match_parent"
             android:layout_height="40dp"
+            android:contentDescription="阅读进度"
             android:max="1000"
-            android:progress="0"
-            android:contentDescription="阅读进度" />
+            android:progress="0" />
 
         <LinearLayout
             android:layout_width="match_parent"
