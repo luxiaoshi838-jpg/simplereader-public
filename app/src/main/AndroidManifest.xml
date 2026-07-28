@@ -22,6 +22,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.ReadiumEpubActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.ReaderActivity"
             android:exported="false" />
 

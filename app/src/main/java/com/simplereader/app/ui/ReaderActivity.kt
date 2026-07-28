@@ -226,6 +226,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 title = selectedBook.title
                 supportActionBar?.title = selectedBook.title
 
+                if (selectedBook.format.equals("EPUB", ignoreCase = true)) {
+                    startActivity(
+                        Intent(this@ReaderActivity, ReadiumEpubActivity::class.java)
+                            .putExtra(ReadiumEpubActivity.EXTRA_BOOK_ID, bookId)
+                    )
+                    finish()
+                    return@launch
+                }
+
                 if (selectedBook.format.equals("CHM", ignoreCase = true)) {
                     showError("当前版本已停止支持 CHM：真实样本无法稳定提取目录和正文，请改用 TXT 或 EPUB")
                     return@launch
@@ -922,7 +931,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
         updateStructuredLocationFromCurrentPosition()
         if (txtStreamingMode) {
-            contentView.text = currentContent
+            contentView.text = styledReadingText(currentContent)
             contentView.textSize = readerTextSize
             configureVerticalScrollIfNeeded()
             if (continuous) {
@@ -933,7 +942,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         .coerceIn(0.0, 1.0)
                     suppressNextScrollProgress = true
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
-                    readerScrollView.post { suppressNextScrollProgress = false }
+                    readerScrollView.post {
+                        suppressNextScrollProgress = false
+                        updateProgressViews(progressForCurrentPosition())
+                    }
                 }
             } else {
                 readerScrollView.scrollTo(0, 0)
@@ -949,20 +961,23 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         if (continuous) {
-            contentView.text = currentContent
+            contentView.text = styledReadingText(currentContent)
             contentView.post {
                 val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
                 if (maxScroll > 0 && currentContent.isNotEmpty()) {
                     val fraction = (currentPosition.toFloat() / currentContent.length).coerceIn(0f, 1f)
                     suppressNextScrollProgress = true
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
-                    readerScrollView.post { suppressNextScrollProgress = false }
+                    readerScrollView.post {
+                        suppressNextScrollProgress = false
+                        updateProgressViews(progressForCurrentPosition())
+                    }
                 }
             }
         } else {
             val endPosition = (currentPosition + pageSize).coerceAtMost(currentContent.length)
             val safeStart = currentPosition.coerceIn(0, endPosition)
-            contentView.text = currentContent.substring(safeStart, endPosition)
+            contentView.text = styledReadingText(currentContent.substring(safeStart, endPosition))
             readerScrollView.scrollTo(0, 0)
         }
         contentView.textSize = readerTextSize
@@ -979,6 +994,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun pageCountLabel(): String {
+        renderedPageCountLabel()?.let { return it }
         val (positionUnits, totalUnits) = readerPageUnits()
         val unitsPerPage = if (txtStreamingMode) {
             estimatedTxtBytesPerPage()
@@ -988,6 +1004,43 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
         val currentPage = (positionUnits / unitsPerPage + 1L).coerceIn(1L, totalPages)
         return "$currentPage/$totalPages"
+    }
+
+    private fun renderedPageCountLabel(): String? {
+        if (pageTurnMode != TURN_MODE_VERTICAL) return null
+        val viewportHeight = readerScrollView.height.coerceAtLeast(0)
+        val contentHeight = contentView.height.coerceAtLeast(0)
+        if (viewportHeight <= 0 || contentHeight <= 0) return null
+        val pageHeight = viewportHeight.coerceAtLeast(1)
+        val totalPages = ((contentHeight + pageHeight - 1) / pageHeight).coerceAtLeast(1)
+        val currentPage = (readerScrollView.scrollY / pageHeight + 1).coerceIn(1, totalPages)
+        return "$currentPage/$totalPages"
+    }
+
+    private fun styledReadingText(text: String): CharSequence {
+        if (text.isBlank()) return text
+        val spannable = SpannableString(text)
+        var lineStart = 0
+        while (lineStart < text.length) {
+            val lineEnd = text.indexOf('\n', lineStart).let { if (it == -1) text.length else it }
+            val line = text.substring(lineStart, lineEnd).trim()
+            if (TxtParser.isLikelyChapterTitle(line)) {
+                spannable.setSpan(
+                    RelativeSizeSpan(1.12f),
+                    lineStart,
+                    lineEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                spannable.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    lineStart,
+                    lineEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            lineStart = lineEnd + 1
+        }
+        return spannable
     }
 
     private fun readerPageUnits(): Pair<Long, Long> {

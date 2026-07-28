@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <title>SimpleReader EPUB</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #F5E9C8;
+        }
+        #viewer {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            touch-action: pan-y;
+        }
+        body.locked #viewer {
+            pointer-events: none;
+        }
+    </style>
+    <script src="jszip.min.js"></script>
+    <script src="epub.min.js"></script>
+</head>
+<body>
+<div id="viewer"></div>
+<script>
+(function () {
+    "use strict";
+
+    let book = null;
+    let rendition = null;
+    let currentIndex = 0;
+    let currentCfi = "";
+    let currentHref = "";
+    let currentTitle = "";
+    let locationsReady = false;
+    let locked = false;
+    let fontPercent = 100;
+    let nightMode = false;
+    let flatToc = [];
+    let pendingProgress = null;
+
+    function bridge(name) {
+        try {
+            const target = window.AndroidBridge;
+            if (!target || typeof target[name] !== "function") return;
+            const args = Array.prototype.slice.call(arguments, 1);
+            target[name].apply(target, args);
+        } catch (_) {
+            // Native side may already be closing.
+        }
+    }
+
+    function normalizeHref(href) {
+        return String(href || "").split("#")[0].replace(/^\.\//, "");
+    }
+
+    function flatten(items, depth, output) {
+        (items || []).forEach(function (item) {
+            output.push({
+                title: item.label || item.title || "未命名章节",
+                href: item.href || "",
+                depth: depth
+            });
+            flatten(item.subitems || item.children || [], depth + 1, output);
+        });
+        return output;
+    }
+
+    function titleForHref(href) {
+        const normalized = normalizeHref(href);
+        let exact = flatToc.find(function (item) {
+            return normalizeHref(item.href) === normalized;
+        });
+        if (exact) return exact.title;
+        exact = flatToc.find(function (item) {
+            const candidate = normalizeHref(item.href);
+            return candidate && (normalized.endsWith(candidate) || candidate.endsWith(normalized));
+        });
+        return exact ? exact.title : "";
+    }
+
+    function injectContentRules(contents) {
+        const doc = contents.document;
+        if (!doc || !doc.head) return;
+        let style = doc.getElementById("simplereader-continuous-style");
+        if (!style) {
+            style = doc.createElement("style");
+            style.id = "simplereader-continuous-style";
+            doc.head.appendChild(style);
+        }
+        const background = nightMode ? "#151515" : "#F5E9C8";
+        const foreground = nightMode ? "#D8D4CC" : "#3B3428";
+        style.textContent = [
+            "html,body{background:" + background + " !important;color:" + foreground + " !important;overflow-x:hidden !important;touch-action:pan-y !important;}",
+            "body{font-size:" + fontPercent + "% !important;line-height:1.75 !important;}",
+            "h1,h2,h3,[epub\\:type~='title'],[epub\\:type~='chapter']>:first-child{font-size:1.12em !important;font-weight:700 !important;line-height:1.45 !important;margin-top:.35em !important;margin-bottom:.8em !important;}",
+            "img,svg,video,figure{max-width:100% !important;height:auto !important;}",
+            "table{max-width:100% !important;}",
+            "a{-webkit-tap-highlight-color:transparent;}"
+        ].join("");
+    }
+
+    function installSafeInput(contents) {
+        const doc = contents.document;
+        if (!doc || doc.__simpleReaderSafeInputInstalled) return;
+        doc.__simpleReaderSafeInputInstalled = true;
+        doc.addEventListener("click", function (event) {
+            let node = event.target;
+            while (node && node.nodeType === 1 && node.tagName !== "A") node = node.parentElement;
+            if (node && node.tagName === "A") {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+            }
+
+            const viewportWidth = contents.window.innerWidth || doc.documentElement.clientWidth || 1;
+            const viewportHeight = contents.window.innerHeight || doc.documentElement.clientHeight || 1;
+            const x = event.clientX;
+            const y = event.clientY;
+            const inCenter = x >= viewportWidth * 0.25 && x <= viewportWidth * 0.75 &&
+                y >= viewportHeight * 0.25 && y <= viewportHeight * 0.75;
+            if (inCenter) {
+                event.preventDefault();
+                event.stopPropagation();
+                bridge("onCenterTap");
+                return false;
+            }
+            return true;
+        }, true);
+    }
+
+    function updateAllContents() {
+        if (!rendition) return;
+        rendition.getContents().forEach(function (contents) {
+            injectContentRules(contents);
+            installSafeInput(contents);
+        });
+    }
+
+    function reportLocation(location) {
+        if (!location || !location.start) return;
+        currentIndex = Number.isFinite(location.start.index) ? location.start.index : currentIndex;
+        currentCfi = location.start.cfi || currentCfi;
+        currentHref = location.start.href || currentHref;
+        currentTitle = titleForHref(currentHref) || currentTitle;
+        let fraction = 0;
+        if (locationsReady && currentCfi) {
+            const located = book.locations.percentageFromCfi(currentCfi);
+            if (Number.isFinite(located)) fraction = Math.max(0, Math.min(1, located));
+        } else if (Number.isFinite(location.start.percentage)) {
+            fraction = Math.max(0, Math.min(1, location.start.percentage));
+        }
+        bridge("onLocationChanged", currentCfi, currentHref, currentTitle, fraction);
+    }
+
+    async function openBook(bookUrl, initialCfi, initialFraction, requestedFontPercent, requestedNightMode) {
+        try {
+            fontPercent = Math.max(75, Math.min(180, Number(requestedFontPercent) || 100));
+            nightMode = Boolean(requestedNightMode);
+            book = ePub(bookUrl, { openAs: "epub" });
+            rendition = book.renderTo("viewer", {
+                manager: "continuous",
+                flow: "scrolled-doc",
+                width: "100%",
+                height: "100%",
+                spread: "none",
+                snap: false,
+                allowScriptedContent: false
+            });
+
+            rendition.hooks.content.register(function (contents) {
+                injectContentRules(contents);
+                installSafeInput(contents);
+            });
+            rendition.on("relocated", reportLocation);
+            rendition.on("rendered", updateAllContents);
+
+            const navigation = await book.loaded.navigation;
+            flatToc = flatten(navigation.toc || [], 0, []);
+            bridge("onTocReady", JSON.stringify(flatToc));
+
+            const metadata = await book.loaded.metadata;
+            bridge("onBookReady", metadata.title || "");
+
+            await rendition.display(initialCfi || undefined);
+            updateAllContents();
+            bridge("onEngineReady");
+
+            book.locations.generate(1400).then(function () {
+                locationsReady = true;
+                const requestedFraction = pendingProgress !== null ? pendingProgress : Number(initialFraction);
+                pendingProgress = null;
+                if (!initialCfi && requestedFraction > 0) {
+                    const cfi = book.locations.cfiFromPercentage(Math.max(0, Math.min(1, requestedFraction)));
+                    if (cfi) rendition.display(cfi);
+                } else if (currentCfi) {
+                    const fraction = book.locations.percentageFromCfi(currentCfi);
+                    if (Number.isFinite(fraction)) {
+                        bridge("onLocationChanged", currentCfi, currentHref, currentTitle, fraction);
+                    }
+                }
+            }).catch(function () {
+                locationsReady = false;
+            });
+        } catch (error) {
+            bridge("onReaderError", String(error && (error.stack || error.message) || error));
+        }
+    }
+
+    function goChapter(delta) {
+        if (!rendition || !book) return false;
+        const targetIndex = currentIndex + Number(delta || 0);
+        const target = book.spine.get(targetIndex);
+        if (!target || !target.href) return false;
+        rendition.display(target.href);
+        return true;
+    }
+
+    function goToHref(href) {
+        if (!rendition || !href) return false;
+        rendition.display(href);
+        return true;
+    }
+
+    function goToProgress(fraction) {
+        const normalized = Math.max(0, Math.min(1, Number(fraction) || 0));
+        if (!rendition || !book) return false;
+        if (!locationsReady) {
+            pendingProgress = normalized;
+            return true;
+        }
+        const cfi = book.locations.cfiFromPercentage(normalized);
+        if (!cfi) return false;
+        rendition.display(cfi);
+        return true;
+    }
+
+    function setLocked(value) {
+        locked = Boolean(value);
+        document.body.classList.toggle("locked", locked);
+    }
+
+    function setFontScale(percent) {
+        fontPercent = Math.max(75, Math.min(180, Number(percent) || 100));
+        updateAllContents();
+    }
+
+    function setNight(value) {
+        nightMode = Boolean(value);
+        document.body.style.background = nightMode ? "#151515" : "#F5E9C8";
+        updateAllContents();
+    }
+
+    window.SimpleReader = {
+        openBook: openBook,
+        goChapter: goChapter,
+        goToHref: goToHref,
+        goToProgress: goToProgress,
+        setLocked: setLocked,
+        setFontScale: setFontScale,
+        setNight: setNight
+    };
+    bridge("onShellReady");
+})();
+</script>
+</body>
+</html>
