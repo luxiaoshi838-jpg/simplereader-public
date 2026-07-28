@@ -1,3 +1,6 @@
+import java.net.HttpURLConnection
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,14 +18,62 @@ val permanentSigningConfigured = listOf(
     permanentKeyPassword
 ).all { !it.isNullOrBlank() }
 
+val generatedEpubAssetsDir = layout.buildDirectory.dir("generated/epubjsAssets")
+val prepareEpubJsAssets by tasks.registering {
+    val epubTarget = generatedEpubAssetsDir.map { it.file("epubjs/epub.min.js") }
+    val zipTarget = generatedEpubAssetsDir.map { it.file("epubjs/jszip.min.js") }
+    outputs.files(epubTarget, zipTarget)
+
+    doLast {
+        fun downloadPinned(url: String, destination: File, minimumBytes: Long) {
+            if (destination.isFile && destination.length() >= minimumBytes) return
+            destination.parentFile.mkdirs()
+            val temporary = File(destination.parentFile, destination.name + ".part")
+            temporary.delete()
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", "SimpleReader-Android-Build")
+            try {
+                connection.inputStream.use { input ->
+                    temporary.outputStream().use { output -> input.copyTo(output) }
+                }
+                require(temporary.length() >= minimumBytes) {
+                    "Downloaded asset is incomplete: ${destination.name} (${temporary.length()} bytes)"
+                }
+                temporary.copyTo(destination, overwrite = true)
+            } finally {
+                connection.disconnect()
+                temporary.delete()
+            }
+        }
+
+        downloadPinned(
+            "https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js",
+            epubTarget.get().asFile,
+            200_000
+        )
+        downloadPinned(
+            "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+            zipTarget.get().asFile,
+            50_000
+        )
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareEpubJsAssets)
+}
+
 android {
     namespace = "com.simplereader.app"
     compileSdk = 35
 
-    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2026202001")
+    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2026202801")
         .toIntOrNull()
-        ?: 2026202001
-    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "2026.07.21.1"
+        ?: 2026202801
+    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "2026.07.28.1"
 
     defaultConfig {
         applicationId = "com.simplereader.app"
@@ -54,6 +105,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -74,6 +126,7 @@ android {
     }
 
     sourceSets {
+        getByName("main").assets.srcDir(generatedEpubAssetsDir)
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
@@ -102,10 +155,14 @@ configurations.configureEach {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.webkit:webkit:1.10.0")
     implementation("com.google.android.material:material:1.10.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
@@ -119,7 +176,12 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Mature public EPUB/CHM parsers.
+    // Kept temporarily for migration compatibility; the EPUB display path now uses epub.js.
+    implementation("org.readium.kotlin-toolkit:readium-shared:3.0.0")
+    implementation("org.readium.kotlin-toolkit:readium-streamer:3.0.0")
+    implementation("org.readium.kotlin-toolkit:readium-navigator:3.0.0")
+
+    // Existing TXT/legacy metadata and CHM support.
     implementation("io.documentnode:epub4j-core:4.2.3")
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
@@ -133,4 +195,3 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
-

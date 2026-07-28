@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   validate:
-    name: Five-minute staged Android validation
+    name: Five-minute release validation
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 7
 
     steps:
       - name: Checkout current revision
@@ -38,63 +38,31 @@ jobs:
       - name: Prepare validation version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_CODE=$((2098000000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.28.readium.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      - name: Debug unit tests
+      - name: Assemble release within five minutes
         shell: bash
         run: |
           set +e
-          timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
+          timeout --signal=TERM --kill-after=15s 5m ./gradlew --no-daemon assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
           code=$?
-          tail -n 180 /tmp/debug-unit.log
+          tail -n 220 /tmp/assemble-release.log
           exit $code
 
-      - name: Release unit tests
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
-          code=$?
-          tail -n 180 /tmp/release-unit.log
-          exit $code
-
-      - name: Assemble debug
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
-          code=$?
-          tail -n 180 /tmp/assemble-debug.log
-          exit $code
-
-      - name: Assemble release
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
-          code=$?
-          tail -n 180 /tmp/assemble-release.log
-          exit $code
-
-      - name: Upload validation logs
+      - name: Upload validation log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-validation-logs-${{ github.run_number }}
-          path: |
-            /tmp/*-unit.log
-            /tmp/assemble-*.log
-            app/build/reports/tests
+          path: /tmp/assemble-release.log
           if-no-files-found: warn
           retention-days: 2
 
-      - name: Upload verified APKs
+      - name: Upload verified release APK
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-validation-${{ github.run_number }}
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7

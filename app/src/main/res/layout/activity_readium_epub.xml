@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F5E9C8"
+    android:fitsSystemWindows="true">
+
+    <WebView
+        android:id="@+id/epubWebView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F5E9C8"
+        android:overScrollMode="never"
+        android:scrollbars="none" />
+
+    <TextView
+        android:id="@+id/epubLoadingText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:padding="24dp"
+        android:text="正在打开 EPUB…"
+        android:textColor="#5B5144"
+        android:textSize="18sp" />
+
+    <TextView
+        android:id="@+id/epubProgressLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="28dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="8dp"
+        android:background="#55FFFFFF"
+        android:gravity="center"
+        android:minWidth="52dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="0%"
+        android:textColor="#6B6257"
+        android:textSize="12sp" />
+
+    <!-- The controls sit above this blocker, so only the book surface is locked. -->
+    <View
+        android:id="@+id/epubTouchBlocker"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/epubTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#F236332E"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/epubBackButton"
+            android:layout_width="48dp"
+            android:layout_height="56dp"
+            android:gravity="center"
+            android:text="‹"
+            android:textColor="#F4EFE5"
+            android:textSize="36sp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="8dp">
+
+            <TextView
+                android:id="@+id/epubBookTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#CFC8BC"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/epubChapterTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/epubBottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#F236332E"
+        android:orientation="vertical"
+        android:paddingStart="10dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone">
+
+        <SeekBar
+            android:id="@+id/epubProgressSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:contentDescription="阅读进度"
+            android:max="1000"
+            android:progress="0" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/epubPreviousChapterButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="上一章"
+                android:textColor="#F4EFE5"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/epubCatalogButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="☰ 目录"
+                android:textColor="#F4EFE5"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/epubNextChapterButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="下一章"
+                android:textColor="#F4EFE5"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/epubFontDecreaseButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="A−"
+                android:textColor="#F4EFE5"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/epubThemeButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="☾"
+                android:textColor="#F4EFE5"
+                android:textSize="26sp" />
+
+            <TextView
+                android:id="@+id/epubFontIncreaseButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="A+"
+                android:textColor="#F4EFE5"
+                android:textSize="20sp" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
