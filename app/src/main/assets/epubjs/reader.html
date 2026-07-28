@@ -233,6 +233,33 @@
         return true;
     }
 
+    function goToCfi(cfi) {
+        if (!rendition || !cfi) return false;
+        rendition.display(cfi);
+        return true;
+    }
+
+    function findInRenderedContents(query) {
+        if (!rendition || !query) return;
+        setTimeout(function () {
+            rendition.getContents().forEach(function (contents) {
+                try {
+                    contents.window.find(query, false, false, true, false, true, false);
+                } catch (_) {
+                    // Some Android WebView builds do not expose iframe find reliably.
+                }
+            });
+        }, 260);
+    }
+
+    function goToSearchResult(href, query) {
+        if (!rendition || !href) return false;
+        rendition.display(href).then(function () {
+            findInRenderedContents(query);
+        });
+        return true;
+    }
+
     function goToProgress(fraction) {
         const normalized = Math.max(0, Math.min(1, Number(fraction) || 0));
         if (!rendition || !book) return false;
@@ -244,6 +271,43 @@
         if (!cfi) return false;
         rendition.display(cfi);
         return true;
+    }
+
+    async function searchBook(query) {
+        const needle = String(query || "").trim();
+        if (!book || !needle) {
+            bridge("onSearchReady", "[]");
+            return;
+        }
+        const loweredNeedle = needle.toLowerCase();
+        const results = [];
+        const items = book.spine && book.spine.spineItems ? book.spine.spineItems : [];
+        for (let index = 0; index < items.length && results.length < 200; index += 1) {
+            const item = items[index];
+            try {
+                const doc = await item.load(book.load.bind(book));
+                const text = (doc && doc.documentElement ? doc.documentElement.textContent : "") || "";
+                const loweredText = text.toLowerCase();
+                let cursor = 0;
+                while (results.length < 200) {
+                    const hit = loweredText.indexOf(loweredNeedle, cursor);
+                    if (hit < 0) break;
+                    const start = Math.max(0, hit - 34);
+                    const end = Math.min(text.length, hit + needle.length + 48);
+                    const preview = text.slice(start, end).replace(/\s+/g, " ").trim();
+                    results.push({
+                        title: titleForHref(item.href) || item.href || ("章节 " + (index + 1)),
+                        href: item.href || "",
+                        preview: preview
+                    });
+                    cursor = hit + Math.max(needle.length, 1);
+                }
+                if (typeof item.unload === "function") item.unload();
+            } catch (_) {
+                // Continue scanning the next spine item.
+            }
+        }
+        bridge("onSearchReady", JSON.stringify(results));
     }
 
     function setLocked(value) {
@@ -275,7 +339,10 @@
         openBook: openBook,
         goChapter: goChapter,
         goToHref: goToHref,
+        goToCfi: goToCfi,
+        goToSearchResult: goToSearchResult,
         goToProgress: goToProgress,
+        searchBook: searchBook,
         setLocked: setLocked,
         setFontScale: setFontScale,
         setNight: setNight,

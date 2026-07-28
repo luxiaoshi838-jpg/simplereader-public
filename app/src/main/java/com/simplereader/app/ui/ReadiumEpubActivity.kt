@@ -4,6 +4,10 @@ import android.annotation.SuppressLint
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.JavascriptInterface
@@ -12,7 +16,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -21,11 +27,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
+import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.ReadProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -59,6 +67,9 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private var nightMode = false
     private var readerBackground = Color.rgb(245, 233, 200)
     private var readerForeground = Color.rgb(59, 52, 40)
+    private var searchDialog: AlertDialog? = null
+    private var searchResults: List<EpubSearchHit> = emptyList()
+    private var activeSearchQuery: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -114,12 +125,55 @@ class ReadiumEpubActivity : AppCompatActivity() {
             }
         }
         webView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP && isCenterTap(event)) {
-                setChromeVisible(!chromeVisible)
+            if (chromeVisible) {
+                if (event.action == MotionEvent.ACTION_UP && isCenterTap(event)) {
+                    setChromeVisible(false)
+                }
+                true
+            } else if (event.action == MotionEvent.ACTION_UP && isCenterTap(event)) {
+                setChromeVisible(true)
                 true
             } else {
                 false
             }
+        }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
+            .setIcon(android.R.drawable.ic_menu_search)
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
+        addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        addItem.actionView = TextView(this).apply {
+            text = "添"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            contentDescription = "添加书签"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(239, 122, 40))
+            }
+            layoutParams = android.widget.FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(8)
+            }
+            setOnClickListener { addBookmark() }
+        }
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            MENU_SEARCH -> {
+                showContentSearch()
+                true
+            }
+            MENU_ADD_BOOKMARK -> {
+                addBookmark()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
         }
     }
 
@@ -255,7 +309,6 @@ class ReadiumEpubActivity : AppCompatActivity() {
         readerProgressLabel.visibility = if (visible) View.GONE else View.VISIBLE
         if (!visible) readerSettingsPanel.visibility = View.GONE
         if (visible) supportActionBar?.show() else supportActionBar?.hide()
-        runJs("SimpleReader.setLocked(${if (visible) "true" else "false"})")
     }
 
     private fun toggleReaderSettingsPanel() {
@@ -267,19 +320,100 @@ class ReadiumEpubActivity : AppCompatActivity() {
     }
 
     private fun showCatalog() {
-        if (tocItems.isEmpty()) {
-            Toast.makeText(this, "暂无目录", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val labels = tocItems.map { "${"  ".repeat(it.depth)}${it.title}" }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("目录")
-            .setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)) { _, which ->
-                val href = tocItems[which].href.replace("\\", "\\\\").replace("'", "\\'")
-                runJs("SimpleReader.goToHref('$href')")
-                setChromeVisible(false)
+        showCatalogBookmarkPanel(showBookmarksFirst = false)
+    }
+
+    private fun showCatalogBookmarkPanel(showBookmarksFirst: Boolean = false) {
+        lifecycleScope.launch {
+            var bookmarks = withContext(Dispatchers.IO) {
+                database.bookmarkDao().getBookmarks(bookId).first()
             }
-            .show()
+            var showingCatalog = !showBookmarksFirst
+            val container = LinearLayout(this@ReadiumEpubActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+            }
+            val tabs = LinearLayout(this@ReadiumEpubActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            val catalogButton = tabText("目录")
+            val bookmarkButton = tabText("书签")
+            val listView = ListView(this@ReadiumEpubActivity)
+            var dialog: AlertDialog? = null
+            tabs.addView(catalogButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            tabs.addView(bookmarkButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            container.addView(tabs)
+            container.addView(listView)
+
+            fun render() {
+                catalogButton.isEnabled = !showingCatalog
+                bookmarkButton.isEnabled = showingCatalog
+                if (showingCatalog) {
+                    val labels = if (tocItems.isEmpty()) {
+                        listOf("暂无目录")
+                    } else {
+                        tocItems.map { "${"  ".repeat(it.depth)}${it.title}" }
+                    }
+                    listView.adapter = ArrayAdapter(this@ReadiumEpubActivity, android.R.layout.simple_list_item_1, labels)
+                    listView.setOnItemClickListener { _, _, which, _ ->
+                        tocItems.getOrNull(which)?.href?.let { href ->
+                            runJs("SimpleReader.goToHref('${escapeJs(href)}')")
+                            setChromeVisible(false)
+                        }
+                        dialog?.dismiss()
+                    }
+                    listView.setOnItemLongClickListener(null)
+                } else {
+                    val labels = if (bookmarks.isEmpty()) {
+                        listOf("暂无书签")
+                    } else {
+                        bookmarks.map { bookmarkListLabel(it) }
+                    }
+                    listView.adapter = ArrayAdapter(this@ReadiumEpubActivity, android.R.layout.simple_list_item_1, labels)
+                    listView.setOnItemClickListener { _, _, which, _ ->
+                        bookmarks.getOrNull(which)?.let { bookmark ->
+                            runJs("SimpleReader.goToCfi('${escapeJs(bookmark.position)}')")
+                            setChromeVisible(false)
+                        }
+                        dialog?.dismiss()
+                    }
+                    listView.setOnItemLongClickListener { _, _, which, _ ->
+                        bookmarks.getOrNull(which)?.let { bookmark ->
+                            lifecycleScope.launch {
+                                withContext(Dispatchers.IO) { database.bookmarkDao().delete(bookmark) }
+                                bookmarks = bookmarks.filterNot { it.id == bookmark.id }
+                                render()
+                                Toast.makeText(this@ReadiumEpubActivity, "已删除书签", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        true
+                    }
+                }
+            }
+
+            catalogButton.setOnClickListener {
+                showingCatalog = true
+                render()
+            }
+            bookmarkButton.setOnClickListener {
+                showingCatalog = false
+                render()
+            }
+            render()
+            dialog = AlertDialog.Builder(this@ReadiumEpubActivity)
+                .setTitle(if (showingCatalog) "目录" else "书签")
+                .setView(container)
+                .create()
+            dialog.setCanceledOnTouchOutside(true)
+            dialog.show()
+            dialog.window?.let { window ->
+                window.setGravity(Gravity.START or Gravity.CENTER_VERTICAL)
+                window.setLayout(
+                    (resources.displayMetrics.widthPixels * 0.72f).toInt(),
+                    android.view.WindowManager.LayoutParams.MATCH_PARENT
+                )
+            }
+        }
     }
 
     private fun toggleTheme() {
@@ -314,6 +448,151 @@ class ReadiumEpubActivity : AppCompatActivity() {
 
     private fun colorHex(color: Int): String {
         return String.format(Locale.US, "#%06X", 0xFFFFFF and color)
+    }
+
+    private fun showContentSearch() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(4))
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val input = EditText(this).apply {
+            hint = "输入当前书内关键词"
+            setSingleLine(true)
+            setText(activeSearchQuery)
+            setSelection(text.length)
+        }
+        val searchButton = TextView(this).apply {
+            text = "搜索"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.rgb(239, 122, 40))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.rgb(110, 100, 84))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+        }
+        val listView = ListView(this)
+        fun renderResults(message: String? = null) {
+            status.text = message ?: if (searchResults.isEmpty()) "输入关键词后点击搜索" else "共 ${searchResults.size} 条结果"
+            val labels = if (searchResults.isEmpty()) {
+                listOf("暂无结果")
+            } else {
+                searchResults.mapIndexed { index, hit ->
+                    "${index + 1}. ${hit.title.ifBlank { "匹配位置" }}\n${hit.preview}"
+                }
+            }
+            listView.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)
+        }
+        row.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(searchButton, LinearLayout.LayoutParams(dp(82), LinearLayout.LayoutParams.WRAP_CONTENT))
+        container.addView(row)
+        container.addView(status)
+        container.addView(
+            listView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.63f).toInt()
+            )
+        )
+        searchButton.setOnClickListener {
+            val query = input.text.toString().trim()
+            if (query.isBlank()) {
+                Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            activeSearchQuery = query
+            searchResults = emptyList()
+            renderResults("正在搜索……")
+            runJs("SimpleReader.searchBook('${escapeJs(query)}')")
+        }
+        listView.setOnItemClickListener { _, _, which, _ ->
+            val hit = searchResults.getOrNull(which) ?: return@setOnItemClickListener
+            runJs("SimpleReader.goToSearchResult('${escapeJs(hit.href)}', '${escapeJs(activeSearchQuery)}')")
+            searchDialog?.dismiss()
+            setChromeVisible(false)
+        }
+        searchDialog = AlertDialog.Builder(this)
+            .setTitle("书内搜索")
+            .setView(container)
+            .setNegativeButton("关闭", null)
+            .create()
+        searchDialog?.setOnDismissListener { searchDialog = null }
+        renderResults()
+        searchDialog?.show()
+    }
+
+    private fun updateSearchResults(json: String) {
+        searchResults = runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { index ->
+                val item = array.getJSONObject(index)
+                EpubSearchHit(
+                    title = item.optString("title", ""),
+                    href = item.optString("href", ""),
+                    preview = item.optString("preview", "")
+                )
+            }
+        }.getOrDefault(emptyList())
+        val dialog = searchDialog ?: return
+        val listView = dialog.findViewById<ListView>(android.R.id.list)
+        if (listView == null) {
+            dialog.dismiss()
+            showContentSearch()
+        }
+    }
+
+    private fun addBookmark() {
+        val cfi = currentCfi.takeIf { it.isNotBlank() }
+        if (cfi == null) {
+            Toast.makeText(this, "当前位置还未加载完成", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val label = "${currentTitle.ifBlank { book?.title.orEmpty() }}\n${progressLabel((currentFraction * 1000).toInt())}"
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                database.bookmarkDao().insert(
+                    Bookmark(
+                        bookId = bookId,
+                        position = cfi,
+                        content = label
+                    )
+                )
+            }
+            Toast.makeText(this@ReadiumEpubActivity, "已添加书签", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun bookmarkListLabel(bookmark: Bookmark): String {
+        val preview = bookmark.content.replace(Regex("\\s+"), " ").trim().ifBlank { "书签" }
+        return preview.take(80)
+    }
+
+    private fun tabText(textValue: String): TextView {
+        return TextView(this).apply {
+            text = textValue
+            gravity = Gravity.CENTER
+            textSize = 18f
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            setTextColor(Color.rgb(42, 39, 31))
+        }
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density + 0.5f).toInt()
+    }
+
+    private fun escapeJs(value: String): String {
+        return value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "")
     }
 
     private fun titleForHref(href: String): String {
@@ -400,9 +679,31 @@ class ReadiumEpubActivity : AppCompatActivity() {
         @JavascriptInterface fun onCenterTap() {
             runOnUiThread { setChromeVisible(!chromeVisible) }
         }
+
+        @JavascriptInterface fun onSearchReady(json: String) {
+            runOnUiThread {
+                searchResults = runCatching {
+                    val array = JSONArray(json)
+                    List(array.length()) { index ->
+                        val item = array.getJSONObject(index)
+                        EpubSearchHit(
+                            title = item.optString("title", ""),
+                            href = item.optString("href", ""),
+                            preview = item.optString("preview", "")
+                        )
+                    }
+                }.getOrDefault(emptyList())
+                val existing = searchDialog
+                if (existing != null) {
+                    existing.dismiss()
+                    showContentSearch()
+                }
+            }
+        }
     }
 
     data class TocItem(val title: String, val href: String, val depth: Int)
+    data class EpubSearchHit(val title: String, val href: String, val preview: String)
 
     companion object {
         const val EXTRA_BOOK_ID = "bookId"
@@ -410,5 +711,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
         private const val BOOK_URL = "https://simplereader.local/book.epub"
         private const val READER_URL = "file:///android_asset/epubjs/reader.html"
         private const val LOCATOR_TYPE = "EPUB_CFI"
+        private const val MENU_ADD_BOOKMARK = 1
+        private const val MENU_SEARCH = 5
     }
 }
