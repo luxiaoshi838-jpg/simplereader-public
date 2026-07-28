@@ -21,7 +21,8 @@ class ReadiumEngine(context: Context) {
         publicationParser = DefaultPublicationParser(
             context = appContext,
             assetRetriever = assetRetriever,
-            httpClient = httpClient
+            httpClient = httpClient,
+            pdfFactory = null
         )
     )
 }
