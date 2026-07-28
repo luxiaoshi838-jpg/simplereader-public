@@ -1,3 +1,6 @@
+import java.net.HttpURLConnection
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,6 +17,54 @@ val permanentSigningConfigured = listOf(
     permanentKeyAlias,
     permanentKeyPassword
 ).all { !it.isNullOrBlank() }
+
+val generatedEpubAssetsDir = layout.buildDirectory.dir("generated/epubjsAssets")
+val prepareEpubJsAssets by tasks.registering {
+    val epubTarget = generatedEpubAssetsDir.map { it.file("epubjs/epub.min.js") }
+    val zipTarget = generatedEpubAssetsDir.map { it.file("epubjs/jszip.min.js") }
+    outputs.files(epubTarget, zipTarget)
+
+    doLast {
+        fun downloadPinned(url: String, destination: File, minimumBytes: Long) {
+            if (destination.isFile && destination.length() >= minimumBytes) return
+            destination.parentFile.mkdirs()
+            val temporary = File(destination.parentFile, destination.name + ".part")
+            temporary.delete()
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", "SimpleReader-Android-Build")
+            try {
+                connection.inputStream.use { input ->
+                    temporary.outputStream().use { output -> input.copyTo(output) }
+                }
+                require(temporary.length() >= minimumBytes) {
+                    "Downloaded asset is incomplete: ${destination.name} (${temporary.length()} bytes)"
+                }
+                temporary.copyTo(destination, overwrite = true)
+            } finally {
+                connection.disconnect()
+                temporary.delete()
+            }
+        }
+
+        downloadPinned(
+            "https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js",
+            epubTarget.get().asFile,
+            200_000
+        )
+        downloadPinned(
+            "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+            zipTarget.get().asFile,
+            50_000
+        )
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareEpubJsAssets)
+}
 
 android {
     namespace = "com.simplereader.app"
@@ -75,6 +126,7 @@ android {
     }
 
     sourceSets {
+        getByName("main").assets.srcDir(generatedEpubAssetsDir)
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
@@ -110,6 +162,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.webkit:webkit:1.10.0")
     implementation("com.google.android.material:material:1.10.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
@@ -123,7 +176,7 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Readium renders EPUB 2/3 XHTML, CSS, fonts and in-book images directly.
+    // Kept temporarily for migration compatibility; the EPUB display path now uses epub.js.
     implementation("org.readium.kotlin-toolkit:readium-shared:3.0.0")
     implementation("org.readium.kotlin-toolkit:readium-streamer:3.0.0")
     implementation("org.readium.kotlin-toolkit:readium-navigator:3.0.0")
