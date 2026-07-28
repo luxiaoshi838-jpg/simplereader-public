@@ -42,6 +42,8 @@
     let locked = false;
     let fontPercent = 100;
     let nightMode = false;
+    let backgroundColor = "#F5E9C8";
+    let foregroundColor = "#3B3428";
     let flatToc = [];
     let pendingProgress = null;
 
@@ -94,11 +96,14 @@
             style.id = "simplereader-continuous-style";
             doc.head.appendChild(style);
         }
-        const background = nightMode ? "#151515" : "#F5E9C8";
-        const foreground = nightMode ? "#D8D4CC" : "#3B3428";
+        const background = backgroundColor;
+        const foreground = foregroundColor;
+        const bodyFontPx = Math.max(15, Math.min(36, 20 * fontPercent / 100));
         style.textContent = [
             "html,body{background:" + background + " !important;color:" + foreground + " !important;overflow-x:hidden !important;touch-action:pan-y !important;}",
-            "body{font-size:" + fontPercent + "% !important;line-height:1.75 !important;}",
+            "body{font-size:" + bodyFontPx + "px !important;line-height:1.75 !important;padding:26px 28px 118px 28px !important;box-sizing:border-box !important;font-family:sans-serif !important;}",
+            "p,div,section,article{line-height:1.75 !important;}",
+            "p{margin:0 0 .65em 0 !important;}",
             "h1,h2,h3,[epub\\:type~='title'],[epub\\:type~='chapter']>:first-child{font-size:1.12em !important;font-weight:700 !important;line-height:1.45 !important;margin-top:.35em !important;margin-bottom:.8em !important;}",
             "img,svg,video,figure{max-width:100% !important;height:auto !important;}",
             "table{max-width:100% !important;}",
@@ -253,7 +258,16 @@
 
     function setNight(value) {
         nightMode = Boolean(value);
-        document.body.style.background = nightMode ? "#151515" : "#F5E9C8";
+        backgroundColor = nightMode ? "#1F1F1F" : "#F5E9C8";
+        foregroundColor = nightMode ? "#DEDAD1" : "#3B3428";
+        document.body.style.background = backgroundColor;
+        updateAllContents();
+    }
+
+    function setPalette(background, foreground) {
+        backgroundColor = String(background || backgroundColor);
+        foregroundColor = String(foreground || foregroundColor);
+        document.body.style.background = backgroundColor;
         updateAllContents();
     }
 
@@ -264,7 +278,8 @@
         goToProgress: goToProgress,
         setLocked: setLocked,
         setFontScale: setFontScale,
-        setNight: setNight
+        setNight: setNight,
+        setPalette: setPalette
     };
     bridge("onShellReady");
 })();

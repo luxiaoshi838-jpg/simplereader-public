@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.JavascriptInterface
@@ -13,6 +12,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -37,11 +37,11 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var webView: WebView
     private lateinit var loadingText: TextView
-    private lateinit var topBar: View
-    private lateinit var bottomBar: View
-    private lateinit var chapterTitleText: TextView
-    private lateinit var progressText: TextView
+    private lateinit var readerControls: LinearLayout
+    private lateinit var readerSettingsPanel: LinearLayout
+    private lateinit var readerProgressLabel: TextView
     private lateinit var progressSeekBar: SeekBar
+    private lateinit var fontSizeLabel: TextView
 
     private var bookId: Long = 0L
     private var book: Book? = null
@@ -57,6 +57,8 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private var saveJob: Job? = null
     private var fontScale = 100
     private var nightMode = false
+    private var readerBackground = Color.rgb(245, 233, 200)
+    private var readerForeground = Color.rgb(59, 52, 40)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -86,12 +88,11 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private fun bindViews() {
         webView = findViewById(R.id.epubWebView)
         loadingText = findViewById(R.id.loadingText)
-        topBar = findViewById(R.id.topBar)
-        bottomBar = findViewById(R.id.bottomBar)
-        chapterTitleText = findViewById(R.id.chapterTitleText)
-        progressText = findViewById(R.id.progressText)
-        progressSeekBar = findViewById(R.id.progressSeekBar)
-        findViewById<TextView>(R.id.backButton).setOnClickListener { finish() }
+        readerControls = findViewById(R.id.readerControls)
+        readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
+        readerProgressLabel = findViewById(R.id.readerProgressLabel)
+        progressSeekBar = findViewById(R.id.fontSizeSeekBar)
+        fontSizeLabel = findViewById(R.id.fontSizeLabel)
     }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
@@ -125,11 +126,42 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private fun setupControls() {
         findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalog() }
         findViewById<TextView>(R.id.nightButton).setOnClickListener { toggleTheme() }
-        findViewById<TextView>(R.id.fontMinusButton).setOnClickListener { changeFont(-8) }
-        findViewById<TextView>(R.id.fontPlusButton).setOnClickListener { changeFont(8) }
+        findViewById<TextView>(R.id.readerSearchButton).setOnClickListener { toggleReaderSettingsPanel() }
+        findViewById<TextView>(R.id.previousChapterButton).setOnClickListener { runJs("SimpleReader.goChapter(-1)") }
+        findViewById<TextView>(R.id.nextChapterButton).setOnClickListener { runJs("SimpleReader.goChapter(1)") }
+        findViewById<TextView>(R.id.fontDecreaseButton).setOnClickListener { changeFont(-8) }
+        findViewById<TextView>(R.id.fontIncreaseButton).setOnClickListener { changeFont(8) }
+        findViewById<TextView>(R.id.themePaperButton).setOnClickListener {
+            applyReaderPalette(Color.rgb(245, 233, 200), Color.rgb(59, 52, 40), night = false)
+        }
+        findViewById<TextView>(R.id.themeEyeButton).setOnClickListener {
+            applyReaderPalette(Color.rgb(218, 238, 205), Color.rgb(45, 61, 42), night = false)
+        }
+        findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener {
+            applyReaderPalette(Color.WHITE, Color.rgb(38, 38, 38), night = false)
+        }
+        findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
+            applyReaderPalette(Color.rgb(31, 31, 31), Color.rgb(222, 218, 209), night = true)
+        }
+        findViewById<TextView>(R.id.volumeKeyToggleButton).setOnClickListener {
+            Toast.makeText(this, "EPUB 连续滚动模式下音量键翻页沿用系统滚动", Toast.LENGTH_SHORT).show()
+        }
+        listOf(
+            R.id.turnModeOverlapButton,
+            R.id.turnModeSimulateButton,
+            R.id.turnModeHorizontalButton,
+            R.id.turnModeFadeButton
+        ).forEach { id ->
+            findViewById<TextView>(id).setOnClickListener {
+                Toast.makeText(this, "EPUB 图片阅读当前使用上下连续滑动", Toast.LENGTH_SHORT).show()
+            }
+        }
+        findViewById<TextView>(R.id.turnModeVerticalButton).setOnClickListener {
+            Toast.makeText(this, "阅读模式：连续滚动", Toast.LENGTH_SHORT).show()
+        }
         progressSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) progressText.text = "${progress / 10}%"
+                if (fromUser) readerProgressLabel.text = progressLabel(progress)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
@@ -154,7 +186,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
                 return@launch
             }
             title = selected.title
-            chapterTitleText.text = selected.title
+            supportActionBar?.title = selected.title
             val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
             initialCfi = progress?.position?.takeIf { progress.locatorType == LOCATOR_TYPE } ?: ""
             initialFraction = progress?.epubProgressFraction?.toDouble() ?: 0.0
@@ -200,28 +232,38 @@ class ReadiumEpubActivity : AppCompatActivity() {
         currentHref = href
         currentTitle = title.ifBlank { titleForHref(href) }.ifBlank { book?.title.orEmpty() }
         currentFraction = fraction.coerceIn(0.0, 1.0)
-        chapterTitleText.text = currentTitle
+        supportActionBar?.title = currentTitle
         if (!userDraggingProgress) {
             val progress = (currentFraction * 1000).toInt().coerceIn(0, 1000)
             progressSeekBar.progress = progress
-            progressText.text = "${progress / 10}%"
+            readerProgressLabel.text = progressLabel(progress)
         }
         showChapterTitleBriefly()
         scheduleProgressSave()
     }
 
     private fun showChapterTitleBriefly() {
-        topBar.visibility = View.VISIBLE
-        topBar.postDelayed({
-            if (!chromeVisible) topBar.visibility = View.GONE
+        supportActionBar?.show()
+        readerControls.postDelayed({
+            if (!chromeVisible) supportActionBar?.hide()
         }, 1400)
     }
 
     private fun setChromeVisible(visible: Boolean) {
         chromeVisible = visible
-        topBar.visibility = if (visible) View.VISIBLE else View.GONE
-        bottomBar.visibility = if (visible) View.VISIBLE else View.GONE
-        progressText.visibility = if (visible) View.GONE else View.VISIBLE
+        readerControls.visibility = if (visible) View.VISIBLE else View.GONE
+        readerProgressLabel.visibility = if (visible) View.GONE else View.VISIBLE
+        if (!visible) readerSettingsPanel.visibility = View.GONE
+        if (visible) supportActionBar?.show() else supportActionBar?.hide()
+        runJs("SimpleReader.setLocked(${if (visible) "true" else "false"})")
+    }
+
+    private fun toggleReaderSettingsPanel() {
+        readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) {
+            View.GONE
+        } else {
+            View.VISIBLE
+        }
     }
 
     private fun showCatalog() {
@@ -241,19 +283,37 @@ class ReadiumEpubActivity : AppCompatActivity() {
     }
 
     private fun toggleTheme() {
-        nightMode = !nightMode
+        if (nightMode) {
+            applyReaderPalette(Color.rgb(245, 233, 200), Color.rgb(59, 52, 40), night = false)
+        } else {
+            applyReaderPalette(Color.rgb(31, 31, 31), Color.rgb(222, 218, 209), night = true)
+        }
+    }
+
+    private fun applyReaderPalette(background: Int, foreground: Int, night: Boolean) {
+        nightMode = night
+        readerBackground = background
+        readerForeground = foreground
         findViewById<TextView>(R.id.nightButton).text = if (nightMode) "☀" else "☾"
-        val bg = if (nightMode) Color.rgb(31, 31, 31) else Color.rgb(245, 233, 200)
-        val fg = if (nightMode) Color.rgb(222, 218, 209) else Color.rgb(59, 52, 40)
-        window.decorView.setBackgroundColor(bg)
-        chapterTitleText.setTextColor(fg)
-        progressText.setTextColor(if (nightMode) Color.rgb(210, 206, 196) else Color.rgb(107, 98, 87))
+        window.decorView.setBackgroundColor(readerBackground)
+        webView.setBackgroundColor(readerBackground)
+        readerProgressLabel.setTextColor(if (nightMode) Color.rgb(210, 206, 196) else Color.rgb(107, 98, 87))
         runJs("SimpleReader.setNight(${if (nightMode) "true" else "false"})")
+        runJs("SimpleReader.setPalette('${colorHex(readerBackground)}', '${colorHex(readerForeground)}')")
     }
 
     private fun changeFont(delta: Int) {
         fontScale = (fontScale + delta).coerceIn(80, 180)
+        fontSizeLabel.text = ((fontScale / 100f) * 20f).toInt().toString()
         runJs("SimpleReader.setFontScale($fontScale)")
+    }
+
+    private fun progressLabel(progress: Int): String {
+        return "${(progress / 10).coerceIn(0, 100)}%"
+    }
+
+    private fun colorHex(color: Int): String {
+        return String.format(Locale.US, "#%06X", 0xFFFFFF and color)
     }
 
     private fun titleForHref(href: String): String {
@@ -309,7 +369,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
 
         @JavascriptInterface fun onBookReady(title: String) {
             runOnUiThread {
-                if (title.isNotBlank()) chapterTitleText.text = title
+                if (title.isNotBlank()) supportActionBar?.title = title
             }
         }
 
