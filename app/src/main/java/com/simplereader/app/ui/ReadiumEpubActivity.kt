@@ -4,9 +4,9 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -30,6 +30,7 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.services.locateProgression
 import org.readium.r2.shared.util.getOrElse
 import org.readium.r2.shared.util.toAbsoluteUrl
 import kotlin.math.roundToInt
@@ -47,6 +48,7 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
     private var chromeVisible = false
     private var readerFontScale = 1.0f
     private var nightMode = false
+    private var userDraggingProgress = false
 
     private lateinit var topBar: View
     private lateinit var bottomBar: View
@@ -55,6 +57,7 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
     private lateinit var bookTitleText: TextView
     private lateinit var chapterTitleText: TextView
     private lateinit var progressText: TextView
+    private lateinit var progressSeekBar: SeekBar
 
     private val bookId: Long by lazy { intent.getLongExtra(EXTRA_BOOK_ID, 0L) }
 
@@ -91,17 +94,47 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
         bookTitleText = findViewById(R.id.epubBookTitle)
         chapterTitleText = findViewById(R.id.epubChapterTitle)
         progressText = findViewById(R.id.epubProgressLabel)
+        progressSeekBar = findViewById(R.id.epubProgressSeekBar)
         touchBlocker.setOnClickListener { setChromeVisible(false) }
     }
 
     private fun setupControls() {
         findViewById<View>(R.id.epubBackButton).setOnClickListener { finish() }
-        findViewById<View>(R.id.epubPreviousChapterButton).setOnClickListener { jumpChapter(-1) }
-        findViewById<View>(R.id.epubNextChapterButton).setOnClickListener { jumpChapter(1) }
-        findViewById<View>(R.id.epubCatalogButton).setOnClickListener { showCatalog() }
-        findViewById<View>(R.id.epubFontDecreaseButton).setOnClickListener { changeFontScale(-0.08f) }
-        findViewById<View>(R.id.epubFontIncreaseButton).setOnClickListener { changeFontScale(0.08f) }
-        findViewById<View>(R.id.epubThemeButton).setOnClickListener { toggleTheme() }
+        findViewById<View>(R.id.epubPreviousChapterButton).setOnClickListener {
+            if (chromeVisible) jumpChapter(-1)
+        }
+        findViewById<View>(R.id.epubNextChapterButton).setOnClickListener {
+            if (chromeVisible) jumpChapter(1)
+        }
+        findViewById<View>(R.id.epubCatalogButton).setOnClickListener {
+            if (chromeVisible) showCatalog()
+        }
+        findViewById<View>(R.id.epubFontDecreaseButton).setOnClickListener {
+            if (chromeVisible) changeFontScale(-0.08f)
+        }
+        findViewById<View>(R.id.epubFontIncreaseButton).setOnClickListener {
+            if (chromeVisible) changeFontScale(0.08f)
+        }
+        findViewById<View>(R.id.epubThemeButton).setOnClickListener {
+            if (chromeVisible) toggleTheme()
+        }
+        progressSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser && chromeVisible) {
+                    progressText.text = "${(progress / 10.0).roundToInt()}%"
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                userDraggingProgress = chromeVisible
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val canJump = chromeVisible && userDraggingProgress
+                userDraggingProgress = false
+                if (canJump) seekToProgress(seekBar?.progress ?: 0)
+            }
+        })
     }
 
     private fun loadReaderPreferences() {
@@ -192,8 +225,13 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
         val fraction = locator.locations.totalProgression
             ?: locator.locations.progression
             ?: 0.0
-        progressText.text = "${(fraction.coerceIn(0.0, 1.0) * 100).roundToInt()}%"
-        scheduleProgressSave(locator, fraction.toFloat())
+        val normalized = fraction.coerceIn(0.0, 1.0)
+        val percent = (normalized * 100).roundToInt()
+        progressText.text = "$percent%"
+        if (!userDraggingProgress) {
+            progressSeekBar.progress = (normalized * progressSeekBar.max).roundToInt()
+        }
+        scheduleProgressSave(locator, normalized.toFloat())
     }
 
     private fun scheduleProgressSave(locator: Locator, fraction: Float) {
@@ -230,9 +268,12 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
         bottomBar.visibility = if (visible) View.VISIBLE else View.GONE
         touchBlocker.visibility = if (visible) View.VISIBLE else View.GONE
         progressText.visibility = if (visible) View.GONE else View.VISIBLE
+        progressSeekBar.isEnabled = visible
+        if (!visible) userDraggingProgress = false
     }
 
     private fun jumpChapter(direction: Int) {
+        if (!chromeVisible) return
         val fragment = readerFragment ?: return
         val readingOrder = publication.readingOrder
         if (readingOrder.isEmpty()) {
@@ -259,6 +300,7 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
     }
 
     private fun showCatalog() {
+        if (!chromeVisible) return
         val fragment = readerFragment ?: return
         val items = flattenToc(publication.tableOfContents)
             .ifEmpty {
@@ -276,12 +318,29 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
         AlertDialog.Builder(this)
             .setTitle("目录")
             .setItems(labels) { dialog, which ->
-                fragment.navigator.go(items[which].link, animated = true)
+                if (chromeVisible) {
+                    fragment.navigator.go(items[which].link, animated = true)
+                }
                 dialog.dismiss()
                 setChromeVisible(false)
             }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    private fun seekToProgress(progress: Int) {
+        if (!chromeVisible) return
+        val target = (progress.toDouble() / progressSeekBar.max.toDouble()).coerceIn(0.0, 1.0)
+        lifecycleScope.launch {
+            val locator = publication.locateProgression(target)
+            if (locator == null) {
+                Toast.makeText(this@ReadiumEpubActivity, "当前书籍无法按百分比定位", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (!chromeVisible) return@launch
+            readerFragment?.navigator?.go(locator, animated = false)
+            setChromeVisible(false)
+        }
     }
 
     private fun flattenToc(links: List<Link>, depth: Int = 0): List<TocItem> = buildList {
@@ -293,12 +352,14 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
     }
 
     private fun changeFontScale(delta: Float) {
+        if (!chromeVisible) return
         readerFontScale = (readerFontScale + delta).coerceIn(0.75f, 1.8f)
         saveReaderPreferences()
         readerFragment?.applyPresentationCss()
     }
 
     private fun toggleTheme() {
+        if (!chromeVisible) return
         nightMode = !nightMode
         saveReaderPreferences()
         readerFragment?.applyPresentationCss()
@@ -334,22 +395,6 @@ class ReadiumEpubActivity : AppCompatActivity(), ReadiumEpubFragment.Host {
                 max-width: 100% !important;
             }
         """.trimIndent()
-    }
-
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_UP &&
-            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
-        ) {
-            if (chromeVisible) return true
-            val navigator = readerFragment?.navigator ?: return super.dispatchKeyEvent(event)
-            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-                navigator.goBackward(animated = true)
-            } else {
-                navigator.goForward(animated = true)
-            }
-            return true
-        }
-        return super.dispatchKeyEvent(event)
     }
 
     override fun onStop() {
