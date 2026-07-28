@@ -38,8 +38,8 @@ jobs:
       - name: Prepare validation version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_CODE=$((2098000000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.28.readium.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Debug unit tests
         shell: bash
