@@ -106,10 +106,18 @@
         android:background="#F236332E"
         android:orientation="vertical"
         android:paddingStart="10dp"
-        android:paddingTop="10dp"
+        android:paddingTop="8dp"
         android:paddingEnd="10dp"
         android:paddingBottom="12dp"
         android:visibility="gone">
+
+        <SeekBar
+            android:id="@+id/epubProgressSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:max="1000"
+            android:progress="0"
+            android:contentDescription="阅读进度" />
 
         <LinearLayout
             android:layout_width="match_parent"
