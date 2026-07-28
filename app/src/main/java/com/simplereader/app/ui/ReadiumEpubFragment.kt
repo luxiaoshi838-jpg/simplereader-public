@@ -14,9 +14,9 @@ import com.simplereader.app.R
 import com.simplereader.app.readium.ReadiumSessionStore
 import kotlinx.coroutines.launch
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
-import org.readium.r2.navigator.input.DirectionalNavigationAdapter
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
