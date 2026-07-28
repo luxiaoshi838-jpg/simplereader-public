@@ -18,7 +18,7 @@ jobs:
   validate:
     name: Five-minute release validation
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 7
 
     steps:
       - name: Checkout current revision
@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          timeout --signal=INT 5m ./gradlew clean assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
+          timeout --signal=TERM --kill-after=15s 5m ./gradlew --no-daemon assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
           code=$?
           tail -n 220 /tmp/assemble-release.log
           exit $code
