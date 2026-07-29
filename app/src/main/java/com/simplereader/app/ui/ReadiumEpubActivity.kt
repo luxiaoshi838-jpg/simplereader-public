@@ -94,6 +94,8 @@ class ReadiumEpubActivity :
     private var touchStartY = 0f
     private var touchStartedInReader = false
     private var chromeTouchConsumed = false
+    private var boundaryNavigationUntil = 0L
+    private var boundaryNavigationHref = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -412,13 +414,34 @@ class ReadiumEpubActivity :
     }
 
     private fun handleVerticalChapterBoundarySwipe(deltaX: Float, deltaY: Float) {
-        if (kotlin.math.abs(deltaY) < dp(96) || kotlin.math.abs(deltaY) < kotlin.math.abs(deltaX) * 1.4f) {
+        val now = System.currentTimeMillis()
+        if (now < boundaryNavigationUntil) {
             return
         }
-        val progression = currentLocator?.locations?.progression ?: return
+        if (kotlin.math.abs(deltaY) < dp(140) || kotlin.math.abs(deltaY) < kotlin.math.abs(deltaX) * 1.8f) {
+            return
+        }
+        val locator = currentLocator ?: return
+        val href = normalizedHref(locator.href)
+        if (href.isBlank() || href == boundaryNavigationHref) {
+            return
+        }
+        val progression = locator.locations.progression ?: return
         when {
-            deltaY < 0 && progression >= 0.94 -> goChapter(1)
-            deltaY > 0 && progression <= 0.06 -> goChapter(-1)
+            deltaY < 0 && progression >= 0.985 -> {
+                boundaryNavigationHref = href
+                boundaryNavigationUntil = now + BOUNDARY_NAVIGATION_COOLDOWN_MS
+                navigator?.goForward(animated = true) {
+                    boundaryNavigationHref = ""
+                }
+            }
+            deltaY > 0 && progression <= 0.015 -> {
+                boundaryNavigationHref = href
+                boundaryNavigationUntil = now + BOUNDARY_NAVIGATION_COOLDOWN_MS
+                navigator?.goBackward(animated = true) {
+                    boundaryNavigationHref = ""
+                }
+            }
         }
     }
 
@@ -854,5 +877,6 @@ class ReadiumEpubActivity :
         private const val MENU_ADD_BOOKMARK = 1
         private const val MENU_SEARCH = 5
         private const val SEARCH_LIMIT = 500
+        private const val BOUNDARY_NAVIGATION_COOLDOWN_MS = 1100L
     }
 }
