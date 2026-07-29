@@ -19,9 +19,6 @@
             overflow: hidden;
             touch-action: pan-y;
         }
-        body.locked #viewer {
-            pointer-events: none;
-        }
     </style>
     <script src="jszip.min.js"></script>
     <script src="epub.min.js"></script>
@@ -312,7 +309,6 @@
 
     function setLocked(value) {
         locked = Boolean(value);
-        document.body.classList.toggle("locked", locked);
     }
 
     function setFontScale(percent) {
