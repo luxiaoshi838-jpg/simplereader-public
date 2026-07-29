@@ -13,6 +13,7 @@ import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.EditText
@@ -32,7 +33,6 @@ import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.ReadProgress
 import java.io.File
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -90,6 +90,10 @@ class ReadiumEpubActivity :
     private var searchDialog: AlertDialog? = null
     private var searchResults: List<Locator> = emptyList()
     private var activeSearchQuery = ""
+    private var touchStartX = 0f
+    private var touchStartY = 0f
+    private var touchStartedInReader = false
+    private var chromeTouchConsumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -114,6 +118,49 @@ class ReadiumEpubActivity :
         saveProgressNow()
         publication?.close()
         super.onDestroy()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (isReaderArea(event.rawX.toInt(), event.rawY.toInt())) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    touchStartedInReader = true
+                    chromeTouchConsumed = chromeVisible && !isVisibleChromeArea(event.rawX.toInt(), event.rawY.toInt())
+                    if (chromeTouchConsumed) return true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (chromeTouchConsumed) return true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    if (chromeTouchConsumed) {
+                        if (isCentralReaderPoint(event.rawX, event.rawY)) {
+                            setChromeVisible(false)
+                        }
+                        chromeTouchConsumed = false
+                        return true
+                    }
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    chromeTouchConsumed = false
+                }
+            }
+        }
+
+        val handled = super.dispatchTouchEvent(event)
+
+        if (!chromeVisible && touchStartedInReader && event.actionMasked == MotionEvent.ACTION_UP) {
+            handleVerticalChapterBoundarySwipe(event.rawX - touchStartX, event.rawY - touchStartY)
+            touchStartedInReader = false
+        } else if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            touchStartedInReader = false
+        }
+
+        return handled
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -308,6 +355,7 @@ class ReadiumEpubActivity :
             publisherStyles = true,
             fontSize = fontScale,
             theme = if (nightMode) Theme.DARK else Theme.SEPIA,
+            verticalText = false,
             backgroundColor = ReadiumColor(if (nightMode) Color.rgb(35, 35, 35) else Color.rgb(245, 233, 200)),
             textColor = ReadiumColor(if (nightMode) Color.rgb(222, 218, 209) else Color.rgb(59, 52, 40))
         )
@@ -336,6 +384,42 @@ class ReadiumEpubActivity :
             return true
         }
         return false
+    }
+
+    private fun isCentralReaderPoint(rawX: Float, rawY: Float): Boolean {
+        val rect = android.graphics.Rect()
+        if (!readiumContainer.getGlobalVisibleRect(rect)) return false
+        val x = rawX - rect.left
+        val y = rawY - rect.top
+        val width = rect.width().toFloat().coerceAtLeast(1f)
+        val height = rect.height().toFloat().coerceAtLeast(1f)
+        return x in width * 0.25f..width * 0.75f && y in height * 0.25f..height * 0.75f
+    }
+
+    private fun isReaderArea(rawX: Int, rawY: Int): Boolean {
+        val rect = android.graphics.Rect()
+        return readiumContainer.getGlobalVisibleRect(rect) && rect.contains(rawX, rawY)
+    }
+
+    private fun isVisibleChromeArea(rawX: Int, rawY: Int): Boolean {
+        val rect = android.graphics.Rect()
+        return (readerControls.visibility == View.VISIBLE &&
+            readerControls.getGlobalVisibleRect(rect) &&
+            rect.contains(rawX, rawY)) ||
+            (readerSettingsPanel.visibility == View.VISIBLE &&
+                readerSettingsPanel.getGlobalVisibleRect(rect) &&
+                rect.contains(rawX, rawY))
+    }
+
+    private fun handleVerticalChapterBoundarySwipe(deltaX: Float, deltaY: Float) {
+        if (kotlin.math.abs(deltaY) < dp(96) || kotlin.math.abs(deltaY) < kotlin.math.abs(deltaX) * 1.4f) {
+            return
+        }
+        val progression = currentLocator?.locations?.progression ?: return
+        when {
+            deltaY < 0 && progression >= 0.94 -> goChapter(1)
+            deltaY > 0 && progression <= 0.06 -> goChapter(-1)
+        }
     }
 
     override fun onJumpToLocator(locator: Locator) {
@@ -621,8 +705,7 @@ class ReadiumEpubActivity :
     }
 
     private fun pageLabelForLocator(locator: Locator?): String {
-        val current = locator?.locations?.position
-            ?: pageIndexForProgress(locator?.locations?.totalProgression ?: locator?.locations?.progression ?: 0.0)
+        val current = pageNumberForLocator(locator)
         val total = positions.size.coerceAtLeast(1)
         return "${current.coerceIn(1, total)}/$total"
     }
@@ -642,14 +725,48 @@ class ReadiumEpubActivity :
             ?: 1
     }
 
+    private fun pageNumberForLocator(locator: Locator?): Int {
+        if (locator == null || positions.isEmpty()) return 1
+        val directPosition = locator.locations.position
+        if (directPosition != null && directPosition > 1) return directPosition
+
+        val href = normalizedHref(locator.href)
+        val progression = locator.locations.progression ?: 0.0
+        val sameResource = positions.withIndex()
+            .filter { normalizedHref(it.value.href) == href }
+
+        if (sameResource.isNotEmpty()) {
+            val targetIndex = (progression.coerceIn(0.0, 1.0) * (sameResource.size - 1))
+                .let { kotlin.math.ceil(it).toInt().coerceIn(0, sameResource.lastIndex) }
+            return sameResource[targetIndex].value.locations.position
+                ?: (sameResource[targetIndex].index + 1)
+        }
+
+        return directPosition ?: pageIndexForProgress(locator.locations.totalProgression ?: progression)
+    }
+
+    private fun pageNumberForLink(link: Link): Int {
+        if (positions.isEmpty()) return 1
+        val href = normalizedHref(link.href)
+        val index = positions.indexOfFirst { normalizedHref(it.href) == href }
+        return if (index >= 0) {
+            positions[index].locations.position ?: (index + 1)
+        } else {
+            pageIndexForProgress(0.0)
+        }
+    }
+
+    private fun normalizedHref(href: String): String =
+        href.substringBefore('#').substringBefore('?').trimStart('/')
+
     private fun flatToc(links: List<Link>, depth: Int = 0): List<TocItem> =
         links.flatMap { link ->
             listOf(TocItem(link, depth)) + flatToc(link.children, depth + 1)
         }
 
     private fun tocLabel(index: Int, item: TocItem, highlighted: Boolean): CharSequence {
-        val locator = publication?.locatorFromLink(item.link)
-        val page = pageLabelForLocator(locator)
+        val total = positions.size.coerceAtLeast(1)
+        val page = "${pageNumberForLink(item.link).coerceIn(1, total)}/$total"
         val label = "${"  ".repeat(item.depth.coerceIn(0, 8))}${item.link.title ?: "章节 ${index + 1}"}\n$page"
         if (!highlighted) return label
         return SpannableString(label).apply {
