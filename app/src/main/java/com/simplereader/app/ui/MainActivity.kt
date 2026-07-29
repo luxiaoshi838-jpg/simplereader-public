@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
@@ -202,7 +203,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.moreButton).apply {
             text = "⋮"
             contentDescription = "批量管理分组"
-            setOnClickListener { showBatchGroupManagement() }
+            setOnClickListener { showMoreShelfActions() }
         }
 
         loadBooks()
@@ -926,6 +927,32 @@ class MainActivity : AppCompatActivity() {
         showBookActionsV2(book)
     }
 
+    private fun showMoreShelfActions() {
+        AlertDialog.Builder(this)
+            .setTitle("书架管理")
+            .setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->
+                when (which) {
+                    0 -> showBatchGroupManagement()
+                    1 -> confirmSyncBookshelf()
+                }
+            }
+            .show()
+    }
+
+    private fun showBookActionsV2(book: ShelfBookItem) {
+        AlertDialog.Builder(this)
+            .setTitle(book.title)
+            .setItems(arrayOf("打开", "重命名书籍", "导入分组", "删除书架")) { _, which ->
+                when (which) {
+                    0 -> openBook(book.id)
+                    1 -> showRenameBookDialog(book)
+                    2 -> showMoveBookToGroup(book)
+                    3 -> confirmDeleteBook(book)
+                }
+            }
+            .show()
+    }
+
     private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
         if (groupBooks.isEmpty()) {
             Toast.makeText(this, "该分组暂无书籍", Toast.LENGTH_SHORT).show()
@@ -938,7 +965,7 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun showBookActionsV2(book: ShelfBookItem) {
+    private fun showBookActionsLegacy(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
             .setItems(arrayOf("打开", "移入分组", "删除书架")) { _, which ->
@@ -949,6 +976,160 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    private fun showRenameBookDialog(book: ShelfBookItem) {
+        val input = EditText(this).apply {
+            hint = "书籍名"
+            setText(book.title)
+            selectAll()
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("重命名书籍")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val newTitle = input.text.toString().trim()
+                if (newTitle.isBlank()) {
+                    input.error = "书名不能为空"
+                    return@setOnClickListener
+                }
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val entity = bookRepository.getBook(book.id) ?: error("书籍不存在")
+                            val renamed = BookFileActions.renameBookFile(this@MainActivity, entity, newTitle)
+                            bookRepository.update(renamed)
+                            renamed.title
+                        }
+                    }
+                    result.onSuccess { title ->
+                        Toast.makeText(this@MainActivity, "已重命名为：$title", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }.onFailure { error ->
+                        Toast.makeText(
+                            this@MainActivity,
+                            "重命名失败：${error.message ?: "未知错误"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun confirmSyncBookshelf() {
+        val syncableGroups = groups.filter { !it.sourceTreeUri.isNullOrBlank() && !it.relativePath.isNullOrBlank() }
+        if (syncableGroups.isEmpty()) {
+            Toast.makeText(this, "没有可同步的文件夹分组", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("同步书架")
+            .setMessage("将按分组对应的本地文件夹重新扫描：文件不存在的书籍会从书架消失，文件夹里新增的 TXT/EPUB 会加入对应分组。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始同步") { _, _ ->
+                syncBookshelfFromFolders(syncableGroups)
+            }
+            .show()
+    }
+
+    private fun syncBookshelfFromFolders(syncableGroups: List<BookGroup>) {
+        lifecycleScope.launch {
+            val summary = withContext(Dispatchers.IO) {
+                runCatching {
+                    var added = 0
+                    var removed = 0
+                    var skippedGroups = 0
+                    syncableGroups.forEach { group ->
+                        val groupFolder = resolveGroupFolder(group)
+                        if (groupFolder == null || !groupFolder.exists()) {
+                            skippedGroups++
+                            return@forEach
+                        }
+                        val currentBooks = bookRepository.getBooksByGroup(group.id).first()
+                        val existingNames = currentBooks.map { it.fileName.lowercase() }.toMutableSet()
+                        currentBooks.forEach { book ->
+                            if (!bookFileExists(book)) {
+                                database.bookDao().deleteById(book.id)
+                                existingNames.remove(book.fileName.lowercase())
+                                removed++
+                            }
+                        }
+                        groupFolder.listFiles()
+                            .filter { it.isFile && it.isSupportedBook() }
+                            .take(FOLDER_IMPORT_LIMIT)
+                            .forEach { file ->
+                                val name = file.name ?: return@forEach
+                                if (name.lowercase() in existingNames) return@forEach
+                                val candidate = buildCandidate(
+                                    file = file,
+                                    sourceTreeUri = group.sourceTreeUri,
+                                    relativeParentPath = group.relativePath,
+                                    permissionStatus = PermissionStatus.PERSISTED
+                                ).copy(
+                                    suggestedGroupKey = group.sourceKey,
+                                    suggestedGroupName = group.displayName.ifBlank { group.name },
+                                    suggestedGroupRelativePath = group.relativePath,
+                                    selected = true
+                                )
+                                val result = importCandidate(
+                                    candidate,
+                                    ImportPlanOptions(
+                                        targetGroupMode = TargetGroupMode.SUGGESTED,
+                                        duplicateStrategy = DuplicateStrategy.SKIP
+                                    )
+                                )
+                                if (result is ImportItemResult.Inserted || result is ImportItemResult.Updated) {
+                                    existingNames += name.lowercase()
+                                    added++
+                                }
+                            }
+                    }
+                    "同步完成：新增 $added 本，移除 $removed 本，跳过 $skippedGroups 个不可访问分组"
+                }
+            }
+            summary.onSuccess {
+                Toast.makeText(this@MainActivity, it, Toast.LENGTH_LONG).show()
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "同步失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun resolveGroupFolder(group: BookGroup): DocumentFile? {
+        val rootUri = group.sourceTreeUri?.takeIf { it.isNotBlank() } ?: return null
+        var folder = DocumentFile.fromTreeUri(this, Uri.parse(rootUri)) ?: return null
+        val rootName = folder.name.orEmpty()
+        group.relativePath
+            ?.replace('\\', '/')
+            ?.split('/')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() && it != rootName }
+            ?.forEach { segment ->
+                folder = folder.findFile(segment)?.takeIf { it.isDirectory } ?: return null
+            }
+        return folder
+    }
+
+    private fun bookFileExists(book: Book): Boolean {
+        val uri = runCatching { Uri.parse(book.filePath) }.getOrNull()
+        return when {
+            uri?.scheme.equals("content", ignoreCase = true) ->
+                DocumentFile.fromSingleUri(this, uri ?: return false)?.exists() == true
+            uri?.scheme.equals("file", ignoreCase = true) ->
+                File(uri?.path.orEmpty()).exists()
+            else -> File(book.filePath).exists()
+        }
     }
 
     private fun showMoveBookToGroup(book: ShelfBookItem) {

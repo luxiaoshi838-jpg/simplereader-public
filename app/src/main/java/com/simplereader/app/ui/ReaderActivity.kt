@@ -130,6 +130,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
+        contentView.setTextIsSelectable(true)
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
@@ -1093,7 +1094,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun configureVerticalScrollIfNeeded() {
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
-        contentView.movementMethod = null
+        contentView.setTextIsSelectable(true)
         contentView.isVerticalScrollBarEnabled = false
         readerScrollView.isVerticalScrollBarEnabled = continuous
         readerScrollView.isScrollbarFadingEnabled = false

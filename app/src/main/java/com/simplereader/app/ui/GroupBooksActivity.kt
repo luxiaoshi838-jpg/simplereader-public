@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -144,6 +145,65 @@ class GroupBooksActivity : AppCompatActivity() {
     }
 
     private fun showBookActions(book: ShelfBookItem) {
+        AlertDialog.Builder(this)
+            .setTitle(book.title)
+            .setItems(arrayOf("打开", "重命名书籍", "移出分组", "删除书架")) { _, which ->
+                when (which) {
+                    0 -> openBook(book.id)
+                    1 -> showRenameBookDialog(book)
+                    2 -> updateBookGroup(book, null)
+                    3 -> confirmDeleteBook(book)
+                }
+            }
+            .show()
+    }
+
+    private fun showRenameBookDialog(book: ShelfBookItem) {
+        val input = EditText(this).apply {
+            hint = "书籍名"
+            setText(book.title)
+            selectAll()
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("重命名书籍")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val newTitle = input.text.toString().trim()
+                if (newTitle.isBlank()) {
+                    input.error = "书名不能为空"
+                    return@setOnClickListener
+                }
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val entity = bookRepository.getBook(book.id) ?: error("书籍不存在")
+                            val renamed = BookFileActions.renameBookFile(this@GroupBooksActivity, entity, newTitle)
+                            bookRepository.update(renamed)
+                            renamed.title
+                        }
+                    }
+                    result.onSuccess { title ->
+                        Toast.makeText(this@GroupBooksActivity, "已重命名为：$title", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }.onFailure { error ->
+                        Toast.makeText(
+                            this@GroupBooksActivity,
+                            "重命名失败：${error.message ?: "未知错误"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showBookActionsLegacy(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
             .setItems(arrayOf("打开", "移出分组", "删除书架")) { _, which ->
