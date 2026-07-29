@@ -760,9 +760,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val targetOffset = (progress?.epubChapterOffset ?: 0)
             .coerceIn(0, (chapterEnd - chapterStart).coerceAtLeast(0))
         structuredWholeText = wholeText
-        val initialPosition = (chapterStart + targetOffset).coerceIn(0, wholeText.length)
+        val buffer = buildEpubReadingBuffer(
+            wholeText = wholeText,
+            chapters = chapters,
+            starts = starts,
+            centerIndex = targetIndex
+        )
+        val initialPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
         return LoadedContent(
-            text = wholeText,
+            text = buffer.content,
             epubChapters = chapters,
             epubChapterStartPositions = starts,
             structuredCatalogEntries = cached.catalog.map { entry ->
@@ -775,8 +781,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             },
             structuredChapterIndex = targetIndex,
             structuredInitialPosition = initialPosition,
-            structuredWholeBookMode = true,
-            structuredReadingBuffer = null
+            structuredWholeBookMode = false,
+            structuredReadingBuffer = buffer
         )
     }
 
