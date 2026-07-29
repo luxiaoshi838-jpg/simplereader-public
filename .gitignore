@@ -1,5 +1,6 @@
 .gradle/
 build/
+_local_build/
 *.apk
 *.aar
 *.jks

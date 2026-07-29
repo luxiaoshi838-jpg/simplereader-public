@@ -1048,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
                     var skippedGroups = 0
                     syncableGroups.forEach { group ->
                         val groupFolder = resolveGroupFolder(group)
-                        if (groupFolder == null || !groupFolder.exists()) {
+                        if (groupFolder == null || !runCatching { groupFolder.exists() }.getOrDefault(false)) {
                             skippedGroups++
                             return@forEach
                         }
@@ -1061,12 +1061,12 @@ class MainActivity : AppCompatActivity() {
                                 removed++
                             }
                         }
-                        groupFolder.listFiles()
+                        runCatching { groupFolder.listFiles() }.getOrElse { emptyArray() }
                             .filter { it.isFile && it.isSupportedBook() }
                             .take(FOLDER_IMPORT_LIMIT)
-                            .forEach { file ->
-                                val name = file.name ?: return@forEach
-                                if (name.lowercase() in existingNames) return@forEach
+                            .forEach files@{ file ->
+                                val name = file.name ?: return@files
+                                if (name.lowercase() in existingNames) return@files
                                 val candidate = buildCandidate(
                                     file = file,
                                     sourceTreeUri = group.sourceTreeUri,
@@ -1108,15 +1108,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun resolveGroupFolder(group: BookGroup): DocumentFile? {
         val rootUri = group.sourceTreeUri?.takeIf { it.isNotBlank() } ?: return null
-        var folder = DocumentFile.fromTreeUri(this, Uri.parse(rootUri)) ?: return null
-        val rootName = folder.name.orEmpty()
+        var folder = runCatching {
+            DocumentFile.fromTreeUri(this, Uri.parse(rootUri))
+        }.getOrNull() ?: return null
+        val rootName = runCatching { folder.name.orEmpty() }.getOrDefault("")
         group.relativePath
             ?.replace('\\', '/')
             ?.split('/')
             ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() && it != rootName }
+            ?.filter { it.isNotEmpty() && it != "." && it != rootName }
             ?.forEach { segment ->
-                folder = folder.findFile(segment)?.takeIf { it.isDirectory } ?: return null
+                folder = runCatching {
+                    folder.findFile(segment)?.takeIf { it.isDirectory }
+                }.getOrNull() ?: return null
             }
         return folder
     }
@@ -1125,7 +1129,9 @@ class MainActivity : AppCompatActivity() {
         val uri = runCatching { Uri.parse(book.filePath) }.getOrNull()
         return when {
             uri?.scheme.equals("content", ignoreCase = true) ->
-                DocumentFile.fromSingleUri(this, uri ?: return false)?.exists() == true
+                runCatching {
+                    DocumentFile.fromSingleUri(this, uri ?: return false)?.exists() == true
+                }.getOrDefault(false)
             uri?.scheme.equals("file", ignoreCase = true) ->
                 File(uri?.path.orEmpty()).exists()
             else -> File(book.filePath).exists()

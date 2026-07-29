@@ -11,6 +11,8 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
+import android.text.Spannable
+import android.text.Selection
 import android.text.Spanned
 import android.text.style.ImageSpan
 import android.text.style.RelativeSizeSpan
@@ -135,7 +137,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
-        contentView.setTextIsSelectable(false)
+        contentView.setTextIsSelectable(true)
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
@@ -146,16 +148,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         gestureDetector = GestureDetector(this, this)
         readerScrollView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            handleReaderChromeTap(event)
             pageTurnMode != TURN_MODE_VERTICAL
-        }
-        contentView.setOnTouchListener { _, event ->
-            handleReaderChromeTap(event)
-        }
-        contentView.setOnLongClickListener {
-            contentView.setTextIsSelectable(true)
-            Toast.makeText(this, "已进入文字选择模式", Toast.LENGTH_SHORT).show()
-            false
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
@@ -1114,9 +1107,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun configureVerticalScrollIfNeeded() {
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
-        if (!contentView.isTextSelectable) {
-            contentView.setTextIsSelectable(false)
-        }
+        contentView.setTextIsSelectable(true)
         contentView.isVerticalScrollBarEnabled = false
         readerScrollView.isVerticalScrollBarEnabled = continuous
         readerScrollView.isScrollbarFadingEnabled = false
@@ -2293,7 +2284,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                     showStreamingTxtPage(
                                         currentPosition.toLong(),
                                         saveImmediately = true,
-                                        keepContextBeforeTarget = true
+                                        keepContextBeforeTarget = false
                                     )
                                 } else {
                                     displayContent()
@@ -2863,7 +2854,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         txtBufferLoadJob = lifecycleScope.launch {
             try {
                 val targetByte = byteOffset.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
-                val windowStart = if (keepContextBeforeTarget || pageTurnMode == TURN_MODE_VERTICAL) {
+                val windowStart = if (keepContextBeforeTarget) {
                     streamingWindowStartForTarget(targetByte)
                 } else {
                     targetByte
@@ -3191,6 +3182,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         )
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        handleReaderChromeTap(event)
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onDown(e: MotionEvent): Boolean = true
     override fun onShowPress(e: MotionEvent) {}
     override fun onSingleTapUp(e: MotionEvent): Boolean {
@@ -3241,9 +3237,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     duration <= READER_CHROME_TAP_TIMEOUT_MS &&
                     isReaderChromeCenter(event.rawX, event.rawY)
                 ) {
-                    if (contentView.isTextSelectable) {
-                        contentView.setTextIsSelectable(false)
-                    }
+                    (contentView.text as? Spannable)?.let { Selection.removeSelection(it) }
+                    contentView.clearFocus()
                     toggleReaderChrome()
                     return true
                 }
