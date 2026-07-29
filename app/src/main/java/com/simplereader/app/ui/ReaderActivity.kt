@@ -617,8 +617,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 )
             }
             val preservedPosition = newBuffer.positionFor(oldLocation.chapterIndex, oldLocation.offset)
-                ?: newBuffer.positionFor(nextCenter, 0)
-                ?: 0
+                ?: return@launch
             structuredReadingBuffer = newBuffer
             structuredChapterIndex = oldLocation.chapterIndex.coerceIn(0, epubChapters.lastIndex)
             currentContent = newBuffer.content
@@ -994,13 +993,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun pageCountLabel(): String {
-        renderedPageCountLabel()?.let { return it }
         val (positionUnits, totalUnits) = readerPageUnits()
-        val unitsPerPage = if (txtStreamingMode) {
-            estimatedTxtBytesPerPage()
-        } else {
-            pageSize.toLong()
-        }.coerceAtLeast(1L)
+        val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)
         val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
         val currentPage = (positionUnits / unitsPerPage + 1L).coerceIn(1L, totalPages)
         return "$currentPage/$totalPages"
@@ -1171,7 +1165,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 renderExtendedTxtBuffer(
                     anchorByte = anchorByte,
                     oldScrollY = oldScrollY,
-                    preserveAbsoluteAnchor = mutation.prepended || mutation.removedPrefixChars > 0
+                    preserveAbsoluteAnchor = true
                 )
             } catch (_: Throwable) {
                 // Keep the already visible buffer usable. A later scroll retries.

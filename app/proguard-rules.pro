@@ -15,4 +15,9 @@
 -keep class org.mozilla.universalchardet.** { *; }
 -dontwarn org.mozilla.universalchardet.**
 
+# Readium pulls Joda-Time; these optional joda-convert annotations are not
+# needed at runtime but R8 reports them while shrinking release builds.
+-dontwarn org.joda.convert.FromString
+-dontwarn org.joda.convert.ToString
+
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

@@ -4,8 +4,8 @@
     android:layout_height="match_parent"
     android:background="#F5E9C8">
 
-    <WebView
-        android:id="@+id/epubWebView"
+    <FrameLayout
+        android:id="@+id/readiumContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
