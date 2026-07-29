@@ -19,9 +19,6 @@
             overflow: hidden;
             touch-action: pan-y;
         }
-        body.locked #viewer {
-            pointer-events: none;
-        }
     </style>
     <script src="jszip.min.js"></script>
     <script src="epub.min.js"></script>
@@ -38,11 +35,15 @@
     let currentCfi = "";
     let currentHref = "";
     let currentTitle = "";
+    let currentFraction = 0;
     let locationsReady = false;
     let locked = false;
     let fontPercent = 100;
     let nightMode = false;
     let flatToc = [];
+    let lastRelocated = null;
+    let reportTimer = null;
+    let navigationInProgress = false;
 
     function bridge(name) {
         try {
@@ -59,10 +60,14 @@
         return String(href || "").split("#")[0].replace(/^\.\//, "");
     }
 
+    function cleanTitle(value) {
+        return String(value || "").replace(/\s+/g, " ").trim();
+    }
+
     function flatten(items, depth, output) {
         (items || []).forEach(function (item) {
             output.push({
-                title: item.label || item.title || "未命名章节",
+                title: cleanTitle(item.label || item.title) || "未命名章节",
                 href: item.href || "",
                 depth: depth
             });
@@ -127,6 +132,7 @@
             if (inCenter) {
                 event.preventDefault();
                 event.stopPropagation();
+                reportVisibleCenter(lastRelocated);
                 bridge("onCenterTap");
                 return false;
             }
@@ -142,20 +148,132 @@
         });
     }
 
-    function reportLocation(location) {
-        if (!location || !location.start) return;
-        currentIndex = Number.isFinite(location.start.index) ? location.start.index : currentIndex;
-        currentCfi = location.start.cfi || currentCfi;
-        currentHref = location.start.href || currentHref;
-        currentTitle = titleForHref(currentHref) || currentTitle;
-        let fraction = 0;
-        if (locationsReady && currentCfi) {
-            const located = book.locations.percentageFromCfi(currentCfi);
-            if (Number.isFinite(located)) fraction = Math.max(0, Math.min(1, located));
-        } else if (Number.isFinite(location.start.percentage)) {
-            fraction = Math.max(0, Math.min(1, location.start.percentage));
+    function rangeAtPoint(doc, x, y) {
+        try {
+            if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
+            if (doc.caretPositionFromPoint) {
+                const position = doc.caretPositionFromPoint(x, y);
+                if (!position) return null;
+                const range = doc.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.collapse(true);
+                return range;
+            }
+        } catch (_) {
+            return null;
         }
-        bridge("onLocationChanged", currentCfi, currentHref, currentTitle, fraction);
+        return null;
+    }
+
+    function visibleCenterSnapshot() {
+        if (!rendition || !book) return null;
+        const viewportX = window.innerWidth / 2;
+        const viewportY = window.innerHeight / 2;
+        let best = null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+
+        rendition.getContents().forEach(function (contents) {
+            const frame = contents.window && contents.window.frameElement;
+            if (!frame) return;
+            const rect = frame.getBoundingClientRect();
+            if (rect.bottom <= 0 || rect.top >= window.innerHeight || rect.width <= 0 || rect.height <= 0) return;
+            const centerDistance = Math.abs(((rect.top + rect.bottom) / 2) - viewportY);
+            if (centerDistance < bestDistance) {
+                bestDistance = centerDistance;
+                best = { contents: contents, rect: rect };
+            }
+        });
+
+        if (!best) return null;
+        const contents = best.contents;
+        const rect = best.rect;
+        const doc = contents.document;
+        if (!doc) return null;
+        const localX = Math.max(1, Math.min(rect.width - 1, viewportX - rect.left));
+        const localY = Math.max(1, Math.min(rect.height - 1, viewportY - rect.top));
+        let cfi = "";
+
+        try {
+            const range = rangeAtPoint(doc, localX, localY);
+            if (range) cfi = contents.cfiFromRange(range);
+            if (!cfi) {
+                const node = doc.elementFromPoint(localX, localY);
+                if (node) cfi = contents.cfiFromNode(node);
+            }
+        } catch (_) {
+            cfi = "";
+        }
+
+        const index = Number.isFinite(contents.sectionIndex) ? contents.sectionIndex : currentIndex;
+        const section = book.spine.get(index);
+        return {
+            index: index,
+            cfi: cfi,
+            href: section && section.href ? section.href : currentHref
+        };
+    }
+
+    function reportVisibleCenter(fallbackLocation) {
+        const snapshot = visibleCenterSnapshot();
+        const fallback = fallbackLocation && fallbackLocation.start ? fallbackLocation.start : null;
+        const nextCfi = snapshot && snapshot.cfi ? snapshot.cfi : (fallback && fallback.cfi ? fallback.cfi : currentCfi);
+        const nextHref = snapshot && snapshot.href ? snapshot.href : (fallback && fallback.href ? fallback.href : currentHref);
+        const nextIndex = snapshot && Number.isFinite(snapshot.index)
+            ? snapshot.index
+            : (fallback && Number.isFinite(fallback.index) ? fallback.index : currentIndex);
+
+        if (!nextCfi) return;
+        currentCfi = nextCfi;
+        currentHref = nextHref;
+        currentIndex = nextIndex;
+        currentTitle = titleForHref(currentHref) || currentTitle;
+
+        if (locationsReady) {
+            const located = book.locations.percentageFromCfi(currentCfi);
+            if (Number.isFinite(located)) currentFraction = Math.max(0, Math.min(1, located));
+        } else if (fallback && Number.isFinite(fallback.percentage)) {
+            currentFraction = Math.max(0, Math.min(1, fallback.percentage));
+        }
+
+        bridge("onLocationChanged", currentCfi, currentHref, currentTitle, currentFraction);
+    }
+
+    function scheduleVisibleReport(location, delay) {
+        if (location) lastRelocated = location;
+        if (navigationInProgress) return;
+        clearTimeout(reportTimer);
+        reportTimer = setTimeout(function () {
+            reportVisibleCenter(lastRelocated);
+        }, Number(delay) || 160);
+    }
+
+    function nextFrame() {
+        return new Promise(function (resolve) {
+            requestAnimationFrame(function () { resolve(); });
+        });
+    }
+
+    function wait(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    async function navigateTo(target, failureMessage) {
+        if (!rendition || !book || !locked || navigationInProgress || !target) return false;
+        navigationInProgress = true;
+        clearTimeout(reportTimer);
+        try {
+            await rendition.display(target);
+            await nextFrame();
+            await nextFrame();
+            await wait(140);
+            navigationInProgress = false;
+            reportVisibleCenter(lastRelocated);
+            bridge("onNavigationSettled", true, "");
+        } catch (error) {
+            navigationInProgress = false;
+            bridge("onNavigationSettled", false, failureMessage || String(error && error.message || error));
+        }
+        return true;
     }
 
     async function openBook(bookUrl, initialCfi, initialFraction, requestedFontPercent, requestedNightMode) {
@@ -177,31 +295,43 @@
                 injectContentRules(contents);
                 installSafeInput(contents);
             });
-            rendition.on("relocated", reportLocation);
-            rendition.on("rendered", updateAllContents);
+            rendition.on("relocated", function (location) {
+                lastRelocated = location;
+                scheduleVisibleReport(location, 180);
+            });
+            rendition.on("rendered", function () {
+                updateAllContents();
+                scheduleVisibleReport(lastRelocated, 100);
+            });
 
             const navigation = await book.loaded.navigation;
             flatToc = flatten(navigation.toc || [], 0, []);
             bridge("onTocReady", JSON.stringify(flatToc));
 
             const metadata = await book.loaded.metadata;
-            bridge("onBookReady", metadata.title || "");
+            bridge("onBookReady", cleanTitle(metadata.title));
 
             await rendition.display(initialCfi || undefined);
+            await nextFrame();
+            await nextFrame();
             updateAllContents();
+            reportVisibleCenter(lastRelocated);
             bridge("onEngineReady");
 
-            book.locations.generate(1400).then(function () {
+            book.locations.generate(1400).then(async function () {
                 locationsReady = true;
                 if (!initialCfi && Number(initialFraction) > 0) {
                     const cfi = book.locations.cfiFromPercentage(Math.max(0, Math.min(1, Number(initialFraction))));
-                    if (cfi) rendition.display(cfi);
-                } else if (currentCfi) {
-                    const fraction = book.locations.percentageFromCfi(currentCfi);
-                    if (Number.isFinite(fraction)) {
-                        bridge("onLocationChanged", currentCfi, currentHref, currentTitle, fraction);
+                    if (cfi) {
+                        navigationInProgress = true;
+                        await rendition.display(cfi);
+                        await nextFrame();
+                        await nextFrame();
+                        await wait(140);
+                        navigationInProgress = false;
                     }
                 }
+                reportVisibleCenter(lastRelocated);
             }).catch(function () {
                 locationsReady = false;
             });
@@ -211,37 +341,40 @@
     }
 
     function goChapter(delta) {
-        if (!rendition || !book || !locked) return false;
+        if (!rendition || !book || !locked || navigationInProgress) return false;
         const targetIndex = currentIndex + Number(delta || 0);
         const target = book.spine.get(targetIndex);
-        if (!target || !target.href) return false;
-        rendition.display(target.href);
+        if (!target || !target.href) {
+            bridge("onNavigationSettled", false, Number(delta) < 0 ? "已经是第一章" : "已经是最后一章");
+            return false;
+        }
+        navigateTo(target.href, "无法跳转章节");
         return true;
     }
 
     function goToHref(href) {
-        if (!rendition || !locked || !href) return false;
-        rendition.display(href);
+        if (!rendition || !locked || navigationInProgress || !href) return false;
+        navigateTo(href, "无法跳转目录");
         return true;
     }
 
     function goToProgress(fraction) {
-        if (!rendition || !book || !locked || !locationsReady) return false;
+        if (!rendition || !book || !locked || navigationInProgress || !locationsReady) return false;
         const normalized = Math.max(0, Math.min(1, Number(fraction) || 0));
         const cfi = book.locations.cfiFromPercentage(normalized);
         if (!cfi) return false;
-        rendition.display(cfi);
+        navigateTo(cfi, "无法跳转进度");
         return true;
     }
 
     function setLocked(value) {
         locked = Boolean(value);
-        document.body.classList.toggle("locked", locked);
     }
 
     function setFontScale(percent) {
         fontPercent = Math.max(75, Math.min(180, Number(percent) || 100));
         updateAllContents();
+        scheduleVisibleReport(lastRelocated, 220);
     }
 
     function setNight(value) {
@@ -255,6 +388,7 @@
         goChapter: goChapter,
         goToHref: goToHref,
         goToProgress: goToProgress,
+        reportNow: function () { reportVisibleCenter(lastRelocated); return true; },
         setLocked: setLocked,
         setFontScale: setFontScale,
         setNight: setNight
