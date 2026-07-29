@@ -3,12 +3,15 @@ package com.simplereader.app.ui
 import android.net.Uri
 import android.content.Intent
 import android.os.Bundle
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.style.ImageSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.text.style.BackgroundColorSpan
@@ -1010,6 +1013,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun styledReadingText(text: String): CharSequence {
         if (text.isBlank()) return text
         val spannable = SpannableString(text)
+        applyEpubImageSpans(spannable, text)
         var lineStart = 0
         while (lineStart < text.length) {
             val lineEnd = text.indexOf('\n', lineStart).let { if (it == -1) text.length else it }
@@ -1031,6 +1035,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             lineStart = lineEnd + 1
         }
         return spannable
+    }
+
+    private fun applyEpubImageSpans(spannable: SpannableString, text: String) {
+        if (!book?.format.equals("EPUB", ignoreCase = true)) return
+        EPUB_IMAGE_MARKER.findAll(text).forEach { match ->
+            val href = match.groupValues.getOrNull(1).orEmpty()
+            val drawable = loadEpubImageDrawable(href) ?: return@forEach
+            spannable.setSpan(
+                ImageSpan(drawable, ImageSpan.ALIGN_BASELINE),
+                match.range.first,
+                match.range.last + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+    }
+
+    private fun loadEpubImageDrawable(href: String): BitmapDrawable? {
+        val imageFile = StructuredBookCache.imageFile(this, bookId, href) ?: return null
+        val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath) ?: return null
+        val maxWidth = (resources.displayMetrics.widthPixels - dp(56)).coerceAtLeast(dp(120))
+        val scale = (maxWidth.toFloat() / bitmap.width.coerceAtLeast(1)).coerceAtMost(1f)
+        val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        return BitmapDrawable(resources, bitmap).apply {
+            setBounds(0, 0, width, height)
+        }
     }
 
     private fun readerPageUnits(): Pair<Long, Long> {
@@ -3250,6 +3280,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val TURN_MODE_HORIZONTAL = "horizontal"
         private const val TURN_MODE_VERTICAL = "vertical"
         private const val TURN_MODE_FADE = "fade"
+        private val EPUB_IMAGE_MARKER = Regex("\\[\\[SR_IMAGE:([^\\]]+)]]")
         private const val MENU_ADD_BOOKMARK = 1
         private const val MENU_BOOKMARKS = 2
         private const val MENU_TOC = 3

@@ -35,6 +35,7 @@ data class CachedBook(
     val format: String,
     val textFile: File,
     val coverFile: File?,
+    val imageDirectory: File?,
     val chapters: List<CachedChapter>,
     val catalog: List<CachedCatalogEntry>,
     val sourceSize: Long,
@@ -50,11 +51,12 @@ data class CachedBook(
  * plus a chapter/catalog manifest, then included in backup and sync data.
  */
 object StructuredBookCache {
-    private const val CACHE_VERSION = 2
+    private const val CACHE_VERSION = 3
     private const val ROOT_NAME = "structured_books"
     private const val MANIFEST_NAME = "manifest.json"
     private const val CONTENT_NAME = "content.txt"
     private const val COVER_NAME = "cover.bin"
+    private const val IMAGES_NAME = "images"
     private const val CONTENT_ENCODING = "gzip+base64+utf8"
     private val SUPPORTED_FORMATS = setOf("EPUB", "CHM")
 
@@ -120,6 +122,12 @@ object StructuredBookCache {
 
     fun coverFile(context: Context, bookId: Long): File? =
         loadAny(context, bookId)?.coverFile?.takeIf(File::isFile)
+
+    fun imageFile(context: Context, bookId: Long, href: String): File? {
+        val imageDirectory = loadAny(context, bookId)?.imageDirectory?.takeIf(File::isDirectory)
+            ?: return null
+        return imageDirectory.resolve(imageFileName(href)).takeIf(File::isFile)
+    }
 
     fun clearBook(context: Context, bookId: Long) {
         cacheDirectory(context, bookId).deleteRecursively()
@@ -227,6 +235,11 @@ object StructuredBookCache {
         sourceProvider().use(EpubParser::readCoverImage)?.let { bytes ->
             if (bytes.isNotEmpty()) staging.resolve(COVER_NAME).writeBytes(bytes)
         }
+        val imageDirectory = staging.resolve(IMAGES_NAME).apply { mkdirs() }
+        sourceProvider().use(EpubParser::readImages).forEach { image ->
+            imageDirectory.resolve(imageFileName(image.href)).writeBytes(image.data)
+        }
+        if (imageDirectory.listFiles().isNullOrEmpty()) imageDirectory.deleteRecursively()
         val catalog = chapters.mapIndexed { index, chapter ->
             CachedCatalogEntry(chapter.title, 0, index, false)
         }
@@ -238,7 +251,8 @@ object StructuredBookCache {
             sourceModified = sourceModified,
             chapters = chapters,
             catalog = catalog,
-            hasCover = staging.resolve(COVER_NAME).isFile
+            hasCover = staging.resolve(COVER_NAME).isFile,
+            hasImages = staging.resolve(IMAGES_NAME).isDirectory
         )
     }
 
@@ -303,7 +317,8 @@ object StructuredBookCache {
                 sourceModified = sourceModified,
                 chapters = chapters,
                 catalog = catalog,
-                hasCover = false
+                hasCover = false,
+                hasImages = false
             )
         } finally {
             temporarySource.delete()
@@ -331,7 +346,8 @@ object StructuredBookCache {
         sourceModified: Long,
         chapters: List<CachedChapter>,
         catalog: List<CachedCatalogEntry>,
-        hasCover: Boolean
+        hasCover: Boolean,
+        hasImages: Boolean
     ) {
         val chapterJson = JSONArray()
         chapters.forEach { chapter ->
@@ -362,6 +378,7 @@ object StructuredBookCache {
             .put("sourceModified", sourceModified)
             .put("contentFile", CONTENT_NAME)
             .put("coverFile", if (hasCover) COVER_NAME else JSONObject.NULL)
+            .put("imageDirectory", if (hasImages) IMAGES_NAME else JSONObject.NULL)
             .put("chapters", chapterJson)
             .put("catalog", catalogJson)
         staging.resolve(MANIFEST_NAME).writeText(manifest.toString(2), Charsets.UTF_8)
@@ -404,6 +421,14 @@ object StructuredBookCache {
                         .takeIf(String::isNotBlank)
                         ?.let(directory::resolve)
                         ?.takeIf(File::isFile)
+                },
+                imageDirectory = if (json.isNull("imageDirectory")) {
+                    null
+                } else {
+                    json.optString("imageDirectory")
+                        .takeIf(String::isNotBlank)
+                        ?.let(directory::resolve)
+                        ?.takeIf(File::isDirectory)
                 },
                 chapters = chapters,
                 catalog = catalog,
@@ -472,5 +497,13 @@ object StructuredBookCache {
 
         override fun flush() = delegate.flush()
         override fun close() = delegate.close()
+    }
+
+    private fun imageFileName(href: String): String {
+        val safe = href.lowercase()
+            .replace(Regex("[^a-z0-9._-]+"), "_")
+            .trim('_')
+            .ifBlank { "image" }
+        return safe.takeLast(160)
     }
 }

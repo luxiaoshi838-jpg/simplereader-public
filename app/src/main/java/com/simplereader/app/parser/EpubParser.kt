@@ -4,6 +4,7 @@ import android.text.Html
 import io.documentnode.epub4j.domain.Resource
 import io.documentnode.epub4j.epub.EpubReader
 import java.io.InputStream
+import java.util.ArrayDeque
 
 /**
  * EPUB 2/3 parser backed by documentnode/epub4j.
@@ -13,6 +14,11 @@ data class EpubChapter(
     val name: String,
     val text: String,
     val content: String = ""
+)
+
+data class EpubImage(
+    val href: String,
+    val data: ByteArray
 )
 
 object EpubParser {
@@ -47,9 +53,25 @@ object EpubParser {
             EpubChapter(
                 name = href,
                 text = chapterTitle(resource, href, html),
-                content = htmlToText(html)
+                content = htmlToText(html, href)
             )
         }.distinctBy { it.name.lowercase() }
+    }
+
+    fun readImages(inputStream: InputStream): List<EpubImage> {
+        val book = EpubReader().readEpub(inputStream)
+        return book.resources.all
+            .filter { resource -> isImageResource(resource.href) && resource.size in 1..MAX_IMAGE_BYTES }
+            .mapNotNull { resource ->
+                runCatching {
+                    EpubImage(
+                        href = normalizedHref(resource.href),
+                        data = resource.data
+                    )
+                }.getOrNull()
+            }
+            .filter { it.data.isNotEmpty() && it.data.size <= MAX_IMAGE_BYTES }
+            .distinctBy { it.href.lowercase() }
     }
 
     /** Returns the real cover image declared by the EPUB package, if present. */
@@ -90,10 +112,25 @@ object EpubParser {
         return normalized.endsWith(".xhtml") || normalized.endsWith(".html") || normalized.endsWith(".htm")
     }
 
-    private fun htmlToText(html: String): String {
+    private fun isImageResource(href: String): Boolean {
+        val normalized = normalizedHref(href).lowercase()
+        return normalized.endsWith(".jpg") ||
+            normalized.endsWith(".jpeg") ||
+            normalized.endsWith(".png") ||
+            normalized.endsWith(".gif") ||
+            normalized.endsWith(".webp")
+    }
+
+    private fun htmlToText(html: String, chapterHref: String? = null): String {
+        val chapterBase = chapterHref?.substringBeforeLast('/', missingDelimiterValue = "").orEmpty()
         val body = html
             .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
             .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+            .replace(Regex("(?is)<img\\b[^>]*(?:src|data-src)\\s*=\\s*(['\"])(.*?)\\1[^>]*>")) { match ->
+                val source = match.groupValues.getOrNull(2).orEmpty()
+                val href = resolveRelativeHref(chapterBase, source)
+                if (href.isBlank()) "" else "\n$IMAGE_MARKER_PREFIX$href$IMAGE_MARKER_SUFFIX\n"
+            }
         return Html.fromHtml(body, Html.FROM_HTML_MODE_LEGACY)
             .toString()
             .replace('\u00A0', ' ')
@@ -102,5 +139,28 @@ object EpubParser {
             .trim()
     }
 
+    private fun resolveRelativeHref(base: String, value: String): String {
+        val raw = Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString()
+            .substringBefore('#')
+            .substringBefore('?')
+            .replace('\\', '/')
+            .trim()
+        if (raw.isBlank() || raw.startsWith("data:", ignoreCase = true)) return ""
+        if (raw.startsWith("/")) return normalizedHref(raw)
+        val path = if (base.isBlank()) raw else "$base/$raw"
+        val output = ArrayDeque<String>()
+        path.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (!output.isEmpty()) output.removeLast()
+                else -> output.addLast(part)
+            }
+        }
+        return output.joinToString("/")
+    }
+
     private const val MAX_COVER_BYTES = 24 * 1024 * 1024
+    private const val MAX_IMAGE_BYTES = 24 * 1024 * 1024
+    const val IMAGE_MARKER_PREFIX = "[[SR_IMAGE:"
+    const val IMAGE_MARKER_SUFFIX = "]]"
 }
