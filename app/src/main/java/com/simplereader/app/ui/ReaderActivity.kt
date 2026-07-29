@@ -226,15 +226,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 title = selectedBook.title
                 supportActionBar?.title = selectedBook.title
 
-                if (selectedBook.format.equals("EPUB", ignoreCase = true)) {
-                    startActivity(
-                        Intent(this@ReaderActivity, ReadiumEpubActivity::class.java)
-                            .putExtra(ReadiumEpubActivity.EXTRA_BOOK_ID, bookId)
-                    )
-                    finish()
-                    return@launch
-                }
-
                 if (selectedBook.format.equals("CHM", ignoreCase = true)) {
                     showError("当前版本已停止支持 CHM：真实样本无法稳定提取目录和正文，请改用 TXT 或 EPUB")
                     return@launch
@@ -769,15 +760,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val targetOffset = (progress?.epubChapterOffset ?: 0)
             .coerceIn(0, (chapterEnd - chapterStart).coerceAtLeast(0))
         structuredWholeText = wholeText
-        val buffer = buildEpubReadingBuffer(
-            wholeText = wholeText,
-            chapters = chapters,
-            starts = starts,
-            centerIndex = targetIndex
-        )
-        val initialPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
+        val initialPosition = (chapterStart + targetOffset).coerceIn(0, wholeText.length)
         return LoadedContent(
-            text = buffer.content,
+            text = wholeText,
             epubChapters = chapters,
             epubChapterStartPositions = starts,
             structuredCatalogEntries = cached.catalog.map { entry ->
@@ -790,8 +775,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             },
             structuredChapterIndex = targetIndex,
             structuredInitialPosition = initialPosition,
-            structuredWholeBookMode = false,
-            structuredReadingBuffer = buffer
+            structuredWholeBookMode = true,
+            structuredReadingBuffer = null
         )
     }
 
@@ -829,6 +814,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         structuredReadingBuffer = loadedContent.structuredReadingBuffer
         if (!format.equals("EPUB", ignoreCase = true)) structuredWholeText = null
         chmCachedFile = loadedContent.chmCachePath?.let(::File)
+        if (format.equals("EPUB", ignoreCase = true) && pageTurnMode != TURN_MODE_VERTICAL) {
+            pageTurnMode = TURN_MODE_VERTICAL
+            saveReaderPrefs()
+            updateSettingsLabels()
+        }
 
         val progress = withContext(Dispatchers.IO) {
             database.readProgressDao().getProgress(bookId)
