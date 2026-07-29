@@ -135,7 +135,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
-        contentView.setTextIsSelectable(true)
+        contentView.setTextIsSelectable(false)
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
@@ -152,11 +152,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         contentView.setOnTouchListener { _, event ->
             handleReaderChromeTap(event)
         }
+        contentView.setOnLongClickListener {
+            contentView.setTextIsSelectable(true)
+            Toast.makeText(this, "已进入文字选择模式", Toast.LENGTH_SHORT).show()
+            false
+        }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
             updateVerticalScrollProgress(scrollY)
             maybeExtendTxtContinuousBuffer(scrollY)
-            maybeExtendStructuredContinuousBuffer(scrollY)
         }
 
         bookId = intent.getLongExtra("bookId", 0L)
@@ -577,10 +581,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         wholeText: String,
         chapters: List<EpubChapter>,
         starts: List<Int>,
-        centerIndex: Int
+        centerIndex: Int,
+        includeAdjacent: Boolean = false
     ): StructuredReadingBuffer {
         val safeCenter = centerIndex.coerceIn(0, chapters.lastIndex)
-        val indices = (safeCenter - 1..safeCenter + 1).filter { it in chapters.indices }
+        val indices = if (includeAdjacent) {
+            (safeCenter - 1..safeCenter + 1).filter { it in chapters.indices }
+        } else {
+            listOf(safeCenter)
+        }
         val texts = indices.map { index ->
             val start = starts.getOrElse(index) { 0 }.coerceIn(0, wholeText.length)
             val end = starts.getOrNull(index + 1)
@@ -1105,7 +1114,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun configureVerticalScrollIfNeeded() {
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
-        contentView.setTextIsSelectable(true)
+        if (!contentView.isTextSelectable) {
+            contentView.setTextIsSelectable(false)
+        }
         contentView.isVerticalScrollBarEnabled = false
         readerScrollView.isVerticalScrollBarEnabled = continuous
         readerScrollView.isScrollbarFadingEnabled = false
@@ -2039,7 +2050,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         val currentIndex = if (isStructuredChapterDocument()) {
-            structuredChapterIndex
+            currentStructuredLocation().chapterIndex
         } else {
             epubChapterStartPositions.indexOfLast { it <= currentPosition }.coerceAtLeast(0)
         }
@@ -2230,7 +2241,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 bookmarkButton.isEnabled = showingCatalog
                 if (showingCatalog) {
                     val currentChapter = currentChapterIndex()
-                    val useStructuredCatalog = isStructuredChapterDocument() && structuredCatalogEntries.isNotEmpty()
+                    val useStructuredCatalog = false
                     val highlightedCatalogIndex = if (useStructuredCatalog) {
                         structuredCatalogEntries.indexOfFirst { entry ->
                             !entry.isSection && entry.targetChapterIndex == currentChapter
@@ -2596,9 +2607,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         if (isStructuredChapterDocument() && !structuredWholeBookMode) {
-            val lastBuffered = structuredReadingBuffer?.lastChapterIndex ?: structuredChapterIndex
-            if (lastBuffered < epubChapters.lastIndex) {
-                loadStructuredChapter(lastBuffered + 1, offset = 0, saveImmediately = true, direction = 1)
+            val currentIndex = currentStructuredLocation().chapterIndex.coerceIn(0, epubChapters.lastIndex)
+            val targetIndex = currentIndex + 1
+            if (targetIndex <= epubChapters.lastIndex) {
+                loadStructuredChapter(targetIndex, offset = 0, saveImmediately = true, direction = 1)
             } else {
                 Toast.makeText(this, "已经到末尾", Toast.LENGTH_SHORT).show()
             }
@@ -2634,10 +2646,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         if (isStructuredChapterDocument() && !structuredWholeBookMode) {
-            val firstBuffered = structuredReadingBuffer?.firstChapterIndex ?: structuredChapterIndex
-            if (firstBuffered > 0) {
+            val currentIndex = currentStructuredLocation().chapterIndex.coerceIn(0, epubChapters.lastIndex)
+            val targetIndex = currentIndex - 1
+            if (targetIndex >= 0) {
                 loadStructuredChapter(
-                    firstBuffered - 1,
+                    targetIndex,
                     saveImmediately = true,
                     direction = -1,
                     openAtEnd = true
@@ -2667,17 +2680,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 direction = -1
             )
         } else if (isStructuredChapterDocument() && !structuredWholeBookMode && direction > 0) {
-            val lastBuffered = structuredReadingBuffer?.lastChapterIndex ?: structuredChapterIndex
-            if (lastBuffered < epubChapters.lastIndex) {
-                loadStructuredChapter(lastBuffered + 1, offset = 0, saveImmediately = true, direction = 1)
+            val currentIndex = currentStructuredLocation().chapterIndex.coerceIn(0, epubChapters.lastIndex)
+            val targetIndex = currentIndex + 1
+            if (targetIndex <= epubChapters.lastIndex) {
+                loadStructuredChapter(targetIndex, offset = 0, saveImmediately = true, direction = 1)
             } else {
                 Toast.makeText(this, "已经到末尾", Toast.LENGTH_SHORT).show()
             }
         } else if (isStructuredChapterDocument() && !structuredWholeBookMode && direction < 0) {
-            val firstBuffered = structuredReadingBuffer?.firstChapterIndex ?: structuredChapterIndex
-            if (firstBuffered > 0) {
+            val currentIndex = currentStructuredLocation().chapterIndex.coerceIn(0, epubChapters.lastIndex)
+            val targetIndex = currentIndex - 1
+            if (targetIndex >= 0) {
                 loadStructuredChapter(
-                    firstBuffered - 1,
+                    targetIndex,
                     saveImmediately = true,
                     direction = -1,
                     openAtEnd = true
@@ -3226,6 +3241,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     duration <= READER_CHROME_TAP_TIMEOUT_MS &&
                     isReaderChromeCenter(event.rawX, event.rawY)
                 ) {
+                    if (contentView.isTextSelectable) {
+                        contentView.setTextIsSelectable(false)
+                    }
                     toggleReaderChrome()
                     return true
                 }

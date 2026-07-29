@@ -51,7 +51,7 @@ data class CachedBook(
  * plus a chapter/catalog manifest, then included in backup and sync data.
  */
 object StructuredBookCache {
-    private const val CACHE_VERSION = 3
+    private const val CACHE_VERSION = 4
     private const val ROOT_NAME = "structured_books"
     private const val MANIFEST_NAME = "manifest.json"
     private const val CONTENT_NAME = "content.txt"
