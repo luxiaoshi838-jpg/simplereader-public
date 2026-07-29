@@ -61,6 +61,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private var readerStarted = false
     private var readerLoaded = false
     private var chromeVisible = false
+    private var navigationPending = false
     private var userDraggingProgress = false
     private var readerFontScale = 1.0f
     private var nightMode = false
@@ -110,7 +111,9 @@ class ReadiumEpubActivity : AppCompatActivity() {
         chapterTitleText = findViewById(R.id.epubChapterTitle)
         progressText = findViewById(R.id.epubProgressLabel)
         progressSeekBar = findViewById(R.id.epubProgressSeekBar)
-        touchBlocker.setOnClickListener { setChromeVisible(false) }
+        touchBlocker.setOnClickListener {
+            if (!navigationPending) setChromeVisible(false)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
@@ -181,10 +184,10 @@ class ReadiumEpubActivity : AppCompatActivity() {
     private fun setupControls() {
         findViewById<View>(R.id.epubBackButton).setOnClickListener { finish() }
         findViewById<View>(R.id.epubPreviousChapterButton).setOnClickListener {
-            if (chromeVisible) runBooleanCommand("SimpleReader.goChapter(-1)", "已经是第一章")
+            if (chromeVisible) runNavigationCommand("SimpleReader.goChapter(-1)", "已经是第一章")
         }
         findViewById<View>(R.id.epubNextChapterButton).setOnClickListener {
-            if (chromeVisible) runBooleanCommand("SimpleReader.goChapter(1)", "已经是最后一章")
+            if (chromeVisible) runNavigationCommand("SimpleReader.goChapter(1)", "已经是最后一章")
         }
         findViewById<View>(R.id.epubCatalogButton).setOnClickListener {
             if (chromeVisible) showCatalog()
@@ -206,16 +209,16 @@ class ReadiumEpubActivity : AppCompatActivity() {
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                userDraggingProgress = chromeVisible
+                userDraggingProgress = chromeVisible && !navigationPending
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val canJump = chromeVisible && userDraggingProgress
+                val canJump = chromeVisible && userDraggingProgress && !navigationPending
                 userDraggingProgress = false
                 if (!canJump) return
                 val fraction = ((seekBar?.progress ?: 0).toDouble() / progressSeekBar.max)
                     .coerceIn(0.0, 1.0)
-                runBooleanCommand(
+                runNavigationCommand(
                     "SimpleReader.goToProgress($fraction)",
                     "阅读位置仍在准备，请稍后再拖动"
                 )
@@ -253,12 +256,15 @@ class ReadiumEpubActivity : AppCompatActivity() {
             val storedProgress = withContext(Dispatchers.IO) {
                 database.readProgressDao().getProgress(bookId)
             }
+            val validCenterProgress = storedProgress?.locatorType == LOCATOR_TYPE
             initialCfi = storedProgress
-                ?.takeIf { it.locatorType == LOCATOR_TYPE }
+                ?.takeIf { validCenterProgress }
                 ?.position
                 ?.takeIf { it.startsWith("epubcfi(") }
                 .orEmpty()
-            initialFraction = storedProgress?.epubProgressFraction
+            initialFraction = storedProgress
+                ?.takeIf { validCenterProgress }
+                ?.epubProgressFraction
                 ?.toDouble()
                 ?.coerceIn(0.0, 1.0)
                 ?: 0.0
@@ -291,28 +297,31 @@ class ReadiumEpubActivity : AppCompatActivity() {
         bottomBar.visibility = if (visible) View.VISIBLE else View.GONE
         touchBlocker.visibility = if (visible) View.VISIBLE else View.GONE
         progressText.visibility = if (visible) View.GONE else View.VISIBLE
-        progressSeekBar.isEnabled = visible
+        progressSeekBar.isEnabled = visible && !navigationPending
         if (!visible) userDraggingProgress = false
         if (readerStarted) {
             webView.evaluateJavascript("SimpleReader.setLocked($visible)", null)
         }
     }
 
-    private fun runBooleanCommand(script: String, failureMessage: String) {
-        if (!chromeVisible || !readerLoaded) return
+    private fun runNavigationCommand(script: String, failureMessage: String) {
+        if (!chromeVisible || !readerLoaded || navigationPending) return
+        navigationPending = true
+        progressSeekBar.isEnabled = false
         webView.evaluateJavascript(script) { result ->
-            if (!chromeVisible) return@evaluateJavascript
-            if (result == "true") {
-                setChromeVisible(false)
-            } else {
+            if (result != "true") {
+                navigationPending = false
+                progressSeekBar.isEnabled = chromeVisible
                 Toast.makeText(this, failureMessage, Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun showCatalog() {
-        if (!chromeVisible || tocItems.isEmpty()) {
-            if (chromeVisible) Toast.makeText(this, "当前书籍没有目录", Toast.LENGTH_SHORT).show()
+        if (!chromeVisible || tocItems.isEmpty() || navigationPending) {
+            if (chromeVisible && tocItems.isEmpty()) {
+                Toast.makeText(this, "当前书籍没有目录", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         val labels = tocItems.map { item ->
@@ -321,14 +330,12 @@ class ReadiumEpubActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("目录")
             .setItems(labels) { dialog, which ->
-                if (!chromeVisible) {
+                if (!chromeVisible || navigationPending) {
                     dialog.dismiss()
                     return@setItems
                 }
                 val href = JSONObject.quote(tocItems[which].href)
-                webView.evaluateJavascript("SimpleReader.goToHref($href)") { result ->
-                    if (result == "true") setChromeVisible(false)
-                }
+                runNavigationCommand("SimpleReader.goToHref($href)", "无法跳转目录")
                 dialog.dismiss()
             }
             .setNegativeButton("关闭", null)
@@ -336,7 +343,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
     }
 
     private fun changeFontScale(delta: Float) {
-        if (!chromeVisible) return
+        if (!chromeVisible || navigationPending) return
         readerFontScale = (readerFontScale + delta).coerceIn(0.75f, 1.8f)
         saveReaderPreferences()
         webView.evaluateJavascript(
@@ -346,7 +353,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
     }
 
     private fun toggleTheme() {
-        if (!chromeVisible) return
+        if (!chromeVisible || navigationPending) return
         nightMode = !nightMode
         saveReaderPreferences()
         webView.setBackgroundColor(if (nightMode) Color.rgb(21, 21, 21) else Color.rgb(245, 233, 200))
@@ -354,10 +361,11 @@ class ReadiumEpubActivity : AppCompatActivity() {
     }
 
     private fun updateLocation(cfi: String, href: String, title: String, fraction: Double) {
+        if (cfi.isBlank()) return
         currentCfi = cfi
         currentHref = href
         currentFraction = fraction.coerceIn(0.0, 1.0)
-        chapterTitleText.text = title.takeIf { it.isNotBlank() } ?: book.title
+        chapterTitleText.text = title.trim().takeIf { it.isNotBlank() } ?: book.title
         progressText.text = "${(currentFraction * 100).roundToInt()}%"
         if (!userDraggingProgress) {
             progressSeekBar.progress = (currentFraction * progressSeekBar.max).roundToInt()
@@ -369,7 +377,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
         if (currentCfi.isBlank()) return
         saveJob?.cancel()
         saveJob = lifecycleScope.launch {
-            delay(350L)
+            delay(650L)
             saveProgress()
         }
     }
@@ -408,6 +416,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
             runOnUiThread {
                 readerLoaded = true
                 loadingText.visibility = View.GONE
+                navigationPending = false
                 setChromeVisible(false)
             }
         }
@@ -415,7 +424,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
         @JavascriptInterface
         fun onBookReady(title: String) {
             runOnUiThread {
-                if (title.isNotBlank()) bookTitleText.text = title
+                if (title.isNotBlank()) bookTitleText.text = title.trim()
             }
         }
 
@@ -431,7 +440,9 @@ class ReadiumEpubActivity : AppCompatActivity() {
                             if (href.isBlank()) continue
                             add(
                                 TocItem(
-                                    title = item.optString("title", "未命名章节"),
+                                    title = item.optString("title", "未命名章节")
+                                        .replace(Regex("\\s+"), " ")
+                                        .trim(),
                                     href = href,
                                     depth = item.optInt("depth", 0)
                                 )
@@ -448,20 +459,45 @@ class ReadiumEpubActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun onNavigationSettled(success: Boolean, message: String) {
+            runOnUiThread {
+                val wasPending = navigationPending
+                navigationPending = false
+                progressSeekBar.isEnabled = chromeVisible
+                if (success) {
+                    if (wasPending && chromeVisible) setChromeVisible(false)
+                } else {
+                    Toast.makeText(
+                        this@ReadiumEpubActivity,
+                        message.takeIf { it.isNotBlank() } ?: "无法完成跳转",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun onCenterTap() {
             runOnUiThread {
-                if (readerLoaded) setChromeVisible(!chromeVisible)
+                if (readerLoaded && !navigationPending) setChromeVisible(!chromeVisible)
             }
         }
 
         @JavascriptInterface
         fun onReaderError(message: String) {
-            runOnUiThread { showFatalError("无法解析 EPUB：$message") }
+            runOnUiThread {
+                navigationPending = false
+                showFatalError("无法解析 EPUB：$message")
+            }
         }
     }
 
     override fun onStop() {
-        lifecycleScope.launch { saveProgress() }
+        if (readerStarted) webView.evaluateJavascript("SimpleReader.reportNow()", null)
+        lifecycleScope.launch {
+            delay(120L)
+            saveProgress()
+        }
         super.onStop()
     }
 
@@ -488,7 +524,7 @@ class ReadiumEpubActivity : AppCompatActivity() {
         private const val READER_URL = "https://appassets.androidplatform.net/assets/epubjs/reader.html"
         private const val BOOK_URL = "https://appassets.androidplatform.net/book/current.epub"
         private const val BOOK_FILE_NAME = "current.epub"
-        private const val LOCATOR_TYPE = "EPUBJS_CONTINUOUS"
+        private const val LOCATOR_TYPE = "EPUBJS_CONTINUOUS_CENTER_V2"
         private const val PREFS = "epubjs_continuous_reader"
         private const val KEY_FONT_SCALE = "font_scale"
         private const val KEY_NIGHT = "night_mode"
