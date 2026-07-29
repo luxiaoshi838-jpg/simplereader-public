@@ -11,8 +11,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
-import android.text.Spannable
-import android.text.Selection
 import android.text.Spanned
 import android.text.style.ImageSpan
 import android.text.style.RelativeSizeSpan
@@ -137,7 +135,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
-        contentView.setTextIsSelectable(true)
+        contentView.setTextIsSelectable(false)
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
@@ -1107,7 +1105,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun configureVerticalScrollIfNeeded() {
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
-        contentView.setTextIsSelectable(true)
+        contentView.setTextIsSelectable(false)
         contentView.isVerticalScrollBarEnabled = false
         readerScrollView.isVerticalScrollBarEnabled = continuous
         readerScrollView.isScrollbarFadingEnabled = false
@@ -3237,7 +3235,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     duration <= READER_CHROME_TAP_TIMEOUT_MS &&
                     isReaderChromeCenter(event.rawX, event.rawY)
                 ) {
-                    (contentView.text as? Spannable)?.let { Selection.removeSelection(it) }
                     contentView.clearFocus()
                     toggleReaderChrome()
                     return true

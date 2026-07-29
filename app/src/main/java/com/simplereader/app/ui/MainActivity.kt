@@ -1056,9 +1056,11 @@ class MainActivity : AppCompatActivity() {
                         val existingNames = currentBooks.map { it.fileName.lowercase() }.toMutableSet()
                         currentBooks.forEach { book ->
                             if (!bookFileExists(book)) {
-                                database.bookDao().deleteById(book.id)
-                                existingNames.remove(book.fileName.lowercase())
-                                removed++
+                                val deleted = removeBookFromShelfSafely(book.id)
+                                if (deleted) {
+                                    existingNames.remove(book.fileName.lowercase())
+                                    removed++
+                                }
                             }
                         }
                         runCatching { groupFolder.listFiles() }.getOrElse { emptyArray() }
@@ -1104,6 +1106,16 @@ class MainActivity : AppCompatActivity() {
                 ).show()
             }
         }
+    }
+
+    private suspend fun removeBookFromShelfSafely(bookId: Long): Boolean {
+        return runCatching {
+            database.withTransaction {
+                database.bookmarkDao().deleteByBookId(bookId)
+                database.readProgressDao().deleteByBookId(bookId)
+                database.bookDao().deleteById(bookId)
+            }
+        }.isSuccess
     }
 
     private fun resolveGroupFolder(group: BookGroup): DocumentFile? {

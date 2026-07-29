@@ -13,4 +13,7 @@ interface ReadProgressDao {
 
     @Delete
     suspend fun delete(progress: ReadProgress)
+
+    @Query("DELETE FROM read_progress WHERE bookId = :bookId")
+    suspend fun deleteByBookId(bookId: Long)
 }
