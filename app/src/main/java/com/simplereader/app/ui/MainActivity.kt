@@ -1579,11 +1579,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun persistReadPermission(uri: Uri): PermissionStatus {
         return try {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
             PermissionStatus.PERSISTED
         } catch (_: SecurityException) {
-            Toast.makeText(this, "该来源无法持久授权，重启后可能需要重新选择", Toast.LENGTH_SHORT).show()
-            PermissionStatus.SESSION_ONLY
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                Toast.makeText(this, "已保存读取权限；如需重命名本地文件，请重新按文件夹导入以授权写入", Toast.LENGTH_LONG).show()
+                PermissionStatus.PERSISTED
+            } catch (_: SecurityException) {
+                Toast.makeText(this, "该来源无法持久授权，重启后可能需要重新选择", Toast.LENGTH_SHORT).show()
+                PermissionStatus.SESSION_ONLY
+            }
         }
     }
 

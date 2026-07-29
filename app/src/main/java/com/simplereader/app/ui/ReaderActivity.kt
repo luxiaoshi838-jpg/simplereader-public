@@ -3,6 +3,7 @@ package com.simplereader.app.ui
 import android.net.Uri
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
@@ -112,6 +113,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pendingReaderSearchHighlight: ReaderSearchHighlight? = null
     private var activeReaderSearchHighlight: Boolean = false
     private var readerChromeVisible: Boolean = false
+    private var readerTouchDownRawX: Float = 0f
+    private var readerTouchDownRawY: Float = 0f
+    private var readerTouchDownTime: Long = 0L
+    private var programmaticScrollGuardUntil: Long = 0L
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -141,7 +146,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         gestureDetector = GestureDetector(this, this)
         readerScrollView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
+            handleReaderChromeTap(event)
             pageTurnMode != TURN_MODE_VERTICAL
+        }
+        contentView.setOnTouchListener { _, event ->
+            handleReaderChromeTap(event)
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
@@ -501,6 +510,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         offsetFraction: Float? = null
     ) {
         val targetIndex = chapterIndex.coerceIn(0, epubChapters.lastIndex)
+        beginProgrammaticScrollGuard()
         if (structuredWholeBookMode) {
             val chapterStart = epubChapterStartPositions.getOrElse(targetIndex) { 0 }
             val chapterEnd = epubChapterStartPositions.getOrNull(targetIndex + 1)
@@ -584,6 +594,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun maybeExtendStructuredContinuousBuffer(scrollY: Int) {
         if (
             suppressNextScrollProgress ||
+            isProgrammaticScrollGuardActive() ||
             pageTurnMode != TURN_MODE_VERTICAL ||
             !isStructuredChapterDocument() ||
             structuredWholeBookMode ||
@@ -939,7 +950,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     val windowBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
                     val fraction = ((currentPosition.toLong() - txtCurrentPageStartByte).toDouble() / windowBytes)
                         .coerceIn(0.0, 1.0)
-                    suppressNextScrollProgress = true
+                    beginProgrammaticScrollGuard()
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
                     readerScrollView.post {
                         suppressNextScrollProgress = false
@@ -965,7 +976,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
                 if (maxScroll > 0 && currentContent.isNotEmpty()) {
                     val fraction = (currentPosition.toFloat() / currentContent.length).coerceIn(0f, 1f)
-                    suppressNextScrollProgress = true
+                    beginProgrammaticScrollGuard()
                     readerScrollView.scrollTo(0, (maxScroll * fraction).toInt().coerceIn(0, maxScroll))
                     readerScrollView.post {
                         suppressNextScrollProgress = false
@@ -1108,6 +1119,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun updateVerticalScrollProgress(scrollY: Int) {
         if (suppressNextScrollProgress) return
+        if (isProgrammaticScrollGuardActive()) return
         if (pageTurnMode != TURN_MODE_VERTICAL || !openSucceeded || currentContent.isBlank()) return
         val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
         if (maxScroll <= 0) return
@@ -1128,6 +1140,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun maybeExtendTxtContinuousBuffer(scrollY: Int) {
         if (
             suppressNextScrollProgress ||
+            isProgrammaticScrollGuardActive() ||
             pageTurnMode != TURN_MODE_VERTICAL ||
             !txtStreamingMode ||
             !openSucceeded ||
@@ -1205,7 +1218,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         oldScrollY: Int,
         preserveAbsoluteAnchor: Boolean
     ) {
-        suppressNextScrollProgress = true
+        beginProgrammaticScrollGuard()
         contentView.text = currentContent
         contentView.textSize = readerTextSize
         configureVerticalScrollIfNeeded()
@@ -1756,7 +1769,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 val lineTop = layout.getLineTop(line)
                 val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
                 val targetScroll = (lineTop - readerScrollView.height / 3).coerceIn(0, maxScroll)
-                suppressNextScrollProgress = true
+                beginProgrammaticScrollGuard()
                 readerScrollView.scrollTo(0, targetScroll)
                 readerScrollView.post { suppressNextScrollProgress = false }
             }
@@ -2041,6 +2054,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
         currentPosition = epubChapterStartPositions[targetIndex]
         if (txtStreamingMode) {
+            beginProgrammaticScrollGuard()
             showStreamingTxtPage(
                 currentPosition.toLong(),
                 saveImmediately = true,
@@ -2262,6 +2276,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                     loadStructuredChapter(it, offset = 0, saveImmediately = true)
                                 }
                             } else {
+                                beginProgrammaticScrollGuard()
                                 currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
                                 if (txtStreamingMode) {
                                     showStreamingTxtPage(
@@ -2527,12 +2542,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (txtStreamingMode) {
             val target = bookmark.position.toLongOrNull()
                 ?: return Toast.makeText(this, "书签位置无效", Toast.LENGTH_SHORT).show()
+            beginProgrammaticScrollGuard()
             showStreamingTxtPage(target, saveImmediately = true, keepContextBeforeTarget = true)
             return
         }
         val target = bookmark.position.toIntOrNull()
             ?.coerceIn(0, currentContent.length)
             ?: return Toast.makeText(this, "书签位置无效", Toast.LENGTH_SHORT).show()
+        beginProgrammaticScrollGuard()
         currentPosition = target
         displayContent()
         markProgressDirty()
@@ -2772,6 +2789,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (txtStreamingMode) {
             val targetByte = ((progress / 1000f) * txtTotalBytes).toLong()
                 .coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
+            beginProgrammaticScrollGuard()
             showStreamingTxtPage(targetByte, saveImmediately = true, keepContextBeforeTarget = true)
             return
         }
@@ -3161,18 +3179,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onDown(e: MotionEvent): Boolean = true
     override fun onShowPress(e: MotionEvent) {}
     override fun onSingleTapUp(e: MotionEvent): Boolean {
-        val width = readerScrollView.width.takeIf { it > 0 } ?: return false
-        val height = readerScrollView.height.takeIf { it > 0 } ?: return false
-        val centerLeft = width / 4f
-        val centerRight = width * 3f / 4f
-        val centerTop = height / 4f
-        val centerBottom = height * 3f / 4f
-        val inCenter = e.x in centerLeft..centerRight && e.y in centerTop..centerBottom
-        if (inCenter) {
-            toggleReaderChrome()
-            return true
-        }
         if (pageTurnMode == TURN_MODE_VERTICAL) return false
+        val width = readerScrollView.width.takeIf { it > 0 } ?: return false
+        val centerLeft = width * READER_CHROME_CENTER_START
+        val centerRight = width * READER_CHROME_CENTER_END
         return when {
             e.x < centerLeft -> {
                 previousPage()
@@ -3184,6 +3194,54 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             else -> false
         }
+    }
+
+    private fun beginProgrammaticScrollGuard(durationMs: Long = PROGRAMMATIC_SCROLL_GUARD_MS) {
+        suppressNextScrollProgress = true
+        programmaticScrollGuardUntil = SystemClock.uptimeMillis() + durationMs
+        contentView.postDelayed({
+            if (!isProgrammaticScrollGuardActive()) {
+                suppressNextScrollProgress = false
+            }
+        }, durationMs + 16L)
+    }
+
+    private fun isProgrammaticScrollGuardActive(): Boolean =
+        SystemClock.uptimeMillis() < programmaticScrollGuardUntil
+
+    private fun handleReaderChromeTap(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                readerTouchDownRawX = event.rawX
+                readerTouchDownRawY = event.rawY
+                readerTouchDownTime = event.eventTime
+            }
+            MotionEvent.ACTION_UP -> {
+                val movedX = kotlin.math.abs(event.rawX - readerTouchDownRawX)
+                val movedY = kotlin.math.abs(event.rawY - readerTouchDownRawY)
+                val tapSlop = dp(14).toFloat()
+                val duration = event.eventTime - readerTouchDownTime
+                if (movedX <= tapSlop &&
+                    movedY <= tapSlop &&
+                    duration <= READER_CHROME_TAP_TIMEOUT_MS &&
+                    isReaderChromeCenter(event.rawX, event.rawY)
+                ) {
+                    toggleReaderChrome()
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun isReaderChromeCenter(rawX: Float, rawY: Float): Boolean {
+        val location = IntArray(2)
+        readerScrollView.getLocationOnScreen(location)
+        val left = location[0] + readerScrollView.width * READER_CHROME_CENTER_START
+        val right = location[0] + readerScrollView.width * READER_CHROME_CENTER_END
+        val top = location[1] + readerScrollView.height * READER_CHROME_CENTER_START
+        val bottom = location[1] + readerScrollView.height * READER_CHROME_CENTER_END
+        return rawX in left..right && rawY in top..bottom
     }
 
     override fun onScroll(
@@ -3281,6 +3339,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val TURN_MODE_HORIZONTAL = "horizontal"
         private const val TURN_MODE_VERTICAL = "vertical"
         private const val TURN_MODE_FADE = "fade"
+        private const val READER_CHROME_CENTER_START = 0.20f
+        private const val READER_CHROME_CENTER_END = 0.80f
+        private const val READER_CHROME_TAP_TIMEOUT_MS = 260L
+        private const val PROGRAMMATIC_SCROLL_GUARD_MS = 600L
         private val EPUB_IMAGE_MARKER = Regex("\\[\\[SR_IMAGE:([^\\]]+)]]")
         private const val MENU_ADD_BOOKMARK = 1
         private const val MENU_BOOKMARKS = 2
