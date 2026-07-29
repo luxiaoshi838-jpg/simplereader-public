@@ -94,8 +94,11 @@ class ReadiumEpubActivity :
     private var touchStartY = 0f
     private var touchStartedInReader = false
     private var chromeTouchConsumed = false
+    private var horizontalTouchConsumed = false
     private var boundaryNavigationUntil = 0L
     private var boundaryNavigationHref = ""
+    private var currentResourcePageIndex = 0
+    private var currentResourcePageCount = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -129,12 +132,21 @@ class ReadiumEpubActivity :
                     touchStartX = event.rawX
                     touchStartY = event.rawY
                     touchStartedInReader = true
+                    horizontalTouchConsumed = false
                     chromeTouchConsumed = chromeVisible && !isVisibleChromeArea(event.rawX.toInt(), event.rawY.toInt())
                     if (chromeTouchConsumed) return true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
                     if (chromeTouchConsumed) return true
+                    if (!chromeVisible && touchStartedInReader) {
+                        val deltaX = event.rawX - touchStartX
+                        val deltaY = event.rawY - touchStartY
+                        if (horizontalTouchConsumed || isHorizontalChapterSwipe(deltaX, deltaY)) {
+                            horizontalTouchConsumed = true
+                            return true
+                        }
+                    }
                 }
 
                 MotionEvent.ACTION_UP -> {
@@ -145,10 +157,16 @@ class ReadiumEpubActivity :
                         chromeTouchConsumed = false
                         return true
                     }
+                    if (horizontalTouchConsumed) {
+                        horizontalTouchConsumed = false
+                        touchStartedInReader = false
+                        return true
+                    }
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
                     chromeTouchConsumed = false
+                    horizontalTouchConsumed = false
                 }
             }
         }
@@ -160,6 +178,7 @@ class ReadiumEpubActivity :
             touchStartedInReader = false
         } else if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
             touchStartedInReader = false
+            horizontalTouchConsumed = false
         }
 
         return handled
@@ -418,7 +437,7 @@ class ReadiumEpubActivity :
         if (now < boundaryNavigationUntil) {
             return
         }
-        if (kotlin.math.abs(deltaY) < dp(140) || kotlin.math.abs(deltaY) < kotlin.math.abs(deltaX) * 1.8f) {
+        if (kotlin.math.abs(deltaY) < dp(104) || kotlin.math.abs(deltaY) < kotlin.math.abs(deltaX) * 1.5f) {
             return
         }
         val locator = currentLocator ?: return
@@ -426,16 +445,18 @@ class ReadiumEpubActivity :
         if (href.isBlank() || href == boundaryNavigationHref) {
             return
         }
-        val progression = locator.locations.progression ?: return
+        val progression = locator.locations.progression ?: 0.0
+        val atLastResourcePage = currentResourcePageIndex >= currentResourcePageCount - 1
+        val atFirstResourcePage = currentResourcePageIndex <= 0
         when {
-            deltaY < 0 && progression >= 0.985 -> {
+            deltaY < 0 && (atLastResourcePage || progression >= 0.965) -> {
                 boundaryNavigationHref = href
                 boundaryNavigationUntil = now + BOUNDARY_NAVIGATION_COOLDOWN_MS
                 navigator?.goForward(animated = true) {
                     boundaryNavigationHref = ""
                 }
             }
-            deltaY > 0 && progression <= 0.015 -> {
+            deltaY > 0 && (atFirstResourcePage || progression <= 0.02) -> {
                 boundaryNavigationHref = href
                 boundaryNavigationUntil = now + BOUNDARY_NAVIGATION_COOLDOWN_MS
                 navigator?.goBackward(animated = true) {
@@ -445,11 +466,16 @@ class ReadiumEpubActivity :
         }
     }
 
+    private fun isHorizontalChapterSwipe(deltaX: Float, deltaY: Float): Boolean =
+        kotlin.math.abs(deltaX) >= dp(56) && kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.25f
+
     override fun onJumpToLocator(locator: Locator) {
         updateLocation(locator)
     }
 
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+        currentResourcePageIndex = pageIndex.coerceAtLeast(0)
+        currentResourcePageCount = totalPages.coerceAtLeast(1)
         updateLocation(locator)
     }
 
