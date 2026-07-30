@@ -1205,7 +1205,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 renderExtendedTxtBuffer(
                     anchorByte = anchorByte,
                     oldScrollY = oldScrollY,
-                    preserveAbsoluteAnchor = true
+                    preserveAbsoluteAnchor = !forward
                 )
             } catch (_: Throwable) {
                 // Keep the already visible buffer usable. A later scroll retries.
@@ -1232,8 +1232,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             readerScrollView.scrollTo(0, targetScroll)
             readerScrollView.post {
                 suppressNextScrollProgress = false
-                updateVerticalScrollProgress(readerScrollView.scrollY)
-                maybeExtendTxtContinuousBuffer(readerScrollView.scrollY)
+                if (preserveAbsoluteAnchor) {
+                    updateVerticalScrollProgress(readerScrollView.scrollY)
+                } else {
+                    currentPosition = anchorByte
+                        .coerceIn(txtContinuousBuffer.startByte, txtContinuousBuffer.endByte)
+                        .coerceAtMost(Int.MAX_VALUE.toLong())
+                        .toInt()
+                    updateProgressViews(progressForCurrentPosition())
+                    markProgressDirty()
+                    scheduleProgressSave()
+                }
             }
         }
     }
@@ -3329,7 +3338,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
         private const val TXT_STREAM_WINDOW_BYTES = 192 * 1024
-        private const val TXT_PREFETCH_FORWARD_FRACTION = 0.62f
+        private const val TXT_PREFETCH_FORWARD_FRACTION = 0.90f
         private const val TXT_PREFETCH_BACKWARD_FRACTION = 0.12f
         private const val STRUCTURED_PREFETCH_FORWARD_FRACTION = 0.86f
         private const val STRUCTURED_PREFETCH_BACKWARD_FRACTION = 0.14f
