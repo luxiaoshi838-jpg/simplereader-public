@@ -11,7 +11,7 @@ import android.view.ViewConfiguration
 import android.widget.ScrollView
 import kotlin.math.max
 
-/** ScrollView with a large, always-visible and directly draggable thumb. */
+/** ScrollView with a slim passive thumb that becomes draggable while the user scrolls. */
 class FastScrollView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -30,12 +30,20 @@ class FastScrollView @JvmOverloads constructor(
     }
     private val thumbRect = RectF()
     private val trackRect = RectF()
-    private val thumbWidth = 10f * density
-    private val trackWidth = 4f * density
+    private val passiveThumbWidth = 3f * density
+    private val activeThumbWidth = 10f * density
+    private val trackWidth = 2f * density
     private val touchWidth = max(44f * density, ViewConfiguration.get(context).scaledTouchSlop * 3f)
     private val minThumbHeight = 52f * density
     private var draggingThumb = false
+    private var scrollThumbActive = false
     private var dragOffset = 0f
+    private val deactivateRunnable = Runnable {
+        if (!draggingThumb) {
+            scrollThumbActive = false
+            invalidate()
+        }
+    }
 
     init {
         isVerticalScrollBarEnabled = false
@@ -47,7 +55,12 @@ class FastScrollView @JvmOverloads constructor(
     }
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && canFastScroll() && inFastScrollZone(event.x)) {
+        if (
+            event.actionMasked == MotionEvent.ACTION_DOWN &&
+            scrollThumbActive &&
+            canFastScroll() &&
+            inFastScrollZone(event.x)
+        ) {
             startDragging(event.y)
             return true
         }
@@ -57,7 +70,7 @@ class FastScrollView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (canFastScroll() && inFastScrollZone(event.x)) {
+                if (scrollThumbActive && canFastScroll() && inFastScrollZone(event.x)) {
                     startDragging(event.y)
                     return true
                 }
@@ -69,6 +82,7 @@ class FastScrollView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (draggingThumb) {
                 scrollFromFinger(event.y)
                 draggingThumb = false
+                scheduleDeactivate()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 invalidate()
                 performClick()
@@ -85,6 +99,10 @@ class FastScrollView @JvmOverloads constructor(
 
     override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
         super.onScrollChanged(left, top, oldLeft, oldTop)
+        if (top != oldTop) {
+            scrollThumbActive = true
+            scheduleDeactivate()
+        }
         invalidate()
     }
 
@@ -112,6 +130,7 @@ class FastScrollView @JvmOverloads constructor(
         val saveCount = canvas.save()
         canvas.translate(scrollX.toFloat(), scrollY.toFloat())
         val right = width - paddingRight - 3f * density
+        val currentThumbWidth = if (draggingThumb || scrollThumbActive) activeThumbWidth else passiveThumbWidth
         trackRect.set(
             right - trackWidth,
             paddingTop.toFloat(),
@@ -121,9 +140,9 @@ class FastScrollView @JvmOverloads constructor(
         canvas.drawRoundRect(trackRect, trackWidth, trackWidth, trackPaint)
         canvas.drawRoundRect(
             thumbRect,
-            thumbWidth,
-            thumbWidth,
-            if (draggingThumb) activeThumbPaint else thumbPaint
+            currentThumbWidth,
+            currentThumbWidth,
+            if (draggingThumb || scrollThumbActive) activeThumbPaint else thumbPaint
         )
         canvas.restoreToCount(saveCount)
     }
@@ -155,7 +174,8 @@ class FastScrollView @JvmOverloads constructor(
         val scrollFraction = (scrollY.toFloat() / geometry.maxScroll.toFloat()).coerceIn(0f, 1f)
         val top = paddingTop + scrollFraction * travel
         val right = width - paddingRight - 3f * density
-        thumbRect.set(right - thumbWidth, top, right, top + geometry.thumbHeight)
+        val currentThumbWidth = if (draggingThumb || scrollThumbActive) activeThumbWidth else passiveThumbWidth
+        thumbRect.set(right - currentThumbWidth, top, right, top + geometry.thumbHeight)
     }
 
     private fun geometry(): ScrollGeometry? {
@@ -172,6 +192,11 @@ class FastScrollView @JvmOverloads constructor(
     private fun canFastScroll(): Boolean = geometry() != null
 
     private fun inFastScrollZone(x: Float): Boolean = x >= width - paddingRight - touchWidth
+
+    private fun scheduleDeactivate() {
+        removeCallbacks(deactivateRunnable)
+        postDelayed(deactivateRunnable, 1200L)
+    }
 
     private data class ScrollGeometry(
         val viewportHeight: Float,

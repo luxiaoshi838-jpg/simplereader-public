@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -65,11 +66,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var shelfGrid: GridLayout
     private lateinit var readingStatsTextView: TextView
     private lateinit var shelfTabTextView: TextView
+    private lateinit var editButton: TextView
+    private lateinit var moreButton: TextView
     private var books = emptyList<ShelfBookItem>()
     private var groups = emptyList<BookGroup>()
     private var showingHistory = false
     private var shelfSearchQuery = ""
     private var selectedGroupId: Long? = null
+    private var shelfSelectionMode = false
+    private val selectedShelfBookIds = linkedSetOf<Long>()
+    private val selectedShelfGroupIds = linkedSetOf<Long>()
     private var pendingBackup: SimpleReaderBackupDecoder.DecodedBackup? = null
     private val coverBitmapCache = object : LruCache<Long, Bitmap>(12 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
@@ -190,20 +196,26 @@ class MainActivity : AppCompatActivity() {
             text = "导入"
             setOnClickListener { showImportOptions() }
         }
-        findViewById<TextView>(R.id.editButton).apply {
+        editButton = findViewById<TextView>(R.id.editButton).apply {
             text = "编辑"
             setOnClickListener {
-                Toast.makeText(this@MainActivity, "长按书籍或分组可管理", Toast.LENGTH_SHORT).show()
+                if (shelfSelectionMode) {
+                    confirmDeleteShelfSelection()
+                } else {
+                    Toast.makeText(this@MainActivity, "长按书籍或分组可批量选择", Toast.LENGTH_SHORT).show()
+                }
             }
         }
         findViewById<TextView>(R.id.searchButton).apply {
             text = "⌕"
             setOnClickListener { showShelfSearch() }
         }
-        findViewById<TextView>(R.id.moreButton).apply {
+        moreButton = findViewById<TextView>(R.id.moreButton).apply {
             text = "⋮"
             contentDescription = "批量管理分组"
-            setOnClickListener { showMoreShelfActions() }
+            setOnClickListener {
+                if (shelfSelectionMode) exitShelfSelectionMode() else showMoreShelfActions()
+            }
         }
 
         loadBooks()
@@ -354,12 +366,19 @@ class MainActivity : AppCompatActivity() {
             textSize = 14f
             setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
         })
-        card.setOnClickListener { showGroupBooksV2(group, sortedBooks) }
+        card.setOnClickListener {
+            if (shelfSelectionMode) {
+                toggleShelfGroupSelection(group.id)
+            } else {
+                showGroupBooksV2(group, sortedBooks)
+            }
+        }
         card.setOnLongClickListener {
-            showGroupActions(group, sortedBooks)
+            enterShelfSelectionMode()
+            toggleShelfGroupSelection(group.id)
             true
         }
-        shelfGrid.addView(card)
+        shelfGrid.addView(wrapSelectableShelfCard(card, selectedShelfGroupIds.contains(group.id)))
     }
 
     private fun groupPreviewLayoutParams(index: Int): GridLayout.LayoutParams {
@@ -389,12 +408,19 @@ class MainActivity : AppCompatActivity() {
             textSize = 14f
             setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
         })
-        card.setOnClickListener { openBook(book.id) }
+        card.setOnClickListener {
+            if (shelfSelectionMode) {
+                toggleShelfBookSelection(book.id)
+            } else {
+                openBook(book.id)
+            }
+        }
         card.setOnLongClickListener {
-            showBookActionsV2(book)
+            enterShelfSelectionMode()
+            toggleShelfBookSelection(book.id)
             true
         }
-        shelfGrid.addView(card)
+        shelfGrid.addView(wrapSelectableShelfCard(card, selectedShelfBookIds.contains(book.id)))
     }
 
     private fun createBookCover(book: ShelfBookItem, compact: Boolean): View {
@@ -405,12 +431,10 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             maxLines = if (compact) 4 else 5
             setPadding(dp(6), dp(8), dp(6), dp(8))
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(74, 126, 172), Color.rgb(47, 94, 136))
-            ).apply {
-                cornerRadius = dp(if (compact) 3 else 5).toFloat()
-            }
+            background = PaperCoverDrawable(
+                radiusPx = dp(if (compact) 3 else 5).toFloat(),
+                seed = book.id.toInt()
+            )
         }
         val image = ImageView(this).apply {
             visibility = View.GONE
@@ -473,6 +497,41 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return frame
+    }
+
+    private fun wrapSelectableShelfCard(card: LinearLayout, selected: Boolean): FrameLayout {
+        val originalParams = card.layoutParams
+        card.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        return FrameLayout(this).apply {
+            layoutParams = originalParams
+            addView(card)
+            if (shelfSelectionMode) {
+                addView(
+                    selectionMark(selected),
+                    FrameLayout.LayoutParams(dp(28), dp(28), Gravity.BOTTOM or Gravity.END).apply {
+                        rightMargin = dp(2)
+                        bottomMargin = dp(42)
+                    }
+                )
+            }
+        }
+    }
+
+    private fun selectionMark(selected: Boolean): TextView {
+        return TextView(this).apply {
+            text = if (selected) "✓" else ""
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setStroke(dp(2), if (selected) Color.rgb(239, 100, 45) else Color.rgb(150, 145, 136))
+                setColor(if (selected) Color.rgb(239, 100, 45) else Color.TRANSPARENT)
+            }
+        }
     }
 
     private fun createShelfCard(): LinearLayout {
@@ -942,17 +1001,17 @@ class MainActivity : AppCompatActivity() {
     private fun showBookActionsV2(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
-            .setItems(arrayOf("打开", "重命名书籍", "导入分组", "删除书架")) { _, which ->
+            .setItems(arrayOf("Open", "Rename", "Move to group", "Remove from shelf", "Remove shelf and local file")) { _, which ->
                 when (which) {
                     0 -> openBook(book.id)
                     1 -> showRenameBookDialog(book)
                     2 -> showMoveBookToGroup(book)
                     3 -> confirmDeleteBook(book)
+                    4 -> confirmDeleteBook(book, deleteLocalFile = true)
                 }
             }
             .show()
     }
-
     private fun showGroupBooksV2(group: BookGroup, groupBooks: List<ShelfBookItem>) {
         if (groupBooks.isEmpty()) {
             Toast.makeText(this, "该分组暂无书籍", Toast.LENGTH_SHORT).show()
@@ -1174,21 +1233,132 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun confirmDeleteBook(book: ShelfBookItem) {
+    private fun enterShelfSelectionMode() {
+        if (!shelfSelectionMode) {
+            shelfSelectionMode = true
+            editButton.text = "Delete"
+            moreButton.text = "Cancel"
+        }
+    }
+
+    private fun exitShelfSelectionMode() {
+        shelfSelectionMode = false
+        selectedShelfBookIds.clear()
+        selectedShelfGroupIds.clear()
+        editButton.text = "Edit"
+        moreButton.text = "..."
+        updateUI()
+    }
+
+    private fun toggleShelfBookSelection(bookId: Long) {
+        if (!shelfSelectionMode) enterShelfSelectionMode()
+        if (!selectedShelfBookIds.add(bookId)) selectedShelfBookIds.remove(bookId)
+        updateShelfSelectionButtons()
+        updateUI()
+    }
+
+    private fun toggleShelfGroupSelection(groupId: Long) {
+        if (!shelfSelectionMode) enterShelfSelectionMode()
+        if (!selectedShelfGroupIds.add(groupId)) selectedShelfGroupIds.remove(groupId)
+        updateShelfSelectionButtons()
+        updateUI()
+    }
+
+    private fun updateShelfSelectionButtons() {
+        if (!shelfSelectionMode) return
+        val count = selectedShelfBookIds.size + selectedShelfGroupIds.size
+        editButton.text = if (count > 0) "Delete($count)" else "Delete"
+        moreButton.text = "Cancel"
+    }
+
+    private fun confirmDeleteShelfSelection() {
+        val total = selectedShelfBookIds.size + selectedShelfGroupIds.size
+        if (total == 0) {
+            Toast.makeText(this, "Select books or groups first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (selectedShelfGroupIds.isNotEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Batch remove from shelf")
+                .setMessage("$total items selected. Groups are included, so local files will not be deleted.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Remove from shelf") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+                .show()
+            return
+        }
         AlertDialog.Builder(this)
-            .setTitle("删除书架")
-            .setMessage("只从书架移除记录，不删除原文件。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("删除") { _, _ ->
-                lifecycleScope.launch {
-                    withContext(Dispatchers.IO) {
-                        database.bookDao().deleteById(book.id)
+            .setTitle("Batch remove books")
+            .setMessage("${selectedShelfBookIds.size} books selected.")
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Shelf only") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+            .setPositiveButton("Shelf + local files") { _, _ -> deleteShelfSelection(deleteLocalFiles = true) }
+            .show()
+    }
+
+    private fun deleteShelfSelection(deleteLocalFiles: Boolean) {
+        val bookIds = selectedShelfBookIds.toList()
+        val groupIds = selectedShelfGroupIds.toList()
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    var localDeleted = 0
+                    var localFailed = 0
+                    database.withTransaction {
+                        bookIds.forEach { id ->
+                            val entity = database.bookDao().getBook(id)
+                            if (deleteLocalFiles && entity != null) {
+                                if (BookFileActions.deleteBookFile(this@MainActivity, entity)) localDeleted++ else localFailed++
+                            }
+                            database.bookmarkDao().deleteByBookId(id)
+                            database.readProgressDao().deleteByBookId(id)
+                            database.bookDao().deleteById(id)
+                        }
+                        groupIds.forEach { groupId ->
+                            books.filter { it.groupId == groupId }.forEach { book ->
+                                database.bookmarkDao().deleteByBookId(book.id)
+                                database.readProgressDao().deleteByBookId(book.id)
+                                database.bookDao().deleteById(book.id)
+                            }
+                            database.bookGroupDao().deleteById(groupId)
+                        }
                     }
+                    localDeleted to localFailed
+                }
+            }
+            result.onSuccess { (localDeleted, localFailed) ->
+                val message = if (deleteLocalFiles) "Shelf removed. Local deleted: $localDeleted, failed: $localFailed" else "Removed from shelf"
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                exitShelfSelectionMode()
+            }.onFailure { error ->
+                Toast.makeText(this@MainActivity, "Delete failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun confirmDeleteBook(book: ShelfBookItem, deleteLocalFile: Boolean = false) {
+        AlertDialog.Builder(this)
+            .setTitle(if (deleteLocalFile) "Remove shelf and local file" else "Remove from shelf")
+            .setMessage(if (deleteLocalFile) "Remove ${book.title} from shelf and delete the local file. This cannot be undone." else "Remove ${book.title} from shelf only. The local file will remain.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete") { _, _ ->
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            database.withTransaction {
+                                val entity = database.bookDao().getBook(book.id)
+                                if (deleteLocalFile && entity != null) BookFileActions.deleteBookFile(this@MainActivity, entity)
+                                database.bookmarkDao().deleteByBookId(book.id)
+                                database.readProgressDao().deleteByBookId(book.id)
+                                database.bookDao().deleteById(book.id)
+                            }
+                        }
+                    }
+                    result.onSuccess { Toast.makeText(this@MainActivity, "Deleted", Toast.LENGTH_SHORT).show() }
+                        .onFailure { error -> Toast.makeText(this@MainActivity, "Delete failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show() }
                 }
             }
             .show()
     }
-
     private fun showShelfSearch() {
         selectedGroupId = null
         showingHistory = false

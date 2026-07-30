@@ -68,6 +68,21 @@ object BookFileActions {
         )
     }
 
+    fun deleteBookFile(context: Context, book: Book): Boolean {
+        val uri = runCatching { Uri.parse(book.filePath) }.getOrNull()
+        if (uri?.scheme.equals("content", ignoreCase = true)) {
+            val document = resolveTreeDocument(context, book)
+                ?: DocumentFile.fromSingleUri(context, uri ?: return false)
+                ?: return false
+            return document.canWrite() && document.delete()
+        }
+        val file = when {
+            uri?.scheme.equals("file", ignoreCase = true) -> File(uri!!.path.orEmpty())
+            else -> File(book.filePath)
+        }
+        return file.exists() && file.delete()
+    }
+
     private fun resolveTreeDocument(context: Context, book: Book): DocumentFile? {
         val treeUri = book.sourceTreeUri?.takeIf { it.isNotBlank() } ?: return null
         var folder = DocumentFile.fromTreeUri(context, Uri.parse(treeUri)) ?: return null
