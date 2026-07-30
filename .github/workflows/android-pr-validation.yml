@@ -35,11 +35,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare validation version
+      - name: Prepare v577 source and version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2098000000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.28.readium.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          git apply --check patches/v577/MainActivity_v577_image_texture.patch
+          git apply patches/v577/MainActivity_v577_image_texture.patch
+          echo "SIMPLE_READER_VERSION_CODE=2098000577" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.30.paper-image-texture.577" >> "$GITHUB_ENV"
 
       - name: Assemble release within five minutes
         shell: bash
