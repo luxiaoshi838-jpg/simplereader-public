@@ -46,6 +46,8 @@ import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.ReadProgress
+import com.simplereader.app.reader.page.ReaderPageWindow
+import com.simplereader.app.reader.page.TxtPageEngine
 import com.simplereader.app.parser.ChmParser
 import com.simplereader.app.parser.EpubChapter
 import com.simplereader.app.parser.EpubParser
@@ -85,6 +87,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var txtReachedStart: Boolean = false
     private var txtReachedEnd: Boolean = false
     private var txtForwardAppendAnchor: TxtForwardAppendAnchor? = null
+    private var txtPageWindow: ReaderPageWindow? = null
     private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
@@ -1132,7 +1135,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (maxScroll <= 0) return
         val scrollProgress = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
         currentPosition = if (txtStreamingMode) {
-            txtByteForScrollPosition(scrollY, maxScroll, scrollProgress)
+            (txtPageWindow?.byteForScroll(scrollY, maxScroll)
+                ?: txtByteForScrollPosition(scrollY, maxScroll, scrollProgress))
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
         } else {
@@ -1231,6 +1235,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 txtCurrentPageStartByte = txtContinuousBuffer.startByte
                 txtCurrentPageEndByte = txtContinuousBuffer.endByte
                 currentContent = txtContinuousBuffer.content
+                txtPageWindow = null
                 txtForwardAppendAnchor = if (forward) {
                     TxtForwardAppendAnchor(
                         oldMaxScroll = oldMaxScroll,
@@ -2106,7 +2111,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 currentPosition.toLong(),
                 saveImmediately = true,
                 direction = direction,
-                keepContextBeforeTarget = direction == 0
+                keepContextBeforeTarget = direction == 0,
+                preloadAdjacentWindows = true
             )
         } else {
             displayContent()
@@ -2329,7 +2335,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                     showStreamingTxtPage(
                                         currentPosition.toLong(),
                                         saveImmediately = true,
-                                        keepContextBeforeTarget = false
+                                        keepContextBeforeTarget = false,
+                                        preloadAdjacentWindows = true
                                     )
                                 } else {
                                     displayContent()
@@ -2890,7 +2897,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         byteOffset: Long,
         saveImmediately: Boolean = false,
         direction: Int = 0,
-        keepContextBeforeTarget: Boolean = false
+        keepContextBeforeTarget: Boolean = false,
+        preloadAdjacentWindows: Boolean = false
     ) {
         val selectedBook = book ?: return
         val targetUri = Uri.parse(selectedBook.filePath)
@@ -2914,7 +2922,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         )
                     }
                 } ?: return@launch showError("无法读取当前位置")
-                txtContinuousBuffer.reset(window)
+                val pageWindow = TxtPageEngine.windowFromBlocks(
+                    targetByte = targetByte,
+                    pageBytes = TXT_STREAM_WINDOW_BYTES,
+                    blocks = buildTxtPageBlocks(targetUri, charsetName, targetByte, window, preloadAdjacentWindows)
+                )
+                txtContinuousBuffer.reset(
+                    TxtWindowResult(
+                        text = pageWindow.text,
+                        startByte = pageWindow.startByte,
+                        nextByte = pageWindow.endByte
+                    )
+                )
+                txtPageWindow = pageWindow
                 currentContent = txtContinuousBuffer.content
                 txtCurrentPageStartByte = txtContinuousBuffer.startByte
                 txtCurrentPageEndByte = txtContinuousBuffer.endByte
@@ -2936,6 +2956,43 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 showError("读取失败：${e.message ?: "未知错误"}")
             }
         }
+    }
+
+    private fun buildTxtPageBlocks(
+        targetUri: Uri,
+        charsetName: String,
+        targetByte: Long,
+        currentWindow: TxtWindowResult,
+        preloadAdjacentWindows: Boolean
+    ): List<com.simplereader.app.reader.page.ReaderPageBlock> {
+        val centerIndex = TxtPageEngine.pageIndexForByte(targetByte, TXT_STREAM_WINDOW_BYTES)
+        val blocks = mutableListOf<com.simplereader.app.reader.page.ReaderPageBlock>()
+        if (preloadAdjacentWindows && currentWindow.startByte > 0L) {
+            contentResolver.openInputStream(targetUri)?.let { stream ->
+                TxtParser.readWindowBefore(
+                    inputStream = stream,
+                    charsetName = charsetName,
+                    endByte = currentWindow.startByte,
+                    maxBytes = TXT_STREAM_WINDOW_BYTES
+                )
+            }?.let { previous ->
+                blocks += TxtPageEngine.blockFromWindow(centerIndex - 1L, previous)
+            }
+        }
+        blocks += TxtPageEngine.blockFromWindow(centerIndex, currentWindow)
+        if (preloadAdjacentWindows && currentWindow.nextByte < txtTotalBytes) {
+            contentResolver.openInputStream(targetUri)?.let { stream ->
+                TxtParser.readWindow(
+                    inputStream = stream,
+                    charsetName = charsetName,
+                    startByte = currentWindow.nextByte,
+                    maxBytes = TXT_STREAM_WINDOW_BYTES
+                )
+            }?.let { next ->
+                blocks += TxtPageEngine.blockFromWindow(centerIndex + 1L, next)
+            }
+        }
+        return blocks
     }
 
     private fun scanStreamingTxtChapters(documentFile: DocumentFile) {
