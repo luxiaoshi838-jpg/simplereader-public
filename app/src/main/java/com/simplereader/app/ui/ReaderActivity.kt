@@ -550,7 +550,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         wholeText = wholeText,
                         chapters = epubChapters,
                         starts = epubChapterStartPositions,
-                        centerIndex = targetIndex
+                        centerIndex = targetIndex,
+                        includeAdjacent = pageTurnMode == TURN_MODE_VERTICAL
                     )
                 }
                 if (buffer.content.isBlank()) {
@@ -629,7 +630,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     wholeText = wholeText,
                     chapters = epubChapters,
                     starts = epubChapterStartPositions,
-                    centerIndex = nextCenter
+                    centerIndex = nextCenter,
+                    includeAdjacent = true
                 )
             }
             val preservedPosition = newBuffer.positionFor(oldLocation.chapterIndex, oldLocation.offset)
@@ -789,7 +791,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             wholeText = wholeText,
             chapters = chapters,
             starts = starts,
-            centerIndex = targetIndex
+            centerIndex = targetIndex,
+            includeAdjacent = true
         )
         val initialPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
         return LoadedContent(
