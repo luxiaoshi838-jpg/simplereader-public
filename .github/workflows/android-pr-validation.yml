@@ -35,11 +35,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare validation version
+      - name: Apply v578 cover and page-number patch
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2098000000 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.28.readium.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          git apply --check patches/v578/cover-page-unified.patch
+          git apply patches/v578/cover-page-unified.patch
+          echo "SIMPLE_READER_VERSION_CODE=2098000578" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.30.cover-second-page-unified.578" >> "$GITHUB_ENV"
 
       - name: Assemble release within five minutes
         shell: bash
