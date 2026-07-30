@@ -19,10 +19,11 @@ import android.graphics.drawable.Drawable
 /**
  * 多看风纸质封面。
  *
- * v577 固定规则：
- * 1. 蓝色仍使用 v575/v576 的顶部、底部颜色，不从纹理图片取色；
- * 2. 纹理直接来自用户选定的纸纤维图片，经中性灰度处理后以 Overlay 方式叠加；
- * 3. 不绘制 TXT / EPUB / CHM / PDF、扩展名或任何格式角标。
+ * v578 固定规则：
+ * 1. 蓝色仍使用 v575-v577 的顶部、底部颜色，不从纹理图片取色；
+ * 2. 纹理改用用户生成的第二版纸纤维图片，并降低叠加强度；
+ * 3. 书架、分组预览和分组内书籍统一使用相同纹理；
+ * 4. 不绘制 TXT / EPUB / CHM / PDF、扩展名或任何格式角标。
  */
 class PaperCoverDrawable(
     private val textureBitmap: Bitmap?,
@@ -34,7 +35,7 @@ class PaperCoverDrawable(
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-        alpha = 112
+        alpha = TEXTURE_ALPHA
         xfermode = PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
     }
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -120,7 +121,7 @@ class PaperCoverDrawable(
 
     override fun setAlpha(alpha: Int) {
         fillPaint.alpha = alpha
-        texturePaint.alpha = (112 * alpha / 255).coerceIn(0, 255)
+        texturePaint.alpha = (TEXTURE_ALPHA * alpha / 255).coerceIn(0, 255)
         edgePaint.alpha = alpha
         invalidateSelf()
     }
@@ -134,4 +135,8 @@ class PaperCoverDrawable(
 
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    private companion object {
+        const val TEXTURE_ALPHA = 72
+    }
 }
