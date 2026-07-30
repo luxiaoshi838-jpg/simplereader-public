@@ -84,6 +84,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var txtBufferLoadJob: Job? = null
     private var txtReachedStart: Boolean = false
     private var txtReachedEnd: Boolean = false
+    private var txtForwardAppendAnchor: TxtForwardAppendAnchor? = null
     private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
@@ -117,6 +118,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerTouchDownRawY: Float = 0f
     private var readerTouchDownTime: Long = 0L
     private var programmaticScrollGuardUntil: Long = 0L
+
+    private data class TxtForwardAppendAnchor(
+        val oldMaxScroll: Int,
+        val oldStartByte: Long,
+        val oldEndByte: Long
+    )
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -1125,7 +1132,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         if (maxScroll <= 0) return
         val scrollProgress = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
         currentPosition = if (txtStreamingMode) {
-            txtContinuousBuffer.byteForFraction(scrollProgress)
+            txtByteForScrollPosition(scrollY, maxScroll, scrollProgress)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
         } else {
@@ -1135,6 +1142,25 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         updateProgressViews(progressForCurrentPosition())
         markProgressDirty()
         scheduleProgressSave()
+    }
+
+    private fun txtByteForScrollPosition(scrollY: Int, maxScroll: Int, scrollProgress: Float): Long {
+        val anchor = txtForwardAppendAnchor
+        if (anchor != null && anchor.oldMaxScroll > 0 && scrollY <= anchor.oldMaxScroll) {
+            val oldFraction = (scrollY.toFloat() / anchor.oldMaxScroll).coerceIn(0f, 1f)
+            return (anchor.oldStartByte + ((anchor.oldEndByte - anchor.oldStartByte) * oldFraction))
+                .toLong()
+                .coerceIn(txtContinuousBuffer.startByte, txtContinuousBuffer.endByte)
+        }
+        if (anchor != null && maxScroll > anchor.oldMaxScroll && scrollY > anchor.oldMaxScroll) {
+            val appendedScroll = (scrollY - anchor.oldMaxScroll).coerceAtLeast(0)
+            val appendedMax = (maxScroll - anchor.oldMaxScroll).coerceAtLeast(1)
+            val appendedFraction = (appendedScroll.toFloat() / appendedMax).coerceIn(0f, 1f)
+            return (anchor.oldEndByte + ((txtContinuousBuffer.endByte - anchor.oldEndByte) * appendedFraction))
+                .toLong()
+                .coerceIn(txtContinuousBuffer.startByte, txtContinuousBuffer.endByte)
+        }
+        return txtContinuousBuffer.byteForFraction(scrollProgress)
     }
 
     private fun maybeExtendTxtContinuousBuffer(scrollY: Int) {
@@ -1167,6 +1193,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
         val anchorByte = currentPosition.toLong()
         val oldScrollY = readerScrollView.scrollY
+        val oldMaxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+        val oldStartByte = txtContinuousBuffer.startByte
+        val oldEndByte = txtContinuousBuffer.endByte
         txtBufferLoadJob = lifecycleScope.launch {
             try {
                 val window = withContext(Dispatchers.IO) {
@@ -1202,6 +1231,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 txtCurrentPageStartByte = txtContinuousBuffer.startByte
                 txtCurrentPageEndByte = txtContinuousBuffer.endByte
                 currentContent = txtContinuousBuffer.content
+                txtForwardAppendAnchor = if (forward) {
+                    TxtForwardAppendAnchor(
+                        oldMaxScroll = oldMaxScroll,
+                        oldStartByte = oldStartByte,
+                        oldEndByte = oldEndByte
+                    )
+                } else {
+                    null
+                }
                 renderExtendedTxtBuffer(
                     anchorByte = anchorByte,
                     oldScrollY = oldScrollY,
@@ -2882,6 +2920,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 txtCurrentPageEndByte = txtContinuousBuffer.endByte
                 txtReachedStart = txtContinuousBuffer.startByte <= 0L
                 txtReachedEnd = txtContinuousBuffer.endByte >= txtTotalBytes
+                txtForwardAppendAnchor = null
                 currentPosition = targetByte
                     .coerceIn(txtContinuousBuffer.startByte, txtContinuousBuffer.endByte)
                     .coerceAtMost(Int.MAX_VALUE.toLong())
