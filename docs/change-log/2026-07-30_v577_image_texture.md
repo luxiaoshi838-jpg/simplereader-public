@@ -28,6 +28,17 @@
 - 构建约束：Gradle release 单步骤 5 分钟硬超时。
 - 签名规则：公开库不保存密钥；构建产物下载后使用用户原简阅证书在本地签名。
 
+## 验证结果
+
+- 五分钟 release 构建：通过。
+- APK 文件：`简阅_v577_原蓝色_真实纸纤维纹理版.apk`
+- APK SHA-256：`838a62a89d6fca32a9793e7f50e96aea27996c22aed148601a623d8644f6f450`
+- 证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
+- APK Signature Scheme v2：通过。
+- APK Signature Scheme v3：通过。
+- ZIP 对齐：通过。
+- `paper_texture_v577` 资源：已进入 APK，压缩资源大小 13,488 字节。
+
 ## 验收标准
 
 - 封面蓝色参数与上一版相同。
