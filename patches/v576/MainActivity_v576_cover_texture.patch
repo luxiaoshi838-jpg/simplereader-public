@@ -1,0 +1,21 @@
+--- a/app/src/main/java/com/simplereader/app/ui/MainActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+@@ -404,12 +404,12 @@
+             gravity = Gravity.CENTER
+             maxLines = if (compact) 4 else 5
+             setPadding(dp(6), dp(8), dp(6), dp(8))
+-            background = GradientDrawable(
+-                GradientDrawable.Orientation.TOP_BOTTOM,
+-                intArrayOf(Color.rgb(74, 126, 172), Color.rgb(47, 94, 136))
+-            ).apply {
+-                cornerRadius = dp(if (compact) 3 else 5).toFloat()
+-            }
++            background = PaperCoverDrawable(
++                topColor = Color.rgb(74, 126, 172),
++                bottomColor = Color.rgb(47, 94, 136),
++                radiusPx = dp(if (compact) 3 else 5).toFloat(),
++                seed = (book.id xor (book.id ushr 32)).toInt()
++            )
+         }
+         val image = ImageView(this).apply {
+             visibility = View.GONE
