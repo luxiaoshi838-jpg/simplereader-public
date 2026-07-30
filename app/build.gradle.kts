@@ -1,5 +1,6 @@
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Base64
 
 plugins {
     id("com.android.application")
@@ -17,6 +18,22 @@ val permanentSigningConfigured = listOf(
     permanentKeyAlias,
     permanentKeyPassword
 ).all { !it.isNullOrBlank() }
+
+val generatedCoverTextureResDir = layout.buildDirectory.dir("generated/coverTextureRes")
+val prepareCoverTexture by tasks.registering {
+    val source = layout.projectDirectory.file("src/main/coverTexture/paper_texture_v577.png.b64")
+    val target = generatedCoverTextureResDir.map {
+        it.file("drawable-nodpi/paper_texture_v577.png")
+    }
+    inputs.file(source)
+    outputs.file(target)
+
+    doLast {
+        val output = target.get().asFile
+        output.parentFile.mkdirs()
+        output.writeBytes(Base64.getMimeDecoder().decode(source.asFile.readText()))
+    }
+}
 
 val generatedEpubAssetsDir = layout.buildDirectory.dir("generated/epubjsAssets")
 val prepareEpubJsAssets by tasks.registering {
@@ -63,7 +80,7 @@ val prepareEpubJsAssets by tasks.registering {
 }
 
 tasks.named("preBuild").configure {
-    dependsOn(prepareEpubJsAssets)
+    dependsOn(prepareEpubJsAssets, prepareCoverTexture)
 }
 
 android {
@@ -127,6 +144,7 @@ android {
 
     sourceSets {
         getByName("main").assets.srcDir(generatedEpubAssetsDir)
+        getByName("main").res.srcDir(generatedCoverTextureResDir)
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
@@ -176,12 +194,10 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Kept temporarily for migration compatibility; the EPUB display path now uses epub.js.
     implementation("org.readium.kotlin-toolkit:readium-shared:3.0.0")
     implementation("org.readium.kotlin-toolkit:readium-streamer:3.0.0")
     implementation("org.readium.kotlin-toolkit:readium-navigator:3.0.0")
 
-    // Existing TXT/legacy metadata and CHM support.
     implementation("io.documentnode:epub4j-core:4.2.3")
     implementation("com.github.albfernandez:juniversalchardet:2.5.0")
     implementation("com.github.chimenchen:jchmlib:v0.5.4")
