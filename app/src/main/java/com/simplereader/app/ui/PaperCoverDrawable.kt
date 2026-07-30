@@ -1,40 +1,41 @@
 package com.simplereader.app.ui
 
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.random.Random
 
 /**
  * 多看风纸质封面。
  *
- * 规则：
- * 1. 保留书架原有蓝色渐变；
- * 2. 纹理参考用户提供的深蓝纸纤维图片，采用确定性细颗粒与短纤维叠加；
- * 3. 封面内部不绘制 TXT / EPUB / CHM / PDF 或任何文件格式角标。
+ * v577 固定规则：
+ * 1. 蓝色仍使用 v575/v576 的顶部、底部颜色，不从纹理图片取色；
+ * 2. 纹理直接来自用户选定的纸纤维图片，经中性灰度处理后以 Overlay 方式叠加；
+ * 3. 不绘制 TXT / EPUB / CHM / PDF、扩展名或任何格式角标。
  */
 class PaperCoverDrawable(
-    private val topColor: Int = Color.rgb(74, 126, 166),
-    private val bottomColor: Int = Color.rgb(45, 89, 132),
+    private val textureBitmap: Bitmap?,
+    private val topColor: Int = Color.rgb(74, 126, 172),
+    private val bottomColor: Int = Color.rgb(47, 94, 136),
     private val radiusPx: Float = 10f,
     private val seed: Int = 0
 ) : Drawable() {
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val fibrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 0.8f
-        strokeCap = Paint.Cap.ROUND
+    private val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        alpha = 112
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
     }
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -42,6 +43,7 @@ class PaperCoverDrawable(
     }
     private val rect = RectF()
     private val clipPath = Path()
+    private val textureMatrix = Matrix()
 
     override fun draw(canvas: Canvas) {
         rect.set(bounds)
@@ -62,73 +64,30 @@ class PaperCoverDrawable(
 
         clipPath.reset()
         clipPath.addRoundRect(rect, radiusPx, radiusPx, Path.Direction.CW)
-        val save = canvas.save()
+        val save = canvas.saveLayer(rect, null)
         canvas.clipPath(clipPath)
         canvas.drawRect(rect, fillPaint)
-
-        drawPaperGrain(canvas)
-        drawPaperFibres(canvas)
+        drawImageTexture(canvas)
         drawEdge(canvas)
-
         canvas.restoreToCount(save)
     }
 
-    private fun drawPaperGrain(canvas: Canvas) {
-        val random = Random(seed xor 0x5A17C9)
-        repeat(190) { index ->
-            val x = rect.left + random.nextFloat() * rect.width()
-            val y = rect.top + random.nextFloat() * rect.height()
-            val radius = 0.28f + random.nextFloat() * 0.72f
-            val dark = index % 4 == 0
-            grainPaint.color = if (dark) {
-                Color.argb(8 + random.nextInt(8), 24, 46, 68)
-            } else {
-                Color.argb(5 + random.nextInt(7), 244, 249, 252)
-            }
-            canvas.drawCircle(x, y, radius, grainPaint)
-        }
-    }
-
-    private fun drawPaperFibres(canvas: Canvas) {
-        val random = Random(seed xor 0x31F24B)
-
-        repeat(78) { index ->
-            val x = rect.left + random.nextFloat() * rect.width()
-            val y = rect.top + random.nextFloat() * rect.height()
-            val length = rect.width() * (0.035f + random.nextFloat() * 0.085f)
-            val angle = when (index % 3) {
-                0 -> -0.30f + random.nextFloat() * 0.20f
-                1 -> -0.05f + random.nextFloat() * 0.10f
-                else -> 0.10f + random.nextFloat() * 0.22f
-            }
-            fibrePaint.color = if (index % 5 == 0) {
-                Color.argb(9, 20, 43, 66)
-            } else {
-                Color.argb(7, 239, 246, 251)
-            }
-            fibrePaint.strokeWidth = 0.45f + random.nextFloat() * 0.65f
-            canvas.drawLine(
-                x,
-                y,
-                x + cos(angle) * length,
-                y + sin(angle) * length,
-                fibrePaint
-            )
-        }
-
-        repeat(24) { row ->
-            val y = rect.top + rect.height() * (row + 1f) / 26f
-            val jitter = ((seed + row * 17) and 3) - 1.5f
-            fibrePaint.color = Color.argb(5, 245, 249, 252)
-            fibrePaint.strokeWidth = 0.55f
-            canvas.drawLine(
-                rect.left + 8f,
-                y,
-                rect.right - 8f,
-                y + jitter,
-                fibrePaint
-            )
-        }
+    private fun drawImageTexture(canvas: Canvas) {
+        val texture = textureBitmap?.takeUnless { it.isRecycled } ?: return
+        val shader = BitmapShader(texture, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+        val scale = maxOf(
+            rect.width() / texture.width.toFloat(),
+            rect.height() / texture.height.toFloat()
+        )
+        val xPhase = ((seed and 0x3F) / 64f) * texture.width * scale
+        val yPhase = (((seed ushr 6) and 0x3F) / 64f) * texture.height * scale
+        textureMatrix.reset()
+        textureMatrix.setScale(scale, scale)
+        textureMatrix.postTranslate(rect.left - xPhase, rect.top - yPhase)
+        shader.setLocalMatrix(textureMatrix)
+        texturePaint.shader = shader
+        canvas.drawRect(rect, texturePaint)
+        texturePaint.shader = null
     }
 
     private fun drawEdge(canvas: Canvas) {
@@ -161,16 +120,14 @@ class PaperCoverDrawable(
 
     override fun setAlpha(alpha: Int) {
         fillPaint.alpha = alpha
-        grainPaint.alpha = alpha
-        fibrePaint.alpha = alpha
+        texturePaint.alpha = (112 * alpha / 255).coerceIn(0, 255)
         edgePaint.alpha = alpha
         invalidateSelf()
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         fillPaint.colorFilter = colorFilter
-        grainPaint.colorFilter = colorFilter
-        fibrePaint.colorFilter = colorFilter
+        texturePaint.colorFilter = colorFilter
         edgePaint.colorFilter = colorFilter
         invalidateSelf()
     }
