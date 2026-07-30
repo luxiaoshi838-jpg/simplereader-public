@@ -1,6 +1,9 @@
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Base64
+import javax.imageio.ImageIO
 
 plugins {
     id("com.android.application")
@@ -29,9 +32,18 @@ val prepareCoverTexture by tasks.registering {
     outputs.file(target)
 
     doLast {
+        val decoded = Base64.getMimeDecoder().decode(source.asFile.readText())
+        val original = ByteArrayInputStream(decoded).use { input ->
+            requireNotNull(ImageIO.read(input)) { "无法解码纸质封面纹理" }
+        }
+        val rgb = BufferedImage(original.width, original.height, BufferedImage.TYPE_INT_RGB)
+        rgb.createGraphics().use { graphics ->
+            graphics.drawImage(original, 0, 0, null)
+        }
+
         val output = target.get().asFile
         output.parentFile.mkdirs()
-        output.writeBytes(Base64.getMimeDecoder().decode(source.asFile.readText()))
+        require(ImageIO.write(rgb, "png", output)) { "无法写入标准 RGB 纸质封面纹理" }
     }
 }
 
