@@ -34,7 +34,7 @@
              visibility = View.GONE
 --- a/app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
 +++ b/app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
-@@ -3,6 +3,7 @@ package com.simplereader.app.ui
+@@ -3,4 +3,5 @@ package com.simplereader.app.ui
  import android.content.Intent
 +import android.graphics.Bitmap
  import android.graphics.Color
