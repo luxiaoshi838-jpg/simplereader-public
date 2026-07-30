@@ -37,3 +37,15 @@
 - 公开库仅提交源码、补丁和日志。
 - 正式签名密钥、密码和签名产物不进入公开库。
 - APK 使用用户已上传的原简阅签名文件在本地签名。
+
+## 本地签名产物
+
+- 文件：`简阅_v576_蓝色纸纹理_无格式角标版.apk`
+- 包名：`com.simplereader.app`
+- versionCode：`2098000576`
+- versionName：`2026.07.30.selection-cover-polish.576`
+- SHA-256：`c87a68c424521895f411d754cbd09e696bae0c2db611404a4e01ec6c5c357187`
+- 证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
+- APK Signature Scheme v2：通过
+- APK Signature Scheme v3：通过
+- ZIP 对齐：通过
