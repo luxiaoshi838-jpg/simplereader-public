@@ -511,9 +511,9 @@ class MainActivity : AppCompatActivity() {
             if (shelfSelectionMode) {
                 addView(
                     selectionMark(selected),
-                    FrameLayout.LayoutParams(dp(28), dp(28), Gravity.BOTTOM or Gravity.END).apply {
-                        rightMargin = dp(2)
-                        bottomMargin = dp(42)
+                    FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
+                        topMargin = dp(84)
+                        rightMargin = dp(4)
                     }
                 )
             }
@@ -522,18 +522,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectionMark(selected: Boolean): TextView {
         return TextView(this).apply {
-            text = if (selected) "✓" else ""
+            text = if (selected) "\u2713" else ""
             textSize = 18f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setStroke(dp(2), if (selected) Color.rgb(239, 100, 45) else Color.rgb(150, 145, 136))
-                setColor(if (selected) Color.rgb(239, 100, 45) else Color.TRANSPARENT)
+                setColor(if (selected) Color.rgb(239, 100, 45) else Color.WHITE)
             }
         }
     }
-
     private fun createShelfCard(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1001,7 +1000,7 @@ class MainActivity : AppCompatActivity() {
     private fun showBookActionsV2(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
-            .setItems(arrayOf("Open", "Rename", "Move to group", "Remove from shelf", "Remove shelf and local file")) { _, which ->
+            .setItems(arrayOf("\u6253\u5f00", "\u91cd\u547d\u540d\u4e66\u7c4d", "\u5bfc\u5165\u5206\u7ec4", "\u53ea\u5220\u9664\u4e66\u67b6", "\u5220\u9664\u4e66\u67b6\u53ca\u672c\u5730\u6587\u4ef6")) { _, which ->
                 when (which) {
                     0 -> openBook(book.id)
                     1 -> showRenameBookDialog(book)
@@ -1236,8 +1235,8 @@ class MainActivity : AppCompatActivity() {
     private fun enterShelfSelectionMode() {
         if (!shelfSelectionMode) {
             shelfSelectionMode = true
-            editButton.text = "Delete"
-            moreButton.text = "Cancel"
+            editButton.text = "\u5220\u9664"
+            moreButton.text = "\u53d6\u6d88"
         }
     }
 
@@ -1245,8 +1244,8 @@ class MainActivity : AppCompatActivity() {
         shelfSelectionMode = false
         selectedShelfBookIds.clear()
         selectedShelfGroupIds.clear()
-        editButton.text = "Edit"
-        moreButton.text = "..."
+        editButton.text = "\u7f16\u8f91"
+        moreButton.text = "\u22ee"
         updateUI()
     }
 
@@ -1267,31 +1266,31 @@ class MainActivity : AppCompatActivity() {
     private fun updateShelfSelectionButtons() {
         if (!shelfSelectionMode) return
         val count = selectedShelfBookIds.size + selectedShelfGroupIds.size
-        editButton.text = if (count > 0) "Delete($count)" else "Delete"
-        moreButton.text = "Cancel"
+        editButton.text = if (count > 0) "\u5220\u9664($count)" else "\u5220\u9664"
+        moreButton.text = "\u53d6\u6d88"
     }
 
     private fun confirmDeleteShelfSelection() {
         val total = selectedShelfBookIds.size + selectedShelfGroupIds.size
         if (total == 0) {
-            Toast.makeText(this, "Select books or groups first", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "\u8bf7\u5148\u9009\u62e9\u4e66\u7c4d\u6216\u5206\u7ec4", Toast.LENGTH_SHORT).show()
             return
         }
         if (selectedShelfGroupIds.isNotEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("Batch remove from shelf")
-                .setMessage("$total items selected. Groups are included, so local files will not be deleted.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Remove from shelf") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+                .setTitle("\u6279\u91cf\u5220\u9664\u4e66\u67b6")
+                .setMessage("\u5df2\u9009\u62e9 $total \u9879\uff0c\u5176\u4e2d\u5305\u542b\u5206\u7ec4\u3002\u5c06\u53ea\u5220\u9664\u4e66\u67b6\u8bb0\u5f55\uff0c\u4e0d\u5220\u9664\u672c\u5730\u6587\u4ef6\u3002")
+                .setNegativeButton("\u53d6\u6d88", null)
+                .setPositiveButton("\u5220\u9664\u4e66\u67b6") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
                 .show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Batch remove books")
-            .setMessage("${selectedShelfBookIds.size} books selected.")
-            .setNegativeButton("Cancel", null)
-            .setNeutralButton("Shelf only") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
-            .setPositiveButton("Shelf + local files") { _, _ -> deleteShelfSelection(deleteLocalFiles = true) }
+            .setTitle("\u6279\u91cf\u5220\u9664\u4e66\u7c4d")
+            .setMessage("\u5df2\u9009\u62e9 ${selectedShelfBookIds.size} \u672c\u4e66\u3002")
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setNeutralButton("\u53ea\u5220\u9664\u4e66\u67b6") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+            .setPositiveButton("\u4e66\u67b6+\u672c\u5730\u6587\u4ef6") { _, _ -> deleteShelfSelection(deleteLocalFiles = true) }
             .show()
     }
 
@@ -1326,21 +1325,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             result.onSuccess { (localDeleted, localFailed) ->
-                val message = if (deleteLocalFiles) "Shelf removed. Local deleted: $localDeleted, failed: $localFailed" else "Removed from shelf"
+                val message = if (deleteLocalFiles) "\u5df2\u5220\u9664\u4e66\u67b6\u8bb0\u5f55\uff0c\u672c\u5730\u6587\u4ef6\u6210\u529f $localDeleted \u4e2a\uff0c\u5931\u8d25 $localFailed \u4e2a" else "\u5df2\u4ece\u4e66\u67b6\u5220\u9664"
                 Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                 exitShelfSelectionMode()
             }.onFailure { error ->
-                Toast.makeText(this@MainActivity, "Delete failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, "\u5220\u9664\u5931\u8d25\uff1a${error.message ?: "\u672a\u77e5\u9519\u8bef"}", Toast.LENGTH_LONG).show()
             }
         }
     }
 
     private fun confirmDeleteBook(book: ShelfBookItem, deleteLocalFile: Boolean = false) {
         AlertDialog.Builder(this)
-            .setTitle(if (deleteLocalFile) "Remove shelf and local file" else "Remove from shelf")
-            .setMessage(if (deleteLocalFile) "Remove ${book.title} from shelf and delete the local file. This cannot be undone." else "Remove ${book.title} from shelf only. The local file will remain.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Delete") { _, _ ->
+            .setTitle(if (deleteLocalFile) "\u5220\u9664\u4e66\u67b6\u53ca\u672c\u5730\u6587\u4ef6" else "\u53ea\u5220\u9664\u4e66\u67b6")
+            .setMessage(if (deleteLocalFile) "\u5c06\u5220\u9664\u300a${book.title}\u300b\u7684\u4e66\u67b6\u8bb0\u5f55\u548c\u672c\u5730\u6587\u4ef6\uff0c\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002" else "\u53ea\u4ece\u4e66\u67b6\u79fb\u9664\u300a${book.title}\u300b\uff0c\u4e0d\u5220\u9664\u539f\u6587\u4ef6\u3002")
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setPositiveButton("\u5220\u9664") { _, _ ->
                 lifecycleScope.launch {
                     val result = withContext(Dispatchers.IO) {
                         runCatching {
@@ -1353,8 +1352,8 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
-                    result.onSuccess { Toast.makeText(this@MainActivity, "Deleted", Toast.LENGTH_SHORT).show() }
-                        .onFailure { error -> Toast.makeText(this@MainActivity, "Delete failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show() }
+                    result.onSuccess { Toast.makeText(this@MainActivity, "\u5df2\u5220\u9664", Toast.LENGTH_SHORT).show() }
+                        .onFailure { error -> Toast.makeText(this@MainActivity, "\u5220\u9664\u5931\u8d25\uff1a${error.message ?: "\u672a\u77e5\u9519\u8bef"}", Toast.LENGTH_LONG).show() }
                 }
             }
             .show()

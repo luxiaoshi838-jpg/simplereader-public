@@ -1,4 +1,4 @@
-package com.simplereader.app.ui
+﻿package com.simplereader.app.ui
 
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -49,9 +49,9 @@ class GroupBooksActivity : AppCompatActivity() {
         supportActionBar?.hide()
 
         groupId = intent.getLongExtra(EXTRA_GROUP_ID, 0L)
-        groupName = intent.getStringExtra(EXTRA_GROUP_NAME).orEmpty().ifBlank { "Group" }
+        groupName = intent.getStringExtra(EXTRA_GROUP_NAME).orEmpty().ifBlank { "\u5206\u7ec4" }
         if (groupId <= 0L) {
-            Toast.makeText(this, "Group not found", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "\u5206\u7ec4\u4e0d\u5b58\u5728", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
@@ -121,7 +121,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(titleView)
 
                 deleteButton = TextView(this@GroupBooksActivity).apply {
-                    text = "Delete"
+                    text = "\u5220\u9664"
                     textSize = 16f
                     gravity = Gravity.CENTER
                     visibility = View.GONE
@@ -132,7 +132,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(deleteButton)
 
                 cancelButton = TextView(this@GroupBooksActivity).apply {
-                    text = "Cancel"
+                    text = "\u53d6\u6d88"
                     textSize = 16f
                     gravity = Gravity.CENTER
                     visibility = View.GONE
@@ -194,7 +194,7 @@ class GroupBooksActivity : AppCompatActivity() {
     private fun updateSelectionChrome() {
         if (!::titleView.isInitialized) return
         val count = selectedBookIds.size
-        titleView.text = if (selectionMode) "Selected $count" else groupName
+        titleView.text = if (selectionMode) "\u5df2\u9009\u62e9 $count" else groupName
         deleteButton.visibility = if (selectionMode) View.VISIBLE else View.GONE
         cancelButton.visibility = if (selectionMode) View.VISIBLE else View.GONE
     }
@@ -206,7 +206,7 @@ class GroupBooksActivity : AppCompatActivity() {
     private fun showBookActions(book: ShelfBookItem) {
         AlertDialog.Builder(this)
             .setTitle(book.title)
-            .setItems(arrayOf("Open", "Rename", "Remove from group", "Remove from shelf", "Remove shelf and local file")) { _, which ->
+            .setItems(arrayOf("\u6253\u5f00", "\u91cd\u547d\u540d", "\u79fb\u51fa\u5206\u7ec4", "\u53ea\u5220\u9664\u4e66\u67b6", "\u5220\u9664\u4e66\u67b6\u53ca\u672c\u5730\u6587\u4ef6")) { _, which ->
                 when (which) {
                     0 -> openBook(book.id)
                     1 -> showRenameBookDialog(book)
@@ -220,38 +220,38 @@ class GroupBooksActivity : AppCompatActivity() {
 
     private fun showRenameBookDialog(book: ShelfBookItem) {
         val input = EditText(this).apply {
-            hint = "Book name"
+            hint = "\u4e66\u7c4d\u540d"
             setText(book.title)
             selectAll()
             setSingleLine(true)
         }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Rename book")
+            .setTitle("\u91cd\u547d\u540d\u4e66\u7c4d")
             .setView(input)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Save", null)
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setPositiveButton("\u4fdd\u5b58", null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val newTitle = input.text.toString().trim()
                 if (newTitle.isBlank()) {
-                    input.error = "Book name cannot be empty"
+                    input.error = "\u4e66\u540d\u4e0d\u80fd\u4e3a\u7a7a"
                     return@setOnClickListener
                 }
                 lifecycleScope.launch {
                     val result = withContext(Dispatchers.IO) {
                         runCatching {
-                            val entity = bookRepository.getBook(book.id) ?: error("Book not found")
+                            val entity = bookRepository.getBook(book.id) ?: error("\u4e66\u7c4d\u4e0d\u5b58\u5728")
                             val renamed = BookFileActions.renameBookFile(this@GroupBooksActivity, entity, newTitle)
                             bookRepository.update(renamed)
                             renamed.title
                         }
                     }
                     result.onSuccess { title ->
-                        Toast.makeText(this@GroupBooksActivity, "Renamed: $title", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@GroupBooksActivity, "\u5df2\u91cd\u547d\u540d\uff1a$title", Toast.LENGTH_SHORT).show()
                         dialog.dismiss()
                     }.onFailure { error ->
-                        Toast.makeText(this@GroupBooksActivity, "Rename failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@GroupBooksActivity, "\u91cd\u547d\u540d\u5931\u8d25\uff1a${error.message ?: "\u672a\u77e5\u9519\u8bef"}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -265,30 +265,30 @@ class GroupBooksActivity : AppCompatActivity() {
                 val entity = bookRepository.getBook(book.id) ?: return@withContext
                 bookRepository.update(entity.copy(groupId = targetGroupId))
             }
-            Toast.makeText(this@GroupBooksActivity, "Updated", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@GroupBooksActivity, "\u5df2\u66f4\u65b0", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun confirmDeleteSelection() {
         if (selectedBookIds.isEmpty()) {
-            Toast.makeText(this, "Select books first", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "\u8bf7\u5148\u9009\u62e9\u4e66\u7c4d", Toast.LENGTH_SHORT).show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Batch remove books")
-            .setMessage("${selectedBookIds.size} books selected.")
-            .setNegativeButton("Cancel", null)
-            .setNeutralButton("Shelf only") { _, _ -> deleteSelectedBooks(deleteLocalFiles = false) }
-            .setPositiveButton("Shelf + local files") { _, _ -> deleteSelectedBooks(deleteLocalFiles = true) }
+            .setTitle("\u6279\u91cf\u5220\u9664\u4e66\u7c4d")
+            .setMessage("\u5df2\u9009\u62e9 ${selectedBookIds.size} \u672c\u4e66\u3002")
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setNeutralButton("\u53ea\u5220\u9664\u4e66\u67b6") { _, _ -> deleteSelectedBooks(deleteLocalFiles = false) }
+            .setPositiveButton("\u4e66\u67b6+\u672c\u5730\u6587\u4ef6") { _, _ -> deleteSelectedBooks(deleteLocalFiles = true) }
             .show()
     }
 
     private fun confirmDeleteBook(book: ShelfBookItem, deleteLocalFile: Boolean = false) {
         AlertDialog.Builder(this)
-            .setTitle(if (deleteLocalFile) "Remove shelf and local file" else "Remove from shelf")
-            .setMessage(if (deleteLocalFile) "Remove ${book.title} from shelf and delete the local file. This cannot be undone." else "Remove ${book.title} from shelf only. The local file will remain.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Delete") { _, _ -> deleteBooks(listOf(book.id), deleteLocalFile) }
+            .setTitle(if (deleteLocalFile) "\u5220\u9664\u4e66\u67b6\u53ca\u672c\u5730\u6587\u4ef6" else "\u53ea\u5220\u9664\u4e66\u67b6")
+            .setMessage(if (deleteLocalFile) "\u5c06\u5220\u9664\u300a${book.title}\u300b\u7684\u4e66\u67b6\u8bb0\u5f55\u548c\u672c\u5730\u6587\u4ef6\uff0c\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002" else "\u53ea\u4ece\u4e66\u67b6\u79fb\u9664\u300a${book.title}\u300b\uff0c\u4e0d\u5220\u9664\u539f\u6587\u4ef6\u3002")
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setPositiveButton("\u5220\u9664") { _, _ -> deleteBooks(listOf(book.id), deleteLocalFile) }
             .show()
     }
 
@@ -317,11 +317,11 @@ class GroupBooksActivity : AppCompatActivity() {
                 }
             }
             result.onSuccess { (localDeleted, localFailed) ->
-                val message = if (deleteLocalFiles) "Shelf removed. Local deleted: $localDeleted, failed: $localFailed" else "Removed from shelf"
+                val message = if (deleteLocalFiles) "\u5df2\u5220\u9664\u4e66\u67b6\u8bb0\u5f55\uff0c\u672c\u5730\u6587\u4ef6\u6210\u529f $localDeleted \u4e2a\uff0c\u5931\u8d25 $localFailed \u4e2a" else "\u5df2\u4ece\u4e66\u67b6\u5220\u9664"
                 Toast.makeText(this@GroupBooksActivity, message, Toast.LENGTH_LONG).show()
                 afterDelete()
             }.onFailure { error ->
-                Toast.makeText(this@GroupBooksActivity, "Delete failed: ${error.message ?: "unknown"}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@GroupBooksActivity, "\u5220\u9664\u5931\u8d25\uff1a${error.message ?: "\u672a\u77e5\u9519\u8bef"}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -421,9 +421,9 @@ class GroupBooksActivity : AppCompatActivity() {
                 setTextColor(Color.WHITE)
                 visibility = View.GONE
             }
-            addView(selectionMark, LayoutParams(dp(28), dp(28), Gravity.BOTTOM or Gravity.END).apply {
-                rightMargin = dp(4)
-                bottomMargin = dp(44)
+            addView(selectionMark, LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(120)
+                rightMargin = dp(6)
             })
         }
 
@@ -434,10 +434,10 @@ class GroupBooksActivity : AppCompatActivity() {
             coverFallback.visibility = View.VISIBLE
             coverImage.visibility = View.GONE
             coverImage.setImageDrawable(null)
-            coverImage.contentDescription = "Cover ${book.title}"
+            coverImage.contentDescription = "\u5c01\u9762 ${book.title}"
             title.text = book.title
             title.setTextColor(ReaderAppearance.shelfTextColor(context))
-            progress.text = "Read ${book.progressPercent()}%"
+            progress.text = "\u5df2\u8bfb ${book.progressPercent()}%"
             progress.setTextColor(ReaderAppearance.shelfSecondaryTextColor(context))
             updateSelection(selectionMode, selected)
 
@@ -464,11 +464,11 @@ class GroupBooksActivity : AppCompatActivity() {
 
         private fun updateSelection(selectionMode: Boolean, selected: Boolean) {
             selectionMark.visibility = if (selectionMode) View.VISIBLE else View.GONE
-            selectionMark.text = if (selected) "✓" else ""
+            selectionMark.text = if (selected) "\u2713" else ""
             selectionMark.background = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setStroke(dp(2), if (selected) Color.rgb(239, 100, 45) else Color.rgb(150, 145, 136))
-                setColor(if (selected) Color.rgb(239, 100, 45) else Color.TRANSPARENT)
+                setColor(if (selected) Color.rgb(239, 100, 45) else Color.WHITE)
             }
         }
 
