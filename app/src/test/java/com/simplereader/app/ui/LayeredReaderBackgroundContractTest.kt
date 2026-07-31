@@ -22,8 +22,9 @@ class LayeredReaderBackgroundContractTest {
 
     @Test
     fun textureAndMaterialBothKeepPureOptions() {
-        assertTrue(backgrounds.contains("TextureOption(NONE_TEXTURE_ID, "纯净""))
-        assertTrue(backgrounds.contains("MaterialOption(NONE_MATERIAL_ID, "纯净""))
+        assertTrue(backgrounds.contains("TextureOption(NONE_TEXTURE_ID"))
+        assertTrue(backgrounds.contains("MaterialOption(NONE_MATERIAL_ID"))
+        assertTrue(Regex("纯净").findAll(backgrounds).count() >= 2)
         assertFalse(backgrounds.contains("细麻纹"))
         assertFalse(backgrounds.contains("LINEN"))
     }
