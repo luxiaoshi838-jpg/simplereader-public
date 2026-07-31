@@ -1,4 +1,4 @@
-﻿package com.simplereader.app.ui
+package com.simplereader.app.ui
 
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -24,15 +24,18 @@ import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.model.ShelfBookItem
 import com.simplereader.app.data.repository.BookRepository
+import com.simplereader.app.data.repository.BookGroupRepository
 import com.simplereader.app.parser.EpubParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class GroupBooksActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var bookRepository: BookRepository
+    private lateinit var bookGroupRepository: BookGroupRepository
     private lateinit var adapter: GroupBookAdapter
     private lateinit var rootView: LinearLayout
     private lateinit var titleView: TextView
@@ -42,6 +45,7 @@ class GroupBooksActivity : AppCompatActivity() {
     private var groupName: String = ""
     private var selectionMode = false
     private val selectedBookIds = linkedSetOf<Long>()
+    private var currentBooks = emptyList<ShelfBookItem>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
@@ -58,6 +62,7 @@ class GroupBooksActivity : AppCompatActivity() {
 
         database = SimpleReaderDatabase.getDatabase(this)
         bookRepository = BookRepository(database.bookDao())
+        bookGroupRepository = BookGroupRepository(database.bookGroupDao())
         adapter = GroupBookAdapter(
             isSelectionMode = { selectionMode },
             isSelected = { selectedBookIds.contains(it) },
@@ -68,6 +73,7 @@ class GroupBooksActivity : AppCompatActivity() {
         setContentView(createContentView())
         lifecycleScope.launch {
             bookRepository.getShelfBooksByGroup(groupId).collectLatest { books ->
+                currentBooks = books
                 selectedBookIds.retainAll(books.map { it.id }.toSet())
                 adapter.submit(books)
                 updateSelectionChrome()
@@ -121,13 +127,13 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(titleView)
 
                 deleteButton = TextView(this@GroupBooksActivity).apply {
-                    text = "\u5220\u9664"
+                    text = "操作"
                     textSize = 16f
                     gravity = Gravity.CENTER
                     visibility = View.GONE
-                    setTextColor(Color.rgb(235, 96, 48))
+                    setTextColor(ReaderAppearance.shelfTextColor(this@GroupBooksActivity))
                     layoutParams = LinearLayout.LayoutParams(dp(72), LinearLayout.LayoutParams.MATCH_PARENT)
-                    setOnClickListener { confirmDeleteSelection() }
+                    setOnClickListener { showSelectionActions() }
                 }
                 addView(deleteButton)
 
@@ -166,7 +172,7 @@ class GroupBooksActivity : AppCompatActivity() {
             is TextView -> view.setTextColor(ReaderAppearance.shelfTextColor(this))
             is ViewGroup -> for (index in 0 until view.childCount) tintTextViews(view.getChildAt(index))
         }
-        deleteButton.setTextColor(Color.rgb(235, 96, 48))
+        deleteButton.setTextColor(ReaderAppearance.shelfTextColor(this))
     }
 
     private fun enterSelectionMode() {
@@ -195,8 +201,81 @@ class GroupBooksActivity : AppCompatActivity() {
         if (!::titleView.isInitialized) return
         val count = selectedBookIds.size
         titleView.text = if (selectionMode) "\u5df2\u9009\u62e9 $count" else groupName
+        deleteButton.text = if (selectionMode) "操作($count)" else "操作"
         deleteButton.visibility = if (selectionMode) View.VISIBLE else View.GONE
         cancelButton.visibility = if (selectionMode) View.VISIBLE else View.GONE
+    }
+
+    private fun showSelectionActions() {
+        val selectedBooks = currentBooks.filter { it.id in selectedBookIds }
+        if (selectedBooks.isEmpty()) {
+            Toast.makeText(this, "请先选择书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (selectedBooks.size == 1) {
+            val book = selectedBooks.first()
+            AlertDialog.Builder(this)
+                .setTitle(book.title)
+                .setItems(arrayOf("修改书名", "导入分组", "删除")) { _, which ->
+                    when (which) {
+                        0 -> {
+                            exitSelectionMode()
+                            showRenameBookDialog(book)
+                        }
+                        1 -> moveSelectedBooksToGroup()
+                        2 -> confirmDeleteSelection()
+                    }
+                }
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("已选择 ${selectedBooks.size} 本书")
+                .setItems(arrayOf("导入分组", "删除")) { _, which ->
+                    when (which) {
+                        0 -> moveSelectedBooksToGroup()
+                        1 -> confirmDeleteSelection()
+                    }
+                }
+                .show()
+        }
+    }
+
+    private fun moveSelectedBooksToGroup() {
+        val selectedIds = selectedBookIds.toSet()
+        if (selectedIds.isEmpty()) {
+            Toast.makeText(this, "请先选择书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch {
+            val existingGroups = withContext(Dispatchers.IO) {
+                bookGroupRepository.getAllGroups().first()
+            }
+            val labels = (listOf("未分组") + existingGroups.map { group ->
+                group.displayName.ifBlank { group.name }
+            }).toTypedArray()
+            AlertDialog.Builder(this@GroupBooksActivity)
+                .setTitle("导入分组 · ${selectedIds.size} 本")
+                .setItems(labels) { _, which ->
+                    lifecycleScope.launch {
+                        val targetGroupId = if (which == 0) null else existingGroups[which - 1].id
+                        withContext(Dispatchers.IO) {
+                            selectedIds.forEach { bookId ->
+                                bookRepository.getBook(bookId)?.let { entity ->
+                                    bookRepository.update(entity.copy(groupId = targetGroupId))
+                                }
+                            }
+                        }
+                        Toast.makeText(
+                            this@GroupBooksActivity,
+                            "已将 ${selectedIds.size} 本书导入所选分组",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        exitSelectionMode()
+                    }
+                }
+                .show()
+        }
     }
 
     private fun openBook(bookId: Long) {
