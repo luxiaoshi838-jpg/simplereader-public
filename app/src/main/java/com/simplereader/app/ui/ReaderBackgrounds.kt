@@ -278,7 +278,7 @@ private class LayeredReaderBackgroundDrawable(
                     resId = resId,
                     targetTilePx = 520f * density,
                     alpha = material.alpha,
-                    mode = PorterDuff.Mode.SOFT_LIGHT
+                    mode = PorterDuff.Mode.SCREEN
                 )
                 drawSoftHighlight(canvas, area, 24)
             }
