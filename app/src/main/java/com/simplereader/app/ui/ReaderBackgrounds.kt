@@ -21,12 +21,12 @@ import com.simplereader.app.R
 import kotlin.math.max
 
 /**
- * v585 分层阅读背景。
+ * v586 分层阅读背景。
  *
  * 颜色、纹理、质感分别保存和组合：
- * - 颜色只决定底色与正文颜色；
- * - 纹理是可关闭的真实位图表面纹理；
- * - 质感是可关闭的独立明暗/表面层。
+ * - 颜色恢复 v575/v581 的原始纸张色、护眼色和白色；
+ * - 纹理使用更清晰的真实位图叠加；
+ * - 质感增强明暗层次，同时移除旧纸质感。
  *
  * 位图素材来自 CC0 资源，来源记录在 THIRD_PARTY_TEXTURES.md。
  */
@@ -67,8 +67,7 @@ object ReaderBackgrounds {
     enum class MaterialEffect {
         NONE,
         MATTE,
-        FROSTED,
-        PATINA
+        FROSTED
     }
 
     data class MaterialOption(
@@ -86,9 +85,9 @@ object ReaderBackgrounds {
     )
 
     val colorOptions: List<ColorOption> = listOf(
-        ColorOption("solid_ivory", "象牙白", Color.rgb(248, 244, 232), Color.rgb(52, 48, 40)),
-        ColorOption("solid_eye", "护眼绿", Color.rgb(218, 238, 205), Color.rgb(48, 60, 42)),
-        ColorOption("solid_white", "净白", Color.WHITE, Color.rgb(35, 35, 35)),
+        ColorOption("solid_ivory", "纸张", Color.rgb(245, 233, 200), Color.rgb(59, 52, 40)),
+        ColorOption("solid_eye", "护眼", Color.rgb(218, 238, 205), Color.rgb(48, 60, 42)),
+        ColorOption("solid_white", "白色", Color.WHITE, Color.rgb(35, 35, 35)),
         ColorOption("solid_mist", "雾灰", Color.rgb(232, 234, 231), Color.rgb(49, 51, 49)),
         ColorOption("solid_peach", "浅桃", Color.rgb(246, 229, 221), Color.rgb(66, 48, 43)),
         ColorOption("solid_blue", "浅蓝", Color.rgb(224, 237, 243), Color.rgb(40, 54, 61))
@@ -101,14 +100,14 @@ object ReaderBackgrounds {
             title = "纸张颗粒",
             effect = TextureEffect.PAPER_GRAIN,
             drawableRes = R.drawable.reader_texture_paper_grain,
-            alpha = 112
+            alpha = 188
         ),
         TextureOption(
             id = "texture_paper_fiber",
             title = "宣纸纤维",
             effect = TextureEffect.PAPER_FIBER,
             drawableRes = R.drawable.reader_texture_paper_fiber,
-            alpha = 124
+            alpha = 205
         )
     )
 
@@ -120,14 +119,7 @@ object ReaderBackgrounds {
             title = "雾面",
             effect = MaterialEffect.FROSTED,
             drawableRes = R.drawable.reader_material_frosted,
-            alpha = 76
-        ),
-        MaterialOption(
-            id = "material_patina",
-            title = "旧纸质感",
-            effect = MaterialEffect.PATINA,
-            drawableRes = R.drawable.reader_material_patina,
-            alpha = 84
+            alpha = 152
         )
     )
 
@@ -165,7 +157,7 @@ object ReaderBackgrounds {
         return colorOptions.minByOrNull { distance(it.backgroundColor) }?.id ?: DEFAULT_COLOR_ID
     }
 
-    /** 将 v582-v584 的互斥预设迁移成 v585 的三层组合。 */
+    /** 将 v582-v584 的互斥预设迁移成三层组合。 */
     fun selectionFromLegacy(styleId: String?, paletteBackground: Int): Selection {
         return validated(
             when (styleId) {
@@ -180,7 +172,7 @@ object ReaderBackgrounds {
                 "texture_fiber" -> Selection("solid_ivory", "texture_paper_fiber", NONE_MATERIAL_ID)
                 "texture_green" -> Selection("solid_eye", "texture_paper_grain", NONE_MATERIAL_ID)
                 "texture_grey" -> Selection("solid_mist", "texture_paper_grain", NONE_MATERIAL_ID)
-                "material_parchment" -> Selection("solid_ivory", NONE_TEXTURE_ID, "material_patina")
+                "material_parchment" -> Selection("solid_ivory", NONE_TEXTURE_ID, "material_matte")
                 "material_cloud" -> Selection("solid_blue", NONE_TEXTURE_ID, "material_frosted")
                 "material_warm" -> Selection("solid_peach", NONE_TEXTURE_ID, "material_matte")
                 "material_jade" -> Selection("solid_eye", NONE_TEXTURE_ID, "material_frosted")
@@ -233,7 +225,9 @@ private class LayeredReaderBackgroundDrawable(
     private val texture: ReaderBackgrounds.TextureOption,
     private val material: ReaderBackgrounds.MaterialOption
 ) : Drawable() {
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = this@LayeredReaderBackgroundDrawable.color.backgroundColor }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = this@LayeredReaderBackgroundDrawable.color.backgroundColor
+    }
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val matrix = Matrix()
@@ -251,16 +245,26 @@ private class LayeredReaderBackgroundDrawable(
     private fun drawTexture(canvas: Canvas, area: Rect) {
         when (texture.effect) {
             ReaderBackgrounds.TextureEffect.NONE -> Unit
-            ReaderBackgrounds.TextureEffect.PAPER_GRAIN,
+            ReaderBackgrounds.TextureEffect.PAPER_GRAIN -> {
+                val resId = texture.drawableRes ?: return
+                drawBitmapLayer(
+                    canvas = canvas,
+                    area = area,
+                    resId = resId,
+                    targetTilePx = 210f * density,
+                    alpha = texture.alpha,
+                    mode = PorterDuff.Mode.MULTIPLY
+                )
+            }
             ReaderBackgrounds.TextureEffect.PAPER_FIBER -> {
                 val resId = texture.drawableRes ?: return
                 drawBitmapLayer(
                     canvas = canvas,
                     area = area,
                     resId = resId,
-                    targetTilePx = 260f * density,
+                    targetTilePx = 245f * density,
                     alpha = texture.alpha,
-                    mode = PorterDuff.Mode.OVERLAY
+                    mode = PorterDuff.Mode.MULTIPLY
                 )
             }
         }
@@ -276,23 +280,11 @@ private class LayeredReaderBackgroundDrawable(
                     canvas = canvas,
                     area = area,
                     resId = resId,
-                    targetTilePx = 520f * density,
+                    targetTilePx = 420f * density,
                     alpha = material.alpha,
-                    mode = PorterDuff.Mode.SCREEN
+                    mode = PorterDuff.Mode.OVERLAY
                 )
-                drawSoftHighlight(canvas, area, 24)
-            }
-            ReaderBackgrounds.MaterialEffect.PATINA -> {
-                val resId = material.drawableRes ?: return
-                drawBitmapLayer(
-                    canvas = canvas,
-                    area = area,
-                    resId = resId,
-                    targetTilePx = 620f * density,
-                    alpha = material.alpha,
-                    mode = PorterDuff.Mode.MULTIPLY
-                )
-                drawEdgePatina(canvas, area)
+                drawSoftHighlight(canvas, area, 58)
             }
         }
     }
@@ -327,16 +319,16 @@ private class LayeredReaderBackgroundDrawable(
             area.right.toFloat(),
             area.bottom.toFloat(),
             intArrayOf(
-                Color.argb(34 * globalAlpha / 255, 255, 255, 255),
-                Color.argb(4 * globalAlpha / 255, 255, 255, 255),
-                Color.argb(28 * globalAlpha / 255, 68, 59, 48)
+                Color.argb(66 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(8 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(52 * globalAlpha / 255, 68, 59, 48)
             ),
-            floatArrayOf(0f, 0.52f, 1f),
+            floatArrayOf(0f, 0.50f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(area, effectPaint)
         effectPaint.shader = null
-        drawSoftHighlight(canvas, area, 18)
+        drawSoftHighlight(canvas, area, 38)
     }
 
     private fun drawSoftHighlight(canvas: Canvas, area: Rect, strength: Int) {
@@ -349,24 +341,7 @@ private class LayeredReaderBackgroundDrawable(
                 Color.TRANSPARENT,
                 Color.argb((strength / 2) * globalAlpha / 255, 52, 48, 42)
             ),
-            floatArrayOf(0f, 0.66f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(area, effectPaint)
-        effectPaint.shader = null
-    }
-
-    private fun drawEdgePatina(canvas: Canvas, area: Rect) {
-        effectPaint.shader = RadialGradient(
-            area.exactCenterX(),
-            area.exactCenterY(),
-            max(area.width(), area.height()).toFloat() * 0.72f,
-            intArrayOf(
-                Color.TRANSPARENT,
-                Color.argb(18 * globalAlpha / 255, 101, 72, 39),
-                Color.argb(46 * globalAlpha / 255, 72, 47, 22)
-            ),
-            floatArrayOf(0.48f, 0.84f, 1f),
+            floatArrayOf(0f, 0.64f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(area, effectPaint)
