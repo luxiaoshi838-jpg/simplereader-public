@@ -1,8 +1,8 @@
-# SimpleReader v586 background tuning
+# 简阅 v586 阅读背景修订
 
-- Restores the original paper, eye-care and white reading colors from v575/v581.
-- Keeps the additional mist gray, pale peach and pale blue solid colors.
-- Strengthens paper grain and paper fiber texture layers using multiply blending.
-- Strengthens matte and frosted material layers.
-- Removes the old-paper material option, drawing path and bitmap resource.
-- Version: `2098000586 / 2026.07.31.background-strength.586`.
+- 恢复 v575/v581 原有的纸张色、护眼色和白色。
+- 保留雾灰、浅桃、浅蓝三个扩展纯色。
+- 纸张颗粒与宣纸纤维改用更强的正片叠底效果。
+- 柔和哑光与雾面质感明显增强。
+- 旧纸选项、绘制逻辑与位图资源均已删除。
+- 版本：`2098000586 / 2026.07.31.background-strength.586`。
