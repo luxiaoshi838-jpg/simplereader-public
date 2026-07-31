@@ -37,7 +37,7 @@ class LayeredReaderBackgroundContractTest {
     }
 
     @Test
-    fun bitmapLayersAreVisibleAndRemovedMaterialHasNoImplementation() {
+    fun bitmapLayersAreVisibleAndPatinaIsRemoved() {
         assertTrue(backgrounds.contains("reader_texture_paper_grain"))
         assertTrue(backgrounds.contains("reader_texture_paper_fiber"))
         assertTrue(backgrounds.contains("reader_material_frosted"))
@@ -46,6 +46,7 @@ class LayeredReaderBackgroundContractTest {
         assertTrue(backgrounds.contains("alpha = 152"))
         assertTrue(backgrounds.contains("PorterDuff.Mode.MULTIPLY"))
         assertFalse(backgrounds.contains("reader_material_patina"))
+        assertFalse(backgrounds.contains("旧纸质感"))
         assertFalse(backgrounds.contains("PATINA"))
         assertTrue(backgrounds.contains("BitmapShader"))
         assertTrue(backgrounds.contains("PorterDuffXfermode"))
