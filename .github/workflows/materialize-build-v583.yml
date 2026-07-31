@@ -33,6 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/fix_v583_shelf_selection_actions.py
+          python3 scripts/fix_v583_test_syntax.py
           grep -Fq 'showShelfSelectionActions()' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -Fq 'arrayOf("修改书名", "导入分组", "删除")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -Fq 'arrayOf("导入分组", "删除")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
