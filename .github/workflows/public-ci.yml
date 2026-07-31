@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           grep -Fq 'data class ReaderPageAnchor' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
           grep -Fq 'class PagedReaderView' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'private fun buildPagedWindow' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'private suspend fun buildPagedWindow' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'applyPagedAnchor(target.startAnchor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'com.simplereader.app.ui.PagedReaderView' app/src/main/res/layout/activity_reader.xml
           grep -Fq 'TurnMode.SIMULATE' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
