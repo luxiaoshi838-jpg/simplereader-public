@@ -3269,10 +3269,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         // changes FlipEffect/PageLayout. Do the same here: preserve the bound
         // page window, anchor, cache and background; never reload or swap views.
         pagedReaderView.setTurnMode(pagedTurnMode())
-        currentPagedPage?.let(::updatePagedProgressLabel)
-            ?: if (openSucceeded && currentContent.isNotBlank()) {
-                refreshPagedReader(pagedAnchorFromCurrentPosition())
-            }
+        val visiblePage = currentPagedPage
+        if (visiblePage != null) {
+            updatePagedProgressLabel(visiblePage)
+        } else if (openSucceeded && currentContent.isNotBlank()) {
+            refreshPagedReader(pagedAnchorFromCurrentPosition())
+        }
 
         Toast.makeText(this, "阅读模式：${turnModeLabel(mode)}", Toast.LENGTH_SHORT).show()
     }
