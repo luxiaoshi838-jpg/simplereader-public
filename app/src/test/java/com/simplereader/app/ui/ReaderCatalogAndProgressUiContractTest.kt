@@ -24,7 +24,10 @@ class ReaderCatalogAndProgressUiContractTest {
         val layout = readerLayout()
         assertFalse(source.contains("readerProgressBar"))
         assertFalse(layout.contains("@+id/readerProgressBar"))
-        assertTrue(layout.contains("android:text=\"1/1\""))
+        assertTrue(layout.contains("android:id=\"@+id/readerProgressLabel\""))
+        assertTrue(layout.substringAfter("android:id=\"@+id/readerProgressLabel\"")
+            .substringBefore("<LinearLayout")
+            .contains("android:visibility=\"gone\""))
         assertTrue(source.contains("private fun pageCountLabel()"))
         assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
     }

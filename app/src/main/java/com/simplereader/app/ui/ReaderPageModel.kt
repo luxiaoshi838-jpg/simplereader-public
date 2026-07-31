@@ -27,7 +27,9 @@ data class ReaderLayoutSignature(
     val textSizePx: Int,
     val lineSpacingMultiplierX100: Int,
     val horizontalPaddingPx: Int,
-    val verticalPaddingPx: Int
+    val verticalPaddingPx: Int,
+    /** Distinguishes streaming TXT windows without coupling cache identity to turn mode. */
+    val contentKey: Long = 0L
 )
 
 /** Small LRU cache: previous, current and next chapter page lists. */

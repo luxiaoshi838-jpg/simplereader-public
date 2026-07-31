@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -12,21 +15,23 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import kotlin.math.abs
 
 /**
- * Reusable three-page reader surface. Page preparation and page-turn animation
- * are deliberately separate: the view never changes chapters or reading
- * positions; it only animates already prepared previous/current/next pages.
+ * A single flow page surface for overlap, horizontal scroll, vertical scroll and fade.
+ * The same page snapshots stay bound while the rendering effect/layout changes.
+ * Simulation also consumes the same previous/current/next snapshots; it never owns
+ * chapter state or reading progress.
  */
 class PagedReaderView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
-    enum class TurnMode { OVERLAP, SIMULATE, SLIDE, FADE }
+    enum class TurnMode { OVERLAP, SIMULATE, SLIDE, VERTICAL, FADE }
 
     data class Style(
         val textSizeSp: Float,
@@ -40,6 +45,8 @@ class PagedReaderView @JvmOverloads constructor(
     )
 
     var turnMode: TurnMode = TurnMode.OVERLAP
+        private set
+
     var onTurnCommitted: ((direction: Int) -> Unit)? = null
     var onBoundaryTurn: ((direction: Int) -> Unit)? = null
     var onCenterTap: (() -> Unit)? = null
@@ -52,7 +59,7 @@ class PagedReaderView @JvmOverloads constructor(
         visibility = View.GONE
         background = android.graphics.drawable.GradientDrawable(
             android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(Color.argb(0, 0, 0, 0), Color.argb(95, 0, 0, 0))
+            intArrayOf(Color.argb(0, 0, 0, 0), Color.argb(88, 0, 0, 0))
         )
     }
 
@@ -60,9 +67,11 @@ class PagedReaderView @JvmOverloads constructor(
     private var currentPage: ReaderPageSnapshot? = null
     private var nextPage: ReaderPageSnapshot? = null
     private var style: Style? = null
+    private var activeAnimator: ValueAnimator? = null
     private var animating = false
     private var dragging = false
     private var dragDirection = 0
+    private var activeDirection = 0
     private var downX = 0f
     private var downY = 0f
     private var dragProgress = 0f
@@ -88,6 +97,13 @@ class PagedReaderView @JvmOverloads constructor(
         })
     }
 
+    fun setTurnMode(mode: TurnMode) {
+        if (turnMode == mode) return
+        cancelActiveAnimation(reset = true)
+        turnMode = mode
+        resetTransforms()
+    }
+
     fun configure(style: Style) {
         this.style = style
         listOf(previousView, currentView, nextView).forEach { page ->
@@ -111,6 +127,7 @@ class PagedReaderView @JvmOverloads constructor(
         current: ReaderPageSnapshot,
         next: ReaderPageSnapshot?
     ) {
+        cancelActiveAnimation(reset = false)
         previousPage = previous
         currentPage = current
         nextPage = next
@@ -118,6 +135,18 @@ class PagedReaderView @JvmOverloads constructor(
         currentView.text = current.content
         nextView.text = next?.content ?: ""
         resetTransforms()
+    }
+
+    /** Update only the prefetched sides; the visible page is not rebound or flashed. */
+    fun updateAdjacent(
+        previous: ReaderPageSnapshot?,
+        next: ReaderPageSnapshot?
+    ) {
+        previousPage = previous
+        nextPage = next
+        previousView.text = previous?.content ?: ""
+        nextView.text = next?.content ?: ""
+        if (!animating && !dragging) resetTransforms()
     }
 
     fun currentSnapshot(): ReaderPageSnapshot? = currentPage
@@ -135,7 +164,6 @@ class PagedReaderView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (animating) return true
-        velocityTracker?.addMovement(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
@@ -151,61 +179,81 @@ class PagedReaderView @JvmOverloads constructor(
                 velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                 return true
             }
+
             MotionEvent.ACTION_MOVE -> {
+                velocityTracker?.addMovement(event)
                 val dx = event.x - downX
                 val dy = event.y - downY
                 if (abs(dx) > dp(10) || abs(dy) > dp(10)) {
                     longPressHandler.removeCallbacks(longPressRunnable)
                 }
-                if (!dragging && abs(dx) > dp(10) && abs(dx) > abs(dy) * 1.15f) {
-                    dragDirection = if (dx < 0f) 1 else -1
-                    val incoming = if (dragDirection > 0) nextPage else previousPage
-                    if (incoming == null) {
-                        dragDirection = 0
-                        return true
+                if (!dragging) {
+                    val verticalGesture = turnMode == TurnMode.VERTICAL
+                    val primary = if (verticalGesture) dy else dx
+                    val secondary = if (verticalGesture) dx else dy
+                    if (abs(primary) > dp(10) && abs(primary) > abs(secondary) * 1.15f) {
+                        dragDirection = if (primary < 0f) 1 else -1
+                        val incoming = if (dragDirection > 0) nextPage else previousPage
+                        if (incoming == null) {
+                            dragDirection = 0
+                            return true
+                        }
+                        dragging = true
                     }
-                    dragging = true
                 }
                 if (longPressTriggered) {
                     longPressTriggered = false
                     return true
                 }
                 if (dragging) {
-                    dragProgress = (abs(dx) / width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                    val distance = if (turnMode == TurnMode.VERTICAL) abs(dy) else abs(dx)
+                    val extent = if (turnMode == TurnMode.VERTICAL) height else width
+                    dragProgress = (distance / extent.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                     applyProgress(dragDirection, dragProgress)
                 }
                 return true
             }
+
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                velocityTracker?.addMovement(event)
                 longPressHandler.removeCallbacks(longPressRunnable)
                 velocityTracker?.computeCurrentVelocity(1000)
-                val velocityX = velocityTracker?.xVelocity ?: 0f
+                val velocity = if (turnMode == TurnMode.VERTICAL) {
+                    velocityTracker?.yVelocity ?: 0f
+                } else {
+                    velocityTracker?.xVelocity ?: 0f
+                }
                 velocityTracker?.recycle()
                 velocityTracker = null
+
                 if (longPressTriggered) {
                     longPressTriggered = false
                     return true
                 }
                 if (dragging) {
-                    val forwardVelocity = if (dragDirection > 0) -velocityX else velocityX
+                    val forwardVelocity = if (dragDirection > 0) -velocity else velocity
                     val commit = event.actionMasked == MotionEvent.ACTION_UP &&
                         (dragProgress >= 0.24f || forwardVelocity > 720f)
-                    if (commit) {
-                        animateTurn(dragDirection, dragProgress)
-                    } else {
-                        animateReset()
-                    }
                     dragging = false
+                    if (commit) animateTurn(dragDirection, dragProgress) else animateReset(dragProgress)
                     return true
                 }
 
                 if (event.actionMasked == MotionEvent.ACTION_UP &&
                     abs(event.x - downX) < dp(12) && abs(event.y - downY) < dp(12)
                 ) {
-                    when {
-                        event.x < width * 0.33f -> turn(-1)
-                        event.x > width * 0.67f -> turn(1)
-                        else -> onCenterTap?.invoke()
+                    if (turnMode == TurnMode.VERTICAL) {
+                        when {
+                            event.y < height * 0.33f -> turn(-1)
+                            event.y > height * 0.67f -> turn(1)
+                            else -> onCenterTap?.invoke()
+                        }
+                    } else {
+                        when {
+                            event.x < width * 0.33f -> turn(-1)
+                            event.x > width * 0.67f -> turn(1)
+                            else -> onCenterTap?.invoke()
+                        }
                     }
                 }
                 return true
@@ -215,64 +263,75 @@ class PagedReaderView @JvmOverloads constructor(
     }
 
     private fun animateTurn(direction: Int, fromProgress: Float) {
-        val incoming = if (direction > 0) nextView else previousView
-        val outgoing = currentView
+        if (animating) return
+        activeDirection = direction
+        dragDirection = direction
         animating = true
         prepareForDirection(direction)
-        if (fromProgress > 0f) applyProgress(direction, fromProgress)
-        val remaining = (1f - fromProgress).coerceIn(0.18f, 1f)
-        val duration = (260L * remaining).toLong().coerceAtLeast(90L)
+        startProgressAnimator(
+            from = fromProgress.coerceIn(0f, 1f),
+            to = 1f,
+            duration = (260L * (1f - fromProgress).coerceIn(0.18f, 1f)).toLong().coerceAtLeast(90L),
+            onComplete = { finishTurn(direction) }
+        )
+    }
 
-        when (turnMode) {
-            TurnMode.OVERLAP -> {
-                incoming.animate().translationX(0f).setDuration(duration).start()
-                outgoing.animate().alpha(0.94f).setDuration(duration).withEndAction {
-                    finishTurn(direction)
-                }.start()
+    private fun animateReset(fromProgress: Float) {
+        animating = true
+        startProgressAnimator(
+            from = fromProgress.coerceIn(0f, 1f),
+            to = 0f,
+            duration = 150L,
+            onComplete = { resetTransforms() }
+        )
+    }
+
+    private fun startProgressAnimator(
+        from: Float,
+        to: Float,
+        duration: Long,
+        onComplete: () -> Unit
+    ) {
+        activeAnimator?.cancel()
+        activeAnimator = ValueAnimator.ofFloat(from, to).apply {
+            this.duration = duration
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                val direction = activeDirection.takeIf { it != 0 }
+                    ?: dragDirection.takeIf { it != 0 }
+                    ?: 1
+                applyProgress(direction, animator.animatedValue as Float)
             }
-            TurnMode.SLIDE -> {
-                incoming.animate().translationX(0f).setDuration(duration).start()
-                outgoing.animate()
-                    .translationX(if (direction > 0) -width.toFloat() else width.toFloat())
-                    .setDuration(duration)
-                    .withEndAction { finishTurn(direction) }
-                    .start()
-            }
-            TurnMode.FADE -> {
-                incoming.animate().alpha(1f).setDuration(duration).start()
-                outgoing.animate().alpha(0f).setDuration(duration).withEndAction {
-                    finishTurn(direction)
-                }.start()
-            }
-            TurnMode.SIMULATE -> {
-                edgeShadow.visibility = View.VISIBLE
-                incoming.animate().alpha(1f).scaleX(1f).setDuration(duration).start()
-                outgoing.animate()
-                    .rotationY(if (direction > 0) -72f else 72f)
-                    .translationX(if (direction > 0) -width * 0.18f else width * 0.18f)
-                    .alpha(0.18f)
-                    .setDuration(duration)
-                    .withEndAction { finishTurn(direction) }
-                    .start()
-            }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (activeAnimator === animation) activeAnimator = null
+                    if (cancelled) {
+                        resetTransforms()
+                    } else {
+                        onComplete()
+                    }
+                }
+            })
+            start()
         }
     }
 
-    private fun animateReset() {
-        animating = true
-        previousView.animate().translationX(-width.toFloat()).alpha(1f).rotationY(0f).setDuration(150L).start()
-        nextView.animate().translationX(width.toFloat()).alpha(1f).rotationY(0f).setDuration(150L).start()
-        currentView.animate().translationX(0f).alpha(1f).rotationY(0f).scaleX(1f)
-            .setDuration(150L).withEndAction {
-                animating = false
-                resetTransforms()
-            }.start()
-    }
-
     private fun finishTurn(direction: Int) {
-        animating = false
         edgeShadow.visibility = View.GONE
+        val before = currentPage
+        animating = false
+        dragProgress = 0f
         onTurnCommitted?.invoke(direction)
+        activeDirection = 0
+        dragDirection = 0
+        // The controller normally rebinds synchronously. If it could not commit,
+        // restore the old visible page instead of leaving a transparent/translated frame.
+        if (currentPage === before) resetTransforms()
     }
 
     private fun applyProgress(direction: Int, progress: Float) {
@@ -282,22 +341,42 @@ class PagedReaderView @JvmOverloads constructor(
         when (turnMode) {
             TurnMode.OVERLAP -> {
                 incoming.translationX = if (direction > 0) width * (1f - progress) else -width * (1f - progress)
-                outgoing.alpha = 1f - progress * 0.06f
+                incoming.translationY = 0f
+                incoming.alpha = 1f
+                outgoing.alpha = 1f
             }
+
             TurnMode.SLIDE -> {
                 outgoing.translationX = if (direction > 0) -width * progress else width * progress
                 incoming.translationX = if (direction > 0) width * (1f - progress) else -width * (1f - progress)
+                outgoing.translationY = 0f
+                incoming.translationY = 0f
             }
+
+            TurnMode.VERTICAL -> {
+                outgoing.translationY = if (direction > 0) -height * progress else height * progress
+                incoming.translationY = if (direction > 0) height * (1f - progress) else -height * (1f - progress)
+                outgoing.translationX = 0f
+                incoming.translationX = 0f
+            }
+
             TurnMode.FADE -> {
+                incoming.translationX = 0f
+                incoming.translationY = 0f
+                outgoing.translationX = 0f
+                outgoing.translationY = 0f
                 outgoing.alpha = 1f - progress
                 incoming.alpha = progress
             }
+
             TurnMode.SIMULATE -> {
                 edgeShadow.visibility = View.VISIBLE
                 outgoing.pivotX = if (direction > 0) 0f else width.toFloat()
                 outgoing.rotationY = if (direction > 0) -72f * progress else 72f * progress
                 outgoing.translationX = if (direction > 0) -width * 0.18f * progress else width * 0.18f * progress
                 outgoing.alpha = 1f - progress * 0.82f
+                incoming.translationX = 0f
+                incoming.translationY = 0f
                 incoming.alpha = 0.55f + progress * 0.45f
                 incoming.scaleX = 0.96f + progress * 0.04f
             }
@@ -309,17 +388,32 @@ class PagedReaderView @JvmOverloads constructor(
         nextView.visibility = if (nextPage == null) View.INVISIBLE else View.VISIBLE
         val incoming = if (direction > 0) nextView else previousView
         val outgoing = currentView
-        incoming.bringToFront()
-        if (turnMode == TurnMode.SIMULATE || turnMode == TurnMode.SLIDE || turnMode == TurnMode.FADE) {
-            outgoing.bringToFront()
-            if (turnMode != TurnMode.SIMULATE) incoming.bringToFront()
+        when (turnMode) {
+            TurnMode.SIMULATE -> {
+                incoming.bringToFront()
+                outgoing.bringToFront()
+                edgeShadow.bringToFront()
+            }
+
+            else -> {
+                outgoing.bringToFront()
+                incoming.bringToFront()
+                edgeShadow.bringToFront()
+            }
         }
-        edgeShadow.bringToFront()
-        if (turnMode == TurnMode.SIMULATE) {
-            incoming.bringToFront()
-            outgoing.bringToFront()
-            edgeShadow.bringToFront()
-        }
+    }
+
+    private fun cancelActiveAnimation(reset: Boolean) {
+        val animator = activeAnimator
+        activeAnimator = null
+        animator?.removeAllUpdateListeners()
+        animator?.removeAllListeners()
+        animator?.cancel()
+        animating = false
+        dragging = false
+        activeDirection = 0
+        dragDirection = 0
+        if (reset) resetTransforms()
     }
 
     private fun resetTransforms() {
@@ -330,12 +424,22 @@ class PagedReaderView @JvmOverloads constructor(
             it.rotationX = 0f
             it.scaleX = 1f
             it.scaleY = 1f
+            it.translationX = 0f
             it.translationY = 0f
             it.cameraDistance = resources.displayMetrics.density * 9000f
         }
-        previousView.translationX = -width.toFloat()
-        currentView.translationX = 0f
-        nextView.translationX = width.toFloat()
+        when (turnMode) {
+            TurnMode.VERTICAL -> {
+                previousView.translationY = -height.toFloat()
+                nextView.translationY = height.toFloat()
+            }
+
+            TurnMode.FADE, TurnMode.SIMULATE -> Unit
+            else -> {
+                previousView.translationX = -width.toFloat()
+                nextView.translationX = width.toFloat()
+            }
+        }
         previousView.visibility = if (previousPage == null) View.INVISIBLE else View.VISIBLE
         nextView.visibility = if (nextPage == null) View.INVISIBLE else View.VISIBLE
         currentView.visibility = View.VISIBLE
@@ -343,6 +447,7 @@ class PagedReaderView @JvmOverloads constructor(
         edgeShadow.visibility = View.GONE
         animating = false
         dragging = false
+        activeDirection = 0
         dragDirection = 0
         dragProgress = 0f
     }

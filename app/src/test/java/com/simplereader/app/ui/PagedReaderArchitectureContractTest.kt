@@ -21,28 +21,46 @@ class PagedReaderArchitectureContractTest {
     }
 
     @Test
-    fun pagedModesUseReusableThreePageContainer() {
+    fun everyModeUsesOnePersistentPageHost() {
         assertTrue(layout.contains("com.simplereader.app.ui.PagedReaderView"))
-        assertTrue(view.contains("previousView"))
-        assertTrue(view.contains("currentView"))
-        assertTrue(view.contains("nextView"))
-        assertTrue(view.contains("onTurnCommitted"))
-        assertTrue(activity.contains("ReaderPageCache(maxChapters = 3)"))
+        assertTrue(layout.contains("android:id=\"@+id/pagedReaderView\""))
+        assertTrue(layout.substringAfter("android:id=\"@+id/pagedReaderView\"")
+            .substringBefore("<androidx.core.widget.NestedScrollView")
+            .contains("android:visibility=\"visible\""))
+        assertTrue(layout.substringAfter("android:id=\"@+id/readerScrollView\"")
+            .substringBefore("<TextView")
+            .contains("android:visibility=\"gone\""))
+        assertTrue(activity.contains("private fun isPagedReaderMode(): Boolean = true"))
+        assertTrue(activity.contains("TURN_MODE_VERTICAL -> PagedReaderView.TurnMode.VERTICAL"))
     }
 
     @Test
-    fun allAnimationsAreActuallyDifferent() {
+    fun modeSwitchChangesOnlyRendererState() {
+        val method = activity.substringAfter("private fun setTurnMode(mode: String)")
+            .substringBefore("private fun updateThemeControls()")
+        assertTrue(method.contains("pagedReaderView.setTurnMode(pagedTurnMode())"))
+        assertFalse(method.contains("readerPageCache.clear()"))
+        assertFalse(method.contains("displayContent()"))
+        assertFalse(method.contains("pagedReaderGeneration++"))
+        assertFalse(method.contains("readerScrollView.visibility"))
+        assertFalse(method.contains("configurePagedReaderStyle()"))
+    }
+
+    @Test
+    fun flowAnimationsHaveOneCancelableStateMachine() {
+        assertTrue(view.contains("ValueAnimator"))
+        assertTrue(view.contains("activeDirection"))
         assertTrue(view.contains("TurnMode.OVERLAP"))
         assertTrue(view.contains("TurnMode.SLIDE"))
+        assertTrue(view.contains("TurnMode.VERTICAL"))
         assertTrue(view.contains("TurnMode.FADE"))
         assertTrue(view.contains("TurnMode.SIMULATE"))
-        assertTrue(view.contains("rotationY"))
-        assertTrue(view.contains("outgoing.translationX"))
-        assertTrue(view.contains("incoming.alpha"))
+        assertTrue(view.contains("updateAdjacent"))
+        assertFalse(view.contains("withEndAction"))
     }
 
     @Test
-    fun chapterCrossingComesFromAdjacentPagesNotChapterJumpDuringAnimation() {
+    fun chapterCrossingComesFromPreparedAdjacentPages() {
         assertTrue(activity.contains("buildPagedWindow"))
         assertTrue(activity.contains("pagedPagesForChapter(safeChapter + 1"))
         assertTrue(activity.contains("pagedPagesForChapter(safeChapter - 1"))
@@ -51,9 +69,20 @@ class PagedReaderArchitectureContractTest {
     }
 
     @Test
-    fun verticalModeRemainsSeparate() {
-        assertTrue(activity.contains("private fun isPagedReaderMode(): Boolean = pageTurnMode != TURN_MODE_VERTICAL"))
-        assertTrue(activity.contains("pagedReaderView.visibility = View.GONE"))
-        assertTrue(activity.contains("readerScrollView.visibility = View.VISIBLE"))
+    fun streamingCacheIdentityDoesNotDependOnTurnMode() {
+        assertTrue(model.contains("val contentKey: Long"))
+        assertTrue(activity.contains("txtCurrentPageStartByte * 31L + txtCurrentPageEndByte"))
+        val signature = activity.substringAfter("private fun pagedLayoutSignature()")
+            .substringBefore("private fun pagedChapterCount()")
+        assertFalse(signature.contains("pageTurnMode"))
+    }
+
+    @Test
+    fun pageNumberHasOneSourceSharedWithCatalog() {
+        val pagedLabel = activity.substringAfter("private fun updatePagedProgressLabel")
+            .substringBefore("private fun nextPage()")
+        assertTrue(pagedLabel.contains("readerProgressLabel.text = pageCountLabel()"))
+        assertFalse(pagedLabel.contains("pageIndexInChapter"))
+        assertTrue(activity.contains("val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)"))
     }
 }
