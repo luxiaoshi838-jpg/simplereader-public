@@ -40,17 +40,20 @@ jobs:
           grep -q 'confirmDeleteShelfSelection' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -q 'confirmDeleteSelection' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
           grep -q 'contentView.background = PaperPageDrawable' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'PorterDuff.Mode.OVERLAY' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
+          grep -q 'alpha = 72' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
+          grep -q 'Shader.TileMode.CLAMP' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
           grep -q 'val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'readerScrollView.scrollY / pageHeight' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt)$'
           unexpected=$(git diff --name-only e47b8c6a2a596a622cef298009f83d5e2a8353dc | grep -Ev "$allowed" || true)
           test -z "$unexpected" || { echo "Unexpected changes:"; echo "$unexpected"; exit 1; }
 
-      - name: Set v579 version
+      - name: Set v580 version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=2098000579" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.31.v575-paper-texture.579" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_CODE=2098000580" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.31.v579-cover-texture-reader.580" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -74,15 +77,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v579-v575-logs-${{ github.run_number }}
+          name: SimpleReader-v580-v575-logs-${{ github.run_number }}
           path: /tmp/assemble-release.log
           if-no-files-found: warn
           retention-days: 2
 
-      - name: Upload v579 APK
+      - name: Upload v580 APK
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v579-v575-${{ github.run_number }}
+          name: SimpleReader-v580-v575-${{ github.run_number }}
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
