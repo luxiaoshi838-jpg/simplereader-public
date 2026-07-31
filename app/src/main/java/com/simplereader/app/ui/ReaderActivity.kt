@@ -2805,7 +2805,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             .trim()
             .ifBlank { "无预览" }
             .let { if (it.length > 64) "${it.take(64)}..." else it }
-        return "第 ${page} 页 · $progress\n$preview"
+        return "$pageLabel · $progress\n$preview"
     }
 
     private fun showBookmarks() {
