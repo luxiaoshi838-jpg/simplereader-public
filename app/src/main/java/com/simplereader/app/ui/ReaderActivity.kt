@@ -134,6 +134,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pagedReaderGeneration: Long = 0L
     private var pendingBoundaryTurnDirection: Int = 0
     private var currentPagedSignature: ReaderLayoutSignature? = null
+    private val pagedChapterPageCounts = linkedMapOf<Int, Int>()
+    private val pagedChapterPageStarts = linkedMapOf<Int, IntArray>()
+    private var pagedPageIndexSignature: ReaderLayoutSignature? = null
+    private var pagedPageIndexComplete: Boolean = false
+    private var pagedPageIndexJob: Job? = null
+    private var txtPagedWindowBasePage: Long? = null
 
     private data class TxtForwardAppendAnchor(
         val oldMaxScroll: Int,
@@ -179,15 +185,16 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         loadReaderPrefs()
         applyActiveReaderMode(ReaderAppearance.palette(this))
         gestureDetector = GestureDetector(this, this)
-        // Legacy scroll view remains only as an inert compatibility surface.
-        // Every selectable reading mode is rendered by the single paged host.
+        // Both renderers stay attached to one reading session. The vertical renderer
+        // owns continuous kinetic scrolling; the paged renderer owns horizontal effects.
         readerScrollView.visibility = View.GONE
-        pagedReaderView.visibility = View.VISIBLE
+        pagedReaderView.visibility = View.GONE
         readerScrollView.setOnTouchListener { _, _ -> false }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
             updateVerticalScrollProgress(scrollY)
             maybeExtendTxtContinuousBuffer(scrollY)
+            maybeExtendStructuredContinuousBuffer(scrollY)
         }
 
         bookId = intent.getLongExtra("bookId", 0L)
@@ -542,6 +549,21 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     ) {
         val targetIndex = chapterIndex.coerceIn(0, epubChapters.lastIndex)
         beginProgrammaticScrollGuard()
+        if (isPagedReaderMode() && structuredWholeText != null) {
+            val chapterText = pagedChapterRawText(targetIndex)
+            val targetOffset = when {
+                openAtEnd -> chapterText.length
+                offsetFraction != null -> (chapterText.length * offsetFraction.coerceIn(0f, 1f)).toInt()
+                else -> offset.coerceIn(0, chapterText.length)
+            }
+            structuredChapterIndex = targetIndex
+            refreshPagedReader(
+                anchor = ReaderPageAnchor(targetIndex, targetOffset),
+                saveImmediately = saveImmediately,
+                revealWhenReady = true
+            )
+            return
+        }
         if (structuredWholeBookMode) {
             val chapterStart = epubChapterStartPositions.getOrElse(targetIndex) { 0 }
             val chapterEnd = epubChapterStartPositions.getOrNull(targetIndex + 1)
@@ -577,7 +599,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         chapters = epubChapters,
                         starts = epubChapterStartPositions,
                         centerIndex = targetIndex,
-                        includeAdjacent = false
+                        includeAdjacent = pageTurnMode == TURN_MODE_VERTICAL
                     )
                 }
                 if (buffer.content.isBlank()) {
@@ -975,6 +997,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             refreshPagedReader(pagedAnchorFromCurrentPosition())
             return
         }
+        pagedReaderView.cancelNavigation()
         pagedReaderView.visibility = View.GONE
         readerScrollView.visibility = View.VISIBLE
         val continuous = true
@@ -1005,6 +1028,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             updateProgressViews(progress.coerceIn(0, 1000))
             scheduleReaderSearchHighlight()
+            ensureVerticalPageIndex()
             return
         }
 
@@ -1034,6 +1058,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             updateProgressViews(progressForCurrentPosition())
         }
         scheduleReaderSearchHighlight()
+        ensureVerticalPageIndex()
     }
 
     private fun updateProgressViews(progress: Int) {
@@ -1041,15 +1066,143 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         readerProgressLabel.text = pageCountLabel()
     }
 
+    private fun resetPagedPageIndex() {
+        pagedChapterPageCounts.clear()
+        pagedChapterPageStarts.clear()
+        pagedPageIndexSignature = null
+        pagedPageIndexComplete = false
+        pagedPageIndexJob?.cancel()
+        pagedPageIndexJob = null
+    }
+
+    private fun preparePagedIndexSignature(signature: ReaderLayoutSignature) {
+        if (pagedPageIndexSignature == signature) return
+        pagedChapterPageCounts.clear()
+        pagedChapterPageStarts.clear()
+        pagedPageIndexSignature = signature
+        pagedPageIndexComplete = false
+        pagedPageIndexJob?.cancel()
+        pagedPageIndexJob = null
+    }
+
+    private fun registerChapterPageCount(
+        chapterIndex: Int,
+        count: Int,
+        signature: ReaderLayoutSignature
+    ) {
+        preparePagedIndexSignature(signature)
+        pagedChapterPageCounts[chapterIndex] = count.coerceAtLeast(1)
+        readerPageCache.get(chapterIndex, signature)?.let { pages ->
+            pagedChapterPageStarts[chapterIndex] = pages
+                .map { it.startAnchor.chapterOffset }
+                .toIntArray()
+        }
+        pagedPageIndexComplete = !txtStreamingMode &&
+            (0 until pagedChapterCount()).all { pagedChapterPageCounts.containsKey(it) }
+    }
+
+    private fun actualPageLabelForIndex(
+        chapter: Int,
+        pageIndex: Int,
+        pageCountInChapter: Int
+    ): String {
+        if (txtStreamingMode) {
+            val base = txtPagedWindowBasePage
+            return if (base != null) "第 ${base + pageIndex} 页"
+            else "本段 ${pageIndex + 1}/${pageCountInChapter.coerceAtLeast(1)}"
+        }
+        val precedingKnown = (0 until chapter).all { pagedChapterPageCounts.containsKey(it) }
+        if (!precedingKnown) {
+            return "本章 ${pageIndex + 1}/${pageCountInChapter.coerceAtLeast(1)}"
+        }
+        val prefix = (0 until chapter).sumOf { pagedChapterPageCounts[it] ?: 0 }
+        val current = prefix + pageIndex + 1
+        val total = if (pagedPageIndexComplete) {
+            (0 until pagedChapterCount()).sumOf { pagedChapterPageCounts[it] ?: 0 }
+        } else null
+        return if (total != null && total > 0) "$current/$total" else "第 $current 页"
+    }
+
+    private fun actualPageLabel(page: ReaderPageSnapshot): String = actualPageLabelForIndex(
+        chapter = page.startAnchor.chapterIndex,
+        pageIndex = page.pageIndexInChapter,
+        pageCountInChapter = page.pageCountInChapter
+    )
+
+    private fun actualPageLabelForAnchor(anchor: ReaderPageAnchor): String? {
+        val starts = pagedChapterPageStarts[anchor.chapterIndex] ?: return null
+        if (starts.isEmpty()) return null
+        var low = 0
+        var high = starts.lastIndex
+        var result = 0
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (starts[mid] <= anchor.chapterOffset) {
+                result = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return actualPageLabelForIndex(
+            chapter = anchor.chapterIndex,
+            pageIndex = result,
+            pageCountInChapter = pagedChapterPageCounts[anchor.chapterIndex] ?: starts.size
+        )
+    }
+
+    private fun currentLayoutPage(): ReaderPageSnapshot? =
+        if (isPagedReaderMode()) currentPagedPage else null
+
     private fun pageCountLabel(): String {
-        val (positionUnits, totalUnits) = readerPageUnits()
-        val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)
-        val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
-        val currentPage = (positionUnits / unitsPerPage + 1L).coerceIn(1L, totalPages)
-        return "$currentPage/$totalPages"
+        currentLayoutPage()?.let { return actualPageLabel(it) }
+        actualPageLabelForAnchor(pagedAnchorFromCurrentPosition())?.let { return it }
+        val percent = progressForCurrentPosition() / 10.0
+        return String.format(java.util.Locale.US, "%.1f%%", percent)
     }
 
     private fun renderedPageCountLabel(): String? = pageCountLabel()
+
+    private fun ensureWholeBookPageIndex(signature: ReaderLayoutSignature) {
+        if (txtStreamingMode || pagedPageIndexComplete || pagedPageIndexJob?.isActive == true) return
+        pagedPageIndexJob = lifecycleScope.launch {
+            delay(120L)
+            try {
+                for (chapter in 0 until pagedChapterCount()) {
+                    if (currentPagedSignature != signature && pagedPageIndexSignature != signature) return@launch
+                    if (!pagedChapterPageCounts.containsKey(chapter)) {
+                        pagedPagesForChapter(chapter, signature)
+                    }
+                }
+                pagedPageIndexComplete =
+                    (0 until pagedChapterCount()).all { pagedChapterPageCounts.containsKey(it) }
+                currentLayoutPage()?.let(::updatePagedProgressLabel)
+            } catch (_: Throwable) {
+                // The visible page remains valid; indexing can retry later.
+            }
+        }
+    }
+
+    private fun ensureVerticalPageIndex() {
+        if (pageTurnMode != TURN_MODE_VERTICAL || currentContent.isBlank()) return
+        pagedReaderView.post {
+            val signature = pagedLayoutSignature()
+            preparePagedIndexSignature(signature)
+            currentPagedSignature = signature
+            val generation = pagedReaderGeneration
+            lifecycleScope.launch {
+                try {
+                    val anchor = pagedAnchorFromCurrentPosition()
+                    pagedPagesForChapter(anchor.chapterIndex, signature)
+                    if (pageTurnMode != TURN_MODE_VERTICAL || generation != pagedReaderGeneration) return@launch
+                    updateProgressViews(progressForCurrentPosition())
+                    ensureWholeBookPageIndex(signature)
+                } catch (_: Throwable) {
+                    // Keep continuous scrolling available even if page indexing fails.
+                }
+            }
+        }
+    }
 
     private fun styledReadingText(text: String): CharSequence {
         if (text.isBlank()) return text
@@ -2310,11 +2463,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     else -> currentContent.length.toLong()
                 }
                 val safeTotal = total.coerceAtLeast(1L)
-                val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)
-                val page = (safePosition / unitsPerPage + 1L).coerceAtLeast(1L)
                 val percent = (safePosition.toDouble() / safeTotal.toDouble() * 100.0)
                     .coerceIn(0.0, 100.0)
-                return "第 ${page} 页 · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
+                val pageLabel = actualPageLabelForDocumentPosition(safePosition)
+                    ?: "页码计算中"
+                return "$pageLabel · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
             }
 
             fun catalogLabel(index: Int, title: String, position: Int, highlighted: Boolean): CharSequence {
@@ -2600,6 +2753,20 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
+    private fun actualPageLabelForDocumentPosition(position: Long): String? {
+        val signature = currentPagedSignature ?: return null
+        if (txtStreamingMode) return null
+        val anchor = if (isStructuredChapterDocument() && structuredWholeText != null) {
+            val safe = position.coerceIn(0L, structuredWholeText.orEmpty().length.toLong()).toInt()
+            val chapter = epubChapterStartPositions.indexOfLast { it <= safe }.coerceAtLeast(0)
+            ReaderPageAnchor(chapter, safe - epubChapterStartPositions.getOrElse(chapter) { 0 })
+        } else {
+            ReaderPageAnchor(0, position.coerceIn(0L, currentContent.length.toLong()).toInt())
+        }
+        if (pagedPageIndexSignature != signature) return null
+        return actualPageLabelForAnchor(anchor)
+    }
+
     private fun bookmarkPreviewAt(globalPosition: Int): String {
         if (currentContent.isEmpty()) return "位置 $globalPosition"
         val localStart = if (txtStreamingMode) {
@@ -2630,9 +2797,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         } else {
             currentContent.length.toLong()
         }.coerceAtLeast(1L)
-        val page = (position / pageSize.coerceAtLeast(1)).coerceAtLeast(0L) + 1L
         val percent = (position.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0)
         val progress = String.format(java.util.Locale.US, "%.1f%%", percent)
+        val pageLabel = actualPageLabelForDocumentPosition(position) ?: "页码计算中"
         val preview = bookmark.content
             .replace(Regex("\\s+"), " ")
             .trim()
@@ -2705,14 +2872,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             .show()
     }
 
-    // All reading modes share one paginated session and one page sequence.
-    // The selected mode only changes the Flow rendering effect/layout.
-    private fun isPagedReaderMode(): Boolean = true
+    // The session and logical anchor are shared, but Duokan's VSCROLL is a
+    // continuous flow renderer, not a fixed-height page animation.
+    private fun isPagedReaderMode(): Boolean = pageTurnMode != TURN_MODE_VERTICAL
 
     private fun pagedTurnMode(): PagedReaderView.TurnMode = when (pageTurnMode) {
         TURN_MODE_SIMULATE -> PagedReaderView.TurnMode.SIMULATE
         TURN_MODE_HORIZONTAL -> PagedReaderView.TurnMode.SLIDE
-        TURN_MODE_VERTICAL -> PagedReaderView.TurnMode.VERTICAL
         TURN_MODE_FADE -> PagedReaderView.TurnMode.FADE
         else -> PagedReaderView.TurnMode.OVERLAP
     }
@@ -2813,6 +2979,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             )
         }
         readerPageCache.put(chapterIndex, signature, pages)
+        registerChapterPageCount(chapterIndex, pages.size, signature)
         return pages
     }
 
@@ -2826,7 +2993,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         } ?: pages.last()
     }
 
-    private suspend fun buildPagedWindow(
+    private suspend fun buildVisiblePagedWindow(
         anchor: ReaderPageAnchor,
         signature: ReaderLayoutSignature
     ): Triple<ReaderPageSnapshot?, ReaderPageSnapshot, ReaderPageSnapshot?> {
@@ -2834,45 +3001,71 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val safeAnchor = anchor.copy(chapterIndex = safeChapter)
         val pages = pagedPagesForChapter(safeChapter, signature)
         val current = pageContaining(pages, safeAnchor)
-        val previous = when {
-            current.pageIndexInChapter > 0 -> pages[current.pageIndexInChapter - 1]
-            safeChapter > 0 -> pagedPagesForChapter(safeChapter - 1, signature).lastOrNull()
-            else -> null
-        }
-        val next = when {
-            current.pageIndexInChapter + 1 < pages.size -> pages[current.pageIndexInChapter + 1]
-            safeChapter + 1 < pagedChapterCount() ->
-                pagedPagesForChapter(safeChapter + 1, signature).firstOrNull()
-            else -> null
-        }
+        val previous = pages.getOrNull(current.pageIndexInChapter - 1)
+        val next = pages.getOrNull(current.pageIndexInChapter + 1)
+        return Triple(previous, current, next)
+    }
+
+    private suspend fun buildPagedWindow(
+        anchor: ReaderPageAnchor,
+        signature: ReaderLayoutSignature
+    ): Triple<ReaderPageSnapshot?, ReaderPageSnapshot, ReaderPageSnapshot?> {
+        val (localPrevious, current, localNext) = buildVisiblePagedWindow(anchor, signature)
+        val safeChapter = current.startAnchor.chapterIndex
+        val previous = localPrevious ?: if (safeChapter > 0) {
+            pagedPagesForChapter(safeChapter - 1, signature).lastOrNull()
+        } else null
+        val next = localNext ?: if (safeChapter + 1 < pagedChapterCount()) {
+            pagedPagesForChapter(safeChapter + 1, signature).firstOrNull()
+        } else null
         return Triple(previous, current, next)
     }
 
     private fun refreshPagedReader(
         anchor: ReaderPageAnchor = pagedAnchorFromCurrentPosition(),
-        clearCache: Boolean = false
+        clearCache: Boolean = false,
+        saveImmediately: Boolean = false,
+        revealWhenReady: Boolean = true
     ) {
         if (!isPagedReaderMode() || !openSucceeded || currentContent.isBlank()) return
-        if (clearCache) readerPageCache.clear()
-        readerScrollView.visibility = View.GONE
-        pagedReaderView.visibility = View.VISIBLE
+        if (clearCache) {
+            readerPageCache.clear()
+            resetPagedPageIndex()
+        }
         configurePagedReaderStyle()
         val generation = ++pagedReaderGeneration
+        pendingBoundaryTurnDirection = 0
         pagedReaderRefreshJob?.cancel()
+        pagedReaderView.cancelNavigation()
         pagedReaderView.post {
             if (generation != pagedReaderGeneration || !isPagedReaderMode()) return@post
             val signature = pagedLayoutSignature()
+            preparePagedIndexSignature(signature)
             currentPagedSignature = signature
             pagedReaderRefreshJob = lifecycleScope.launch {
                 try {
-                    val (previous, current, next) = buildPagedWindow(anchor, signature)
+                    // First screen waits only for the current chapter. Boundary chapters
+                    // and whole-book page counts are filled after the visible page binds.
+                    val (previous, current, next) = buildVisiblePagedWindow(anchor, signature)
                     if (generation != pagedReaderGeneration || !isPagedReaderMode()) return@launch
                     previousPagedPage = previous
                     currentPagedPage = current
                     nextPagedPage = next
+                    if (txtStreamingMode && txtPagedWindowBasePage == null && current.startAnchor.sourceOffset <= 0L) {
+                        txtPagedWindowBasePage = 1L
+                    }
+                    applyPagedAnchor(current.startAnchor)
                     pagedReaderView.bind(previous, current, next)
+                    if (revealWhenReady) {
+                        readerScrollView.visibility = View.GONE
+                        pagedReaderView.visibility = View.VISIBLE
+                    }
                     updatePagedProgressLabel(current)
+                    if (saveImmediately) saveProgressNow() else scheduleProgressSave()
+                    prefetchPagedAdjacent(current)
+                    ensureWholeBookPageIndex(signature)
                 } catch (error: Throwable) {
+                    pagedReaderView.cancelNavigation()
                     showError("分页失败：${error.message ?: error.javaClass.simpleName}")
                 }
             }
@@ -2959,15 +3152,46 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun handlePagedBoundaryTurn(direction: Int) {
-        if (!txtStreamingMode) {
-            Toast.makeText(
-                this,
-                if (direction > 0) "已经到末尾" else "已经到开头",
-                Toast.LENGTH_SHORT
-            ).show()
+        if (pendingBoundaryTurnDirection != 0) return
+        val oldCurrent = currentPagedPage ?: return
+        val signature = currentPagedSignature ?: return
+
+        if (isStructuredChapterDocument()) {
+            val targetChapter = oldCurrent.startAnchor.chapterIndex + direction
+            if (targetChapter !in 0 until pagedChapterCount()) {
+                Toast.makeText(this, if (direction > 0) "已经到末尾" else "已经到开头", Toast.LENGTH_SHORT).show()
+                return
+            }
+            pendingBoundaryTurnDirection = direction
+            lifecycleScope.launch {
+                try {
+                    val pages = pagedPagesForChapter(targetChapter, signature)
+                    val target = if (direction > 0) pages.first() else pages.last()
+                    if (direction > 0) {
+                        previousPagedPage = oldCurrent
+                        currentPagedPage = oldCurrent
+                        nextPagedPage = target
+                    } else {
+                        previousPagedPage = target
+                        currentPagedPage = oldCurrent
+                        nextPagedPage = oldCurrent
+                    }
+                    pagedReaderView.bind(previousPagedPage, oldCurrent, nextPagedPage)
+                    pagedReaderView.turn(direction)
+                } catch (error: Throwable) {
+                    pagedReaderView.cancelNavigation()
+                    Toast.makeText(this@ReaderActivity, "相邻章节加载失败：${error.message ?: error.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+                } finally {
+                    pendingBoundaryTurnDirection = 0
+                }
+            }
             return
         }
-        if (pendingBoundaryTurnDirection != 0) return
+
+        if (!txtStreamingMode) {
+            Toast.makeText(this, if (direction > 0) "已经到末尾" else "已经到开头", Toast.LENGTH_SHORT).show()
+            return
+        }
         val selectedBook = book ?: return
         val document = currentReadableDocument ?: return
         val charset = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
@@ -2980,26 +3204,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
 
-        val oldCurrent = currentPagedPage ?: return
         pendingBoundaryTurnDirection = direction
         lifecycleScope.launch {
             try {
                 val window = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(document.uri)?.let { stream ->
                         if (direction > 0) {
-                            TxtParser.readWindow(
-                                inputStream = stream,
-                                charsetName = charset,
-                                startByte = txtCurrentPageEndByte,
-                                maxBytes = TXT_STREAM_WINDOW_BYTES
-                            )
+                            TxtParser.readWindow(stream, charset, txtCurrentPageEndByte, TXT_STREAM_WINDOW_BYTES)
                         } else {
-                            TxtParser.readWindowBefore(
-                                inputStream = stream,
-                                charsetName = charset,
-                                endByte = txtCurrentPageStartByte,
-                                maxBytes = TXT_STREAM_WINDOW_BYTES
-                            )
+                            TxtParser.readWindowBefore(stream, charset, txtCurrentPageStartByte, TXT_STREAM_WINDOW_BYTES)
                         }
                     }
                 } ?: return@launch
@@ -3009,30 +3222,33 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 txtCurrentPageStartByte = window.startByte
                 txtCurrentPageEndByte = window.nextByte
                 txtContinuousBuffer.reset(window)
-                txtReachedStart = window.startByte <= 0L
-                txtReachedEnd = window.nextByte >= txtTotalBytes
+                currentPosition = if (direction > 0) window.startByte.toInt() else window.nextByte.toInt()
                 readerPageCache.clear()
-                val signature = currentPagedSignature ?: pagedLayoutSignature()
-                currentPagedSignature = signature
-                val pages = pagedPagesForChapter(0, signature)
+                val windowSignature = signature.copy(
+                    contentKey = window.startByte * 31L + window.nextByte
+                )
+                preparePagedIndexSignature(windowSignature)
+                currentPagedSignature = windowSignature
+                val pages = pagedPagesForChapter(0, windowSignature)
                 val target = if (direction > 0) pages.first() else pages.last()
+                txtPagedWindowBasePage = txtPagedWindowBasePage?.let { base ->
+                    if (direction > 0) base + oldCurrent.pageCountInChapter else
+                        (base - pages.size).coerceAtLeast(1L)
+                }
                 if (direction > 0) {
-                    previousPagedPage = cachedAdjacentPage(oldCurrent, -1)
+                    previousPagedPage = oldCurrent
                     currentPagedPage = oldCurrent
                     nextPagedPage = target
                 } else {
                     previousPagedPage = target
                     currentPagedPage = oldCurrent
-                    nextPagedPage = cachedAdjacentPage(oldCurrent, 1)
+                    nextPagedPage = oldCurrent
                 }
                 pagedReaderView.bind(previousPagedPage, oldCurrent, nextPagedPage)
                 pagedReaderView.turn(direction)
             } catch (error: Throwable) {
-                Toast.makeText(
-                    this@ReaderActivity,
-                    "相邻页面加载失败：${error.message ?: error.javaClass.simpleName}",
-                    Toast.LENGTH_LONG
-                ).show()
+                pagedReaderView.cancelNavigation()
+                Toast.makeText(this@ReaderActivity, "相邻页面加载失败：${error.message ?: error.javaClass.simpleName}", Toast.LENGTH_LONG).show()
             } finally {
                 pendingBoundaryTurnDirection = 0
             }
@@ -3040,9 +3256,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun updatePagedProgressLabel(page: ReaderPageSnapshot) {
-        // Page numbers are document-position based, matching the catalog metadata.
-        // Rendering effects never own or recalculate page numbers.
-        readerProgressLabel.text = pageCountLabel()
+        // The footer is driven by the actual layout page that was committed.
+        readerProgressLabel.text = actualPageLabel(page)
         readerProgressLabel.visibility = if (readerChromeVisible) View.GONE else View.VISIBLE
         val progress = progressForCurrentPosition()
         fontSizeSeekBar.progress = progress.coerceIn(0, 1000)
@@ -3188,6 +3403,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             saveReaderPrefs()
             updateSettingsLabels()
             readerPageCache.clear()
+            resetPagedPageIndex()
             displayContent()
         }
         findViewById<TextView>(R.id.fontIncreaseButton).setOnClickListener {
@@ -3195,6 +3411,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             saveReaderPrefs()
             updateSettingsLabels()
             readerPageCache.clear()
+            resetPagedPageIndex()
             displayContent()
         }
         findViewById<TextView>(R.id.themePaperButton).setOnClickListener {
@@ -3261,21 +3478,38 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun setTurnMode(mode: String) {
         if (pageTurnMode == mode) return
+        val leavingPaged = isPagedReaderMode()
+        val anchor = if (leavingPaged) {
+            currentPagedPage?.startAnchor ?: pagedAnchorFromCurrentPosition()
+        } else {
+            pagedAnchorFromCurrentPosition()
+        }
+        pagedReaderGeneration += 1L
+        pagedReaderRefreshJob?.cancel()
+        pagedReaderView.cancelNavigation()
+        pendingBoundaryTurnDirection = 0
+
         pageTurnMode = mode
         saveReaderPrefs()
         updateSettingsLabels()
 
-        // The uploaded Duokan APK keeps one ReadingView/FlowPagesView and only
-        // changes FlipEffect/PageLayout. Do the same here: preserve the bound
-        // page window, anchor, cache and background; never reload or swap views.
-        pagedReaderView.setTurnMode(pagedTurnMode())
-        val visiblePage = currentPagedPage
-        if (visiblePage != null) {
-            updatePagedProgressLabel(visiblePage)
-        } else if (openSucceeded && currentContent.isNotBlank()) {
-            refreshPagedReader(pagedAnchorFromCurrentPosition())
+        if (mode == TURN_MODE_VERTICAL) {
+            applyPagedAnchor(anchor)
+            // Prepare continuous content first; only then replace the visible renderer.
+            if (isStructuredChapterDocument()) {
+                loadStructuredChapter(
+                    chapterIndex = anchor.chapterIndex,
+                    offset = anchor.chapterOffset,
+                    saveImmediately = false,
+                    direction = 0
+                )
+            } else {
+                displayContent()
+            }
+        } else {
+            configurePagedReaderStyle()
+            refreshPagedReader(anchor = anchor, revealWhenReady = true)
         }
-
         Toast.makeText(this, "阅读模式：${turnModeLabel(mode)}", Toast.LENGTH_SHORT).show()
     }
 

@@ -31,7 +31,7 @@ class PagedReaderView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
-    enum class TurnMode { OVERLAP, SIMULATE, SLIDE, VERTICAL, FADE }
+    enum class TurnMode { OVERLAP, SIMULATE, SLIDE, FADE }
 
     data class Style(
         val textSizeSp: Float,
@@ -102,6 +102,14 @@ class PagedReaderView @JvmOverloads constructor(
         cancelActiveAnimation(reset = true)
         turnMode = mode
         resetTransforms()
+    }
+
+    /** Cancel any page gesture/animation before a renderer or chapter transaction. */
+    fun cancelNavigation() {
+        longPressHandler.removeCallbacks(longPressRunnable)
+        velocityTracker?.recycle()
+        velocityTracker = null
+        cancelActiveAnimation(reset = true)
     }
 
     fun configure(style: Style) {
@@ -188,9 +196,8 @@ class PagedReaderView @JvmOverloads constructor(
                     longPressHandler.removeCallbacks(longPressRunnable)
                 }
                 if (!dragging) {
-                    val verticalGesture = turnMode == TurnMode.VERTICAL
-                    val primary = if (verticalGesture) dy else dx
-                    val secondary = if (verticalGesture) dx else dy
+                    val primary = dx
+                    val secondary = dy
                     if (abs(primary) > dp(10) && abs(primary) > abs(secondary) * 1.15f) {
                         dragDirection = if (primary < 0f) 1 else -1
                         val incoming = if (dragDirection > 0) nextPage else previousPage
@@ -206,9 +213,8 @@ class PagedReaderView @JvmOverloads constructor(
                     return true
                 }
                 if (dragging) {
-                    val distance = if (turnMode == TurnMode.VERTICAL) abs(dy) else abs(dx)
-                    val extent = if (turnMode == TurnMode.VERTICAL) height else width
-                    dragProgress = (distance / extent.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                    val distance = abs(dx)
+                    dragProgress = (distance / width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                     applyProgress(dragDirection, dragProgress)
                 }
                 return true
@@ -218,11 +224,7 @@ class PagedReaderView @JvmOverloads constructor(
                 velocityTracker?.addMovement(event)
                 longPressHandler.removeCallbacks(longPressRunnable)
                 velocityTracker?.computeCurrentVelocity(1000)
-                val velocity = if (turnMode == TurnMode.VERTICAL) {
-                    velocityTracker?.yVelocity ?: 0f
-                } else {
-                    velocityTracker?.xVelocity ?: 0f
-                }
+                val velocity = velocityTracker?.xVelocity ?: 0f
                 velocityTracker?.recycle()
                 velocityTracker = null
 
@@ -242,18 +244,10 @@ class PagedReaderView @JvmOverloads constructor(
                 if (event.actionMasked == MotionEvent.ACTION_UP &&
                     abs(event.x - downX) < dp(12) && abs(event.y - downY) < dp(12)
                 ) {
-                    if (turnMode == TurnMode.VERTICAL) {
-                        when {
-                            event.y < height * 0.33f -> turn(-1)
-                            event.y > height * 0.67f -> turn(1)
-                            else -> onCenterTap?.invoke()
-                        }
-                    } else {
-                        when {
-                            event.x < width * 0.33f -> turn(-1)
-                            event.x > width * 0.67f -> turn(1)
-                            else -> onCenterTap?.invoke()
-                        }
+                    when {
+                        event.x < width * 0.33f -> turn(-1)
+                        event.x > width * 0.67f -> turn(1)
+                        else -> onCenterTap?.invoke()
                     }
                 }
                 return true
@@ -353,12 +347,6 @@ class PagedReaderView @JvmOverloads constructor(
                 incoming.translationY = 0f
             }
 
-            TurnMode.VERTICAL -> {
-                outgoing.translationY = if (direction > 0) -height * progress else height * progress
-                incoming.translationY = if (direction > 0) height * (1f - progress) else -height * (1f - progress)
-                outgoing.translationX = 0f
-                incoming.translationX = 0f
-            }
 
             TurnMode.FADE -> {
                 incoming.translationX = 0f
@@ -429,11 +417,6 @@ class PagedReaderView @JvmOverloads constructor(
             it.cameraDistance = resources.displayMetrics.density * 9000f
         }
         when (turnMode) {
-            TurnMode.VERTICAL -> {
-                previousView.translationY = -height.toFloat()
-                nextView.translationY = height.toFloat()
-            }
-
             TurnMode.FADE, TurnMode.SIMULATE -> Unit
             else -> {
                 previousView.translationX = -width.toFloat()

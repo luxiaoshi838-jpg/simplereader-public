@@ -29,6 +29,8 @@ class ReaderCatalogAndProgressUiContractTest {
             .substringBefore("<LinearLayout")
             .contains("android:visibility=\"gone\""))
         assertTrue(source.contains("private fun pageCountLabel()"))
-        assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
+        assertTrue(source.contains("private fun actualPageLabel(page: ReaderPageSnapshot)"))
+        assertTrue(source.contains("actualPageLabelForDocumentPosition"))
+        assertFalse(source.substringAfter("private fun pageCountLabel()").substringBefore("private fun renderedPageCountLabel").contains("pageSize"))
     }
 }

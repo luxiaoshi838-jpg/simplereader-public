@@ -64,6 +64,11 @@ class ReaderPageCache(private val maxChapters: Int = 3) {
  * line spacing as the visible page instead of a fixed character count.
  */
 object ReaderTextPaginator {
+    /**
+     * Builds one real Android text layout and cuts it into screen-height pages.
+     * The old implementation rebuilt a layout for the whole remaining chapter
+     * once per page, which was quadratic and delayed first open.
+     */
     fun paginate(
         chapterIndex: Int,
         text: CharSequence,
@@ -85,36 +90,35 @@ object ReaderTextPaginator {
             textSize = signature.textSizePx.toFloat()
             this.typeface = typeface
         }
+        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(true)
+            .setLineSpacing(0f, lineSpacingMultiplier)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
 
         val ranges = mutableListOf<IntRange>()
-        var start = 0
-        while (start < text.length) {
-            val layout = StaticLayout.Builder.obtain(text, start, text.length, paint, contentWidth)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setIncludePad(true)
-                .setLineSpacing(0f, lineSpacingMultiplier)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
-                .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-                .build()
-
-            var lastLine = -1
-            for (line in 0 until layout.lineCount) {
-                if (layout.getLineBottom(line) <= contentHeight) {
-                    lastLine = line
-                } else {
-                    break
-                }
+        var firstLine = 0
+        while (firstLine < layout.lineCount) {
+            val pageTop = layout.getLineTop(firstLine)
+            val pageBottom = pageTop + contentHeight
+            var lastLine = firstLine
+            while (
+                lastLine + 1 < layout.lineCount &&
+                layout.getLineBottom(lastLine + 1) <= pageBottom
+            ) {
+                lastLine += 1
             }
-            val end = when {
-                lastLine >= 0 -> layout.getLineEnd(lastLine)
-                else -> (start + 1).coerceAtMost(text.length)
-            }.coerceIn(start + 1, text.length)
-
-            ranges += start until end
-            start = end
+            val startOffset = layout.getLineStart(firstLine).coerceIn(0, text.length)
+            val endOffset = layout.getLineEnd(lastLine)
+                .coerceIn((startOffset + 1).coerceAtMost(text.length), text.length)
+            ranges += startOffset until endOffset
+            firstLine = lastLine + 1
         }
 
-        val pageCount = ranges.size.coerceAtLeast(1)
+        if (ranges.isEmpty()) ranges += 0 until text.length
+        val pageCount = ranges.size
         return ranges.mapIndexed { index, range ->
             val startOffset = range.first
             val endOffset = range.last + 1
