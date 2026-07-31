@@ -10,7 +10,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
@@ -26,40 +26,11 @@ jobs:
       SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-chapter-page-index.590'
 
     steps:
-      - name: Checkout current v590 branch
+      - name: Checkout committed v590 source
         uses: actions/checkout@v4
         with:
           ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
-
-      - name: Materialize v590 chapter page index
-        shell: bash
-        run: |
-          set -euo pipefail
-          for patch in scripts/v590_plain_*.patch; do
-            echo "Applying $patch"
-            if git apply --check "$patch"; then
-              git apply "$patch"
-            elif git apply --reverse --check "$patch"; then
-              echo "$patch already applied"
-            else
-              echo "$patch does not match the current branch" >&2
-              exit 1
-            fi
-          done
-          git add app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt \
-                  app/src/test/java/com/simplereader/app/parser/TxtChapterSequenceStabilityTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/ReaderPageIndexStoreTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v590: paginate and count every chapter independently'
-            git push origin HEAD:agent/v582-duokan-backgrounds
-          fi
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
