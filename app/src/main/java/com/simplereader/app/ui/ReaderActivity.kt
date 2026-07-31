@@ -108,6 +108,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerTextSize: Float = 18f
     private var currentBackgroundColor: Int = Color.rgb(245, 233, 200)
     private var currentTextColor: Int = Color.rgb(59, 52, 40)
+    private var readerBackgroundStyleId: String = ReaderBackgrounds.DEFAULT_ID
+    private var readerChromeActivationMode: String = CHROME_ACTIVATION_CENTER
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
     private var pendingSeekProgress: Int? = null
@@ -1025,14 +1027,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun renderedPageCountLabel(): String? {
-        if (pageTurnMode != TURN_MODE_VERTICAL) return null
-        val viewportHeight = readerScrollView.height.coerceAtLeast(0)
-        val contentHeight = contentView.height.coerceAtLeast(0)
-        if (viewportHeight <= 0 || contentHeight <= 0) return null
-        val pageHeight = viewportHeight.coerceAtLeast(1)
-        val totalPages = ((contentHeight + pageHeight - 1) / pageHeight).coerceAtLeast(1)
-        val currentPage = (readerScrollView.scrollY / pageHeight + 1).coerceIn(1, totalPages)
-        return "$currentPage/$totalPages"
+        // 右下角与目录只使用 pageSize=2000 的同一分页结果，不按屏幕高度另算。
+        return pageCountLabel()
     }
 
     private fun styledReadingText(text: String): CharSequence {
@@ -1321,16 +1317,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun applyReaderPalette(backgroundColor: Int, textColor: Int) {
-        ReaderAppearance.saveDayPalette(this, backgroundColor, textColor)
+        val styleId = ReaderBackgrounds.closestId(backgroundColor)
+        selectReaderBackground(styleId)
+    }
+
+    private fun selectReaderBackground(styleId: String) {
+        val preset = ReaderBackgrounds.preset(styleId)
+        readerBackgroundStyleId = preset.id
+        ReaderAppearance.saveDayPalette(this, preset.backgroundColor, preset.textColor)
+        saveReaderPrefs()
         applyActiveReaderMode(ReaderAppearance.palette(this))
     }
 
     private fun applyActiveReaderMode(palette: ReaderAppearance.Palette) {
-        currentBackgroundColor = palette.backgroundColor
-        currentTextColor = palette.textColor
-        contentView.setBackgroundColor(palette.backgroundColor)
-        contentView.setTextColor(palette.textColor)
-        window.decorView.setBackgroundColor(palette.backgroundColor)
+        val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
+        val activePreset = if (night) {
+            ReaderBackgrounds.nightPreset
+        } else {
+            ReaderBackgrounds.preset(readerBackgroundStyleId)
+        }
+        currentBackgroundColor = if (night) palette.backgroundColor else activePreset.backgroundColor
+        currentTextColor = if (night) palette.textColor else activePreset.textColor
+        contentView.background = ReaderBackgrounds.drawable(activePreset)
+        contentView.setTextColor(currentTextColor)
+        readerProgressLabel.setTextColor(currentTextColor)
+        readerScrollView.setBackgroundColor(currentBackgroundColor)
+        window.decorView.setBackgroundColor(currentBackgroundColor)
         updateThemeControls()
     }
 
@@ -1340,6 +1352,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val palette = ReaderAppearance.palette(this)
         currentBackgroundColor = palette.backgroundColor
         currentTextColor = palette.textColor
+        readerBackgroundStyleId = prefs.getString(PREF_BACKGROUND_STYLE, null)
+            ?: ReaderBackgrounds.closestId(palette.backgroundColor)
+        readerChromeActivationMode = prefs.getString(
+            PREF_CHROME_ACTIVATION,
+            CHROME_ACTIVATION_CENTER
+        ) ?: CHROME_ACTIVATION_CENTER
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
     }
@@ -1348,6 +1366,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         getSharedPreferences(READER_PREFS, MODE_PRIVATE)
             .edit()
             .putFloat(PREF_TEXT_SIZE, readerTextSize)
+            .putString(PREF_BACKGROUND_STYLE, readerBackgroundStyleId)
+            .putString(PREF_CHROME_ACTIVATION, readerChromeActivationMode)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
             .apply()
@@ -2769,19 +2789,25 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             displayContent()
         }
         findViewById<TextView>(R.id.themePaperButton).setOnClickListener {
-            applyReaderPalette(Color.rgb(245, 233, 200), Color.rgb(59, 52, 40))
-            saveReaderPrefs()
+            selectReaderBackground(ReaderBackgrounds.DEFAULT_ID)
         }
         findViewById<TextView>(R.id.themeEyeButton).setOnClickListener {
-            applyReaderPalette(Color.rgb(218, 238, 205), Color.rgb(48, 60, 42))
-            saveReaderPrefs()
+            selectReaderBackground("solid_eye")
         }
         findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener {
-            applyReaderPalette(Color.WHITE, Color.rgb(35, 35, 35))
-            saveReaderPrefs()
+            selectReaderBackground("solid_white")
         }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
             applyActiveReaderMode(ReaderAppearance.toggleMode(this))
+        }
+        findViewById<TextView>(R.id.themeMoreButton).setOnClickListener {
+            showReaderBackgroundPicker()
+        }
+        findViewById<TextView>(R.id.chromeCenterButton).setOnClickListener {
+            setReaderChromeActivationMode(CHROME_ACTIVATION_CENTER)
+        }
+        findViewById<TextView>(R.id.chromeLongPressButton).setOnClickListener {
+            setReaderChromeActivationMode(CHROME_ACTIVATION_LONG_PRESS)
         }
         findViewById<TextView>(R.id.turnModeOverlapButton).setOnClickListener { setTurnMode(TURN_MODE_OVERLAP) }
         findViewById<TextView>(R.id.turnModeSimulateButton).setOnClickListener { setTurnMode(TURN_MODE_SIMULATE) }
@@ -2794,6 +2820,26 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             updateSettingsLabels()
         }
         updateSettingsLabels()
+    }
+
+    private fun showReaderBackgroundPicker() {
+        ReaderBackgroundPicker.show(
+            activity = this,
+            selectedId = readerBackgroundStyleId
+        ) { preset ->
+            selectReaderBackground(preset.id)
+        }
+    }
+
+    private fun setReaderChromeActivationMode(mode: String) {
+        readerChromeActivationMode = mode
+        saveReaderPrefs()
+        updateSettingsLabels()
+        Toast.makeText(
+            this,
+            if (mode == CHROME_ACTIVATION_LONG_PRESS) "菜单唤起：全屏长按" else "菜单唤起：中央单击",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun toggleReaderSettingsPanel() {
@@ -2815,17 +2861,40 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun updateThemeControls() {
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
-        listOf(R.id.themePaperButton, R.id.themeEyeButton, R.id.themeWhiteButton).forEach { id ->
+        val quickThemes = listOf(
+            R.id.themePaperButton to ReaderBackgrounds.DEFAULT_ID,
+            R.id.themeEyeButton to "solid_eye",
+            R.id.themeWhiteButton to "solid_white"
+        )
+        quickThemes.forEach { (id, styleId) ->
+            val selected = !night && readerBackgroundStyleId == styleId
             findViewById<TextView>(id).apply {
-                isEnabled = !night
-                alpha = if (night) 0.35f else 1f
+                isEnabled = true
+                alpha = 1f
+                gravity = Gravity.CENTER
+                text = if (selected) "✓" else ""
+                setTextColor(ReaderBackgrounds.preset(styleId).textColor)
+                background = ReaderBackgrounds.previewDrawable(styleId, selected)
             }
+        }
+        findViewById<TextView>(R.id.themeMoreButton).apply {
+            setBackgroundColor(Color.rgb(74, 72, 66))
+            setTextColor(Color.WHITE)
         }
         findViewById<TextView>(R.id.themeNightButton).apply {
             text = if (night) "☀" else "☾"
             setTextColor(Color.WHITE)
+            setBackgroundColor(if (night) Color.rgb(239, 122, 40) else Color.BLACK)
         }
         findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
+        findViewById<TextView>(R.id.chromeCenterButton).setBackgroundColor(
+            if (readerChromeActivationMode == CHROME_ACTIVATION_CENTER) Color.rgb(239, 122, 40)
+            else Color.rgb(74, 72, 66)
+        )
+        findViewById<TextView>(R.id.chromeLongPressButton).setBackgroundColor(
+            if (readerChromeActivationMode == CHROME_ACTIVATION_LONG_PRESS) Color.rgb(239, 122, 40)
+            else Color.rgb(74, 72, 66)
+        )
     }
 
     private fun updateSettingsLabels() {
@@ -3338,7 +3407,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 val movedY = kotlin.math.abs(event.rawY - readerTouchDownRawY)
                 val tapSlop = dp(14).toFloat()
                 val duration = event.eventTime - readerTouchDownTime
-                if (movedX <= tapSlop &&
+                if (readerChromeActivationMode == CHROME_ACTIVATION_CENTER &&
+                    movedX <= tapSlop &&
                     movedY <= tapSlop &&
                     duration <= READER_CHROME_TAP_TIMEOUT_MS &&
                     isReaderChromeCenter(event.rawX, event.rawY)
