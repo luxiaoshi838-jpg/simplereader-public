@@ -194,7 +194,7 @@ private class ReaderBackgroundDrawable(
             } else {
                 Color.argb(22, 255, 255, 255)
             }
-            canvas.drawLine(x.toFloat(), y.toFloat(), x + length, y + (index % 3 - 1), detailPaint)
+            canvas.drawLine(x.toFloat(), y.toFloat(), x + length, y.toFloat() + (index % 3 - 1).toFloat(), detailPaint)
         }
     }
 
