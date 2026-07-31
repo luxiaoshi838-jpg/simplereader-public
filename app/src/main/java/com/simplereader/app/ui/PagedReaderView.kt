@@ -114,9 +114,9 @@ class PagedReaderView @JvmOverloads constructor(
         previousPage = previous
         currentPage = current
         nextPage = next
-        previousView.text = previous?.content.orEmpty()
+        previousView.text = previous?.content ?: ""
         currentView.text = current.content
-        nextView.text = next?.content.orEmpty()
+        nextView.text = next?.content ?: ""
         resetTransforms()
     }
 
