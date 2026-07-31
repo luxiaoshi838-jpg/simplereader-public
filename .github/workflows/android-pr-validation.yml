@@ -16,28 +16,20 @@ concurrency:
 
 jobs:
   validate:
-    name: v582 stable-signed release validation
+    name: v586 stable-signed release validation
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
-      SIMPLE_READER_VERSION_CODE: '2098000582'
-      SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-backgrounds.582'
+      SIMPLE_READER_VERSION_CODE: '2098000586'
+      SIMPLE_READER_VERSION_NAME: '2026.07.31.background-strength.586'
       EXPECTED_CERT_SHA256: '315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648'
       SIGNING_ALIAS: 'simplereader-public-v1'
 
     steps:
-      - name: Checkout v582 branch
+      - name: Checkout current branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Materialize v581 baseline and v582 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/apply_v582_v581_backgrounds.py
-          python3 scripts/fix_v582_compile.py
-          python3 scripts/disable_v582_text_selection.py
 
       - name: Restore encrypted stable signing key
         shell: bash
@@ -50,15 +42,8 @@ jobs:
           test -n "$SIGNING_PASSWORD"
           keystore="$RUNNER_TEMP/simplereader-public-v1.keystore"
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$keystore"
-          test -s "$keystore"
-          actual=$(keytool -list -v \
-            -keystore "$keystore" \
-            -storepass "$SIGNING_PASSWORD" \
-            -alias "$SIGNING_ALIAS" 2>/dev/null \
-            | sed -n 's/.*SHA256: //p' \
-            | head -n 1 \
-            | tr -d ':\r\n ' \
-            | tr 'A-F' 'a-f')
+          actual=$(keytool -list -v -keystore "$keystore" -storepass "$SIGNING_PASSWORD" -alias "$SIGNING_ALIAS" 2>/dev/null \
+            | sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')
           echo "Signer certificate: $actual" | tee /tmp/signing-certificate.log
           test "$actual" = "$EXPECTED_CERT_SHA256"
           {
@@ -68,32 +53,25 @@ jobs:
             echo "SIMPLEREADER_KEY_PASSWORD=$SIGNING_PASSWORD"
           } >> "$GITHUB_ENV"
 
-      - name: Guard v581 baseline and v582 scope
+      - name: Verify v586 background contract
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git merge-base HEAD e47b8c6a2a596a622cef298009f83d5e2a8353dc)" = "e47b8c6a2a596a622cef298009f83d5e2a8353dc"
-          grep -q 'private var shelfSelectionMode = false' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-          grep -q 'confirmDeleteShelfSelection' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-          grep -q 'confirmDeleteSelection' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
-          grep -q 'ReaderBackgroundPicker.show' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'ReaderBackgrounds.drawable(activePreset)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'readerProgressLabel.setTextColor(currentTextColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'private const val PREF_BACKGROUND_STYLE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'private const val CHROME_ACTIVATION_LONG_PRESS' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'contentView.setTextIsSelectable(false)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'contentView.isLongClickable = false' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'android:textIsSelectable="false"' app/src/main/res/layout/activity_reader.xml
-          grep -q 'android:longClickable="false"' app/src/main/res/layout/activity_reader.xml
-          grep -q '@+id/themeMoreButton' app/src/main/res/layout/activity_reader.xml
-          grep -q '@+id/chromeCenterButton' app/src/main/res/layout/activity_reader.xml
-          grep -q '@+id/chromeLongPressButton' app/src/main/res/layout/activity_reader.xml
-          grep -q 'SOLID("纯色")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          grep -q 'TEXTURE("纹理")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          grep -q 'MATERIAL("质感")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          grep -q 'val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          ! grep -q 'readerScrollView.scrollY / pageHeight' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          ! grep -q 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
+          background=app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          grep -Fq 'ColorOption("solid_ivory", "纸张", Color.rgb(245, 233, 200), Color.rgb(59, 52, 40))' "$background"
+          grep -Fq 'ColorOption("solid_eye", "护眼", Color.rgb(218, 238, 205), Color.rgb(48, 60, 42))' "$background"
+          grep -Fq 'ColorOption("solid_white", "白色", Color.WHITE, Color.rgb(35, 35, 35))' "$background"
+          grep -Fq 'alpha = 188' "$background"
+          grep -Fq 'alpha = 205' "$background"
+          grep -Fq 'alpha = 152' "$background"
+          grep -Fq 'PorterDuff.Mode.MULTIPLY' "$background"
+          ! grep -Fq '旧纸质感' "$background"
+          ! grep -Fq 'PATINA' "$background"
+          ! grep -Fq 'reader_material_patina' "$background"
+          test ! -e app/src/main/res/drawable-nodpi/reader_material_patina.png
+          test -s app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
+          test -s app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
+          test -s app/src/main/res/drawable-nodpi/reader_material_frosted.png
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -104,63 +82,55 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Release unit tests within five minutes
+      - name: Test and assemble stable-signed release
         shell: bash
         run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/test-release.log 2>&1
-          code=$?
-          tail -n 220 /tmp/test-release.log
-          exit $code
+          set -euo pipefail
+          timeout --signal=INT 6m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
+          timeout --signal=INT 6m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
 
-      - name: Assemble stable-signed release within five minutes
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
-          code=$?
-          tail -n 260 /tmp/assemble-release.log
-          exit $code
-
-      - name: Verify package parsing, alignment and stable identity
+      - name: Verify v586 package, resources and certificate
         shell: bash
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v582-stable.apk
-          "$build_tools/apksigner" verify --verbose --print-certs /tmp/SimpleReader-v582-stable.apk | tee /tmp/apksigner-verify.log
+          cp app/build/outputs/apk/release/app-release.apk /tmp/SimpleReader-v586-stable.apk
+          "$build_tools/apksigner" verify --verbose --print-certs /tmp/SimpleReader-v586-stable.apk | tee /tmp/apksigner-verify.log
           grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/apksigner-verify.log
-          cert=$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/apksigner-verify.log \
-            | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')
+          cert=$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/apksigner-verify.log | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')
           echo "Final APK certificate: $cert" | tee -a /tmp/signing-certificate.log
           test "$cert" = "$EXPECTED_CERT_SHA256"
-          "$build_tools/zipalign" -c -P 16 4 /tmp/SimpleReader-v582-stable.apk
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v582-stable.apk | tee /tmp/aapt2-badging.log
+          "$build_tools/zipalign" -c -P 16 4 /tmp/SimpleReader-v586-stable.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v586-stable.apk | tee /tmp/aapt2-badging.log
           grep -Fq "package: name='com.simplereader.app'" /tmp/aapt2-badging.log
-          grep -Fq "versionCode='2098000582'" /tmp/aapt2-badging.log
-          sha256sum /tmp/SimpleReader-v582-stable.apk | tee /tmp/SimpleReader-v582-stable.sha256
+          grep -Fq "versionCode='2098000586'" /tmp/aapt2-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v586-stable.apk | tee /tmp/aapt2-resources.log
+          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/aapt2-resources.log
+          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/aapt2-resources.log
+          grep -Fq 'drawable/reader_material_frosted' /tmp/aapt2-resources.log
+          ! grep -Fq 'drawable/reader_material_patina' /tmp/aapt2-resources.log
+          sha256sum /tmp/SimpleReader-v586-stable.apk | tee /tmp/SimpleReader-v586-stable.sha256
 
-      - name: Upload v582 logs
+      - name: Upload v586 logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v582-stable-logs-${{ github.run_number }}
+          name: SimpleReader-v586-stable-logs-${{ github.run_number }}
           path: |
             /tmp/test-release.log
             /tmp/assemble-release.log
             /tmp/signing-certificate.log
             /tmp/apksigner-verify.log
             /tmp/aapt2-badging.log
-            /tmp/SimpleReader-v582-stable.sha256
+            /tmp/aapt2-resources.log
+            /tmp/SimpleReader-v586-stable.sha256
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Upload stable-signed v582 APK
+      - name: Upload stable-signed v586 APK
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v582-stable-${{ github.run_number }}
-          path: /tmp/SimpleReader-v582-stable.apk
+          name: SimpleReader-v586-stable-${{ github.run_number }}
+          path: /tmp/SimpleReader-v586-stable.apk
           if-no-files-found: error
           retention-days: 7
