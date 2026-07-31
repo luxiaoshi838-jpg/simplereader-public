@@ -27,10 +27,24 @@ data class ReaderLayoutSignature(
     val textSizePx: Int,
     val lineSpacingMultiplierX100: Int,
     val horizontalPaddingPx: Int,
-    val verticalPaddingPx: Int,
+    val topPaddingPx: Int,
+    val bottomPaddingPx: Int,
+    val chapterTitleScaleX100: Int = 130,
     /** Distinguishes streaming TXT windows without coupling cache identity to turn mode. */
     val contentKey: Long = 0L
-)
+) {
+    fun stableKey(): String = listOf(
+        widthPx,
+        heightPx,
+        textSizePx,
+        lineSpacingMultiplierX100,
+        horizontalPaddingPx,
+        topPaddingPx,
+        bottomPaddingPx,
+        chapterTitleScaleX100,
+        contentKey
+    ).joinToString(":")
+}
 
 /** Small LRU cache: previous, current and next chapter page lists. */
 class ReaderPageCache(private val maxChapters: Int = 3) {
@@ -84,7 +98,7 @@ object ReaderTextPaginator {
 
         val contentWidth = (signature.widthPx - signature.horizontalPaddingPx * 2)
             .coerceAtLeast(1)
-        val contentHeight = (signature.heightPx - signature.verticalPaddingPx * 2)
+        val contentHeight = (signature.heightPx - signature.topPaddingPx - signature.bottomPaddingPx)
             .coerceAtLeast(1)
         val paint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = signature.textSizePx.toFloat()

@@ -1,0 +1,115 @@
+package com.simplereader.app.ui
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+
+/**
+ * Persistent per-book page index.
+ *
+ * The index stores the real page start offsets produced by Android layout for every
+ * chapter. It is keyed by the exact layout signature and source revision, so font,
+ * spacing, viewport or file changes invalidate it instead of reusing stale totals.
+ */
+class ReaderPageIndexStore(
+    context: Context,
+    private val bookId: Long
+) {
+    data class Loaded(
+        val pageStartsByChapter: Map<Int, IntArray>,
+        val sourceStartsByChapter: Map<Int, LongArray>,
+        val complete: Boolean
+    )
+
+    private val directory = File(context.filesDir, "reader_page_indexes").apply { mkdirs() }
+    private val target = File(directory, "$bookId.json")
+
+    @Synchronized
+    fun load(
+        signature: ReaderLayoutSignature,
+        sourceRevision: String,
+        chapterCount: Int
+    ): Loaded? {
+        if (!target.isFile) return null
+        return runCatching {
+            val root = JSONObject(target.readText())
+            if (root.optInt("version") != VERSION) return null
+            if (root.optString("signature") != signature.stableKey()) return null
+            if (root.optString("sourceRevision") != sourceRevision) return null
+            if (root.optInt("chapterCount") != chapterCount) return null
+
+            val chapters = root.optJSONArray("chapters") ?: JSONArray()
+            val result = linkedMapOf<Int, IntArray>()
+            val sourceResult = linkedMapOf<Int, LongArray>()
+            for (i in 0 until chapters.length()) {
+                val item = chapters.optJSONObject(i) ?: continue
+                val index = item.optInt("index", -1)
+                if (index !in 0 until chapterCount) continue
+                val startsJson = item.optJSONArray("starts") ?: continue
+                if (startsJson.length() == 0) continue
+                val starts = IntArray(startsJson.length()) { pos ->
+                    startsJson.optInt(pos, 0).coerceAtLeast(0)
+                }
+                if (starts.firstOrNull() != 0) continue
+                result[index] = starts
+                val sourceJson = item.optJSONArray("sourceStarts")
+                if (sourceJson != null && sourceJson.length() == starts.size) {
+                    sourceResult[index] = LongArray(sourceJson.length()) { pos ->
+                        sourceJson.optLong(pos, -1L)
+                    }
+                }
+            }
+            Loaded(
+                pageStartsByChapter = result,
+                sourceStartsByChapter = sourceResult,
+                complete = result.size == chapterCount
+            )
+        }.getOrNull()
+    }
+
+    @Synchronized
+    fun save(
+        signature: ReaderLayoutSignature,
+        sourceRevision: String,
+        chapterCount: Int,
+        pageStartsByChapter: Map<Int, IntArray>,
+        sourceStartsByChapter: Map<Int, LongArray>
+    ) {
+        if (bookId <= 0L || chapterCount <= 0 || pageStartsByChapter.isEmpty()) return
+        val chapters = JSONArray()
+        pageStartsByChapter.toSortedMap().forEach { (index, starts) ->
+            if (index !in 0 until chapterCount || starts.isEmpty()) return@forEach
+            val startsJson = JSONArray()
+            starts.forEach { value -> startsJson.put(value) }
+            val sourceJson = JSONArray()
+            sourceStartsByChapter[index]
+                ?.takeIf { it.size == starts.size }
+                ?.forEach { value -> sourceJson.put(value) }
+            chapters.put(
+                JSONObject()
+                    .put("index", index)
+                    .put("starts", startsJson)
+                    .put("sourceStarts", sourceJson)
+            )
+        }
+        val root = JSONObject()
+            .put("version", VERSION)
+            .put("signature", signature.stableKey())
+            .put("sourceRevision", sourceRevision)
+            .put("chapterCount", chapterCount)
+            .put("complete", pageStartsByChapter.size == chapterCount)
+            .put("chapters", chapters)
+
+        val temp = File(directory, "$bookId.tmp")
+        temp.writeText(root.toString())
+        if (!temp.renameTo(target)) {
+            target.writeText(root.toString())
+            temp.delete()
+        }
+    }
+
+    companion object {
+        private const val VERSION = 2
+    }
+}

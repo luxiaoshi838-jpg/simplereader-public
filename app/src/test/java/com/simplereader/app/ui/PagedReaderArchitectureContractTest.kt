@@ -93,4 +93,24 @@ class PagedReaderArchitectureContractTest {
         assertTrue(activity.contains("saveImmediately = saveImmediately"))
         assertTrue(activity.contains("pendingBoundaryTurnDirection = 0"))
     }
+    @Test
+    fun everyChapterOwnsASeparateFixedPageList() {
+        val chapterSource = activity.substringAfter("private suspend fun pagedChapterSource")
+            .substringBefore("private fun pagedAnchorFromCurrentPosition")
+        assertTrue(chapterSource.contains("startByte"))
+        assertTrue(chapterSource.contains("endByte"))
+        assertTrue(chapterSource.contains("TxtParser.readRange"))
+
+        val chapterPages = activity.substringAfter("private suspend fun pagedPagesForChapter")
+            .substringBefore("private fun pageContaining")
+        assertTrue(chapterPages.contains("pagedChapterSource(chapterIndex)"))
+        assertTrue(chapterPages.contains("ReaderTextPaginator.paginate"))
+        assertTrue(chapterPages.contains("registerChapterPageCount(chapterIndex, pages.size"))
+
+        val crossChapter = activity.substringAfter("private suspend fun buildPagedWindow")
+            .substringBefore("private fun refreshPagedReader")
+        assertTrue(crossChapter.contains("pagedPagesForChapter(safeChapter - 1, signature).lastOrNull()"))
+        assertTrue(crossChapter.contains("pagedPagesForChapter(safeChapter + 1, signature).firstOrNull()"))
+    }
+
 }
