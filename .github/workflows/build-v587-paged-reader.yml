@@ -1,5 +1,6 @@
 name: Build v587 paged reader
 
+# Registered workflow trigger for the materialized paged-reader source.
 on:
   push:
     branches:
