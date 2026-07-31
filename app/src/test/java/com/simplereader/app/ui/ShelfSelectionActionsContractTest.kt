@@ -20,9 +20,8 @@ class ShelfSelectionActionsContractTest {
 
     @Test
     fun multiBookSelectionKeepsGroupMoveButHidesRename() {
-        val block = source.substringAfter("} else {
-            AlertDialog.Builder(this)
-                .setTitle("已选择 ${'$'}{selectedBooks.size} 本书")")
+        val marker = ".setTitle(\"已选择 ${'$'}{selectedBooks.size} 本书\")"
+        val block = source.substringAfter(marker)
             .substringBefore("private fun showMoveSelectedBooksToGroup()")
         assertContains(block, "导入分组")
         assertContains(block, "删除")
