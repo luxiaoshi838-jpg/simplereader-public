@@ -108,7 +108,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerTextSize: Float = 18f
     private var currentBackgroundColor: Int = Color.rgb(245, 233, 200)
     private var currentTextColor: Int = Color.rgb(59, 52, 40)
-    private var readerBackgroundStyleId: String = ReaderBackgrounds.DEFAULT_ID
+    private var readerBackgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
+    private var readerBackgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
+    private var readerBackgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
     private var readerChromeActivationMode: String = CHROME_ACTIVATION_CENTER
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
@@ -1319,29 +1321,49 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
-    private fun applyReaderPalette(backgroundColor: Int, textColor: Int) {
-        val styleId = ReaderBackgrounds.closestId(backgroundColor)
-        selectReaderBackground(styleId)
+    private fun currentReaderBackgroundSelection(): ReaderBackgrounds.Selection =
+        ReaderBackgrounds.validated(
+            ReaderBackgrounds.Selection(
+                colorId = readerBackgroundColorId,
+                textureId = readerBackgroundTextureId,
+                materialId = readerBackgroundMaterialId
+            )
+        )
+
+    private fun applyReaderPalette(backgroundColor: Int, _textColor: Int) {
+        selectReaderBackground(
+            currentReaderBackgroundSelection().copy(
+                colorId = ReaderBackgrounds.closestColorId(backgroundColor)
+            )
+        )
     }
 
-    private fun selectReaderBackground(styleId: String) {
-        val preset = ReaderBackgrounds.preset(styleId)
-        readerBackgroundStyleId = preset.id
-        ReaderAppearance.saveDayPalette(this, preset.backgroundColor, preset.textColor)
+    private fun selectReaderBackground(selection: ReaderBackgrounds.Selection) {
+        val safe = ReaderBackgrounds.validated(selection)
+        readerBackgroundColorId = safe.colorId
+        readerBackgroundTextureId = safe.textureId
+        readerBackgroundMaterialId = safe.materialId
+        val color = ReaderBackgrounds.color(safe.colorId)
+        ReaderAppearance.saveDayPalette(this, color.backgroundColor, color.textColor)
         saveReaderPrefs()
         applyActiveReaderMode(ReaderAppearance.palette(this))
     }
 
+    private fun selectReaderBackgroundColor(colorId: String) {
+        selectReaderBackground(currentReaderBackgroundSelection().copy(colorId = colorId))
+    }
+
     private fun applyActiveReaderMode(palette: ReaderAppearance.Palette) {
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
-        val activePreset = if (night) {
-            ReaderBackgrounds.nightPreset
+        val selection = currentReaderBackgroundSelection()
+        val selectedColor = ReaderBackgrounds.color(selection.colorId)
+        currentBackgroundColor = if (night) palette.backgroundColor else selectedColor.backgroundColor
+        currentTextColor = if (night) palette.textColor else selectedColor.textColor
+        contentView.background = if (night) {
+            ReaderBackgrounds.nightDrawable(this)
         } else {
-            ReaderBackgrounds.preset(readerBackgroundStyleId)
+            ReaderBackgrounds.drawable(this, selection)
         }
-        currentBackgroundColor = if (night) palette.backgroundColor else activePreset.backgroundColor
-        currentTextColor = if (night) palette.textColor else activePreset.textColor
-        contentView.background = ReaderBackgrounds.drawable(activePreset)
         contentView.setTextColor(currentTextColor)
         readerProgressLabel.setTextColor(currentTextColor)
         readerScrollView.setBackgroundColor(currentBackgroundColor)
@@ -1355,8 +1377,20 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val palette = ReaderAppearance.palette(this)
         currentBackgroundColor = palette.backgroundColor
         currentTextColor = palette.textColor
-        readerBackgroundStyleId = prefs.getString(PREF_BACKGROUND_STYLE, null)
-            ?: ReaderBackgrounds.closestId(palette.backgroundColor)
+        val migrated = ReaderBackgrounds.selectionFromLegacy(
+            styleId = prefs.getString(PREF_BACKGROUND_STYLE, null),
+            paletteBackground = palette.backgroundColor
+        )
+        val loadedSelection = ReaderBackgrounds.validated(
+            ReaderBackgrounds.Selection(
+                colorId = prefs.getString(PREF_BACKGROUND_COLOR_ID, migrated.colorId) ?: migrated.colorId,
+                textureId = prefs.getString(PREF_BACKGROUND_TEXTURE_ID, migrated.textureId) ?: migrated.textureId,
+                materialId = prefs.getString(PREF_BACKGROUND_MATERIAL_ID, migrated.materialId) ?: migrated.materialId
+            )
+        )
+        readerBackgroundColorId = loadedSelection.colorId
+        readerBackgroundTextureId = loadedSelection.textureId
+        readerBackgroundMaterialId = loadedSelection.materialId
         readerChromeActivationMode = prefs.getString(
             PREF_CHROME_ACTIVATION,
             CHROME_ACTIVATION_CENTER
@@ -1369,7 +1403,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         getSharedPreferences(READER_PREFS, MODE_PRIVATE)
             .edit()
             .putFloat(PREF_TEXT_SIZE, readerTextSize)
-            .putString(PREF_BACKGROUND_STYLE, readerBackgroundStyleId)
+            .putString(PREF_BACKGROUND_COLOR_ID, readerBackgroundColorId)
+            .putString(PREF_BACKGROUND_TEXTURE_ID, readerBackgroundTextureId)
+            .putString(PREF_BACKGROUND_MATERIAL_ID, readerBackgroundMaterialId)
             .putString(PREF_CHROME_ACTIVATION, readerChromeActivationMode)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
@@ -2435,7 +2471,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun showReaderSettingsV2() {
-        val items = arrayOf("字号减小", "字号增大", "纸张背景（日间）", "护眼背景（日间）", "白色背景（日间）", "切换日间 / 夜间")
+        val items = arrayOf("字号减小", "字号增大", "象牙色（日间）", "护眼背景（日间）", "白色背景（日间）", "切换日间 / 夜间")
         AlertDialog.Builder(this)
             .setTitle("阅读设置")
             .setItems(items) { _, which ->
@@ -2792,13 +2828,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             displayContent()
         }
         findViewById<TextView>(R.id.themePaperButton).setOnClickListener {
-            selectReaderBackground(ReaderBackgrounds.DEFAULT_ID)
+            selectReaderBackgroundColor(ReaderBackgrounds.DEFAULT_COLOR_ID)
         }
         findViewById<TextView>(R.id.themeEyeButton).setOnClickListener {
-            selectReaderBackground("solid_eye")
+            selectReaderBackgroundColor("solid_eye")
         }
         findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener {
-            selectReaderBackground("solid_white")
+            selectReaderBackgroundColor("solid_white")
         }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
             applyActiveReaderMode(ReaderAppearance.toggleMode(this))
@@ -2828,9 +2864,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun showReaderBackgroundPicker() {
         ReaderBackgroundPicker.show(
             activity = this,
-            selectedId = readerBackgroundStyleId
-        ) { preset ->
-            selectReaderBackground(preset.id)
+            selected = currentReaderBackgroundSelection()
+        ) { selection ->
+            selectReaderBackground(selection)
         }
     }
 
@@ -2864,20 +2900,26 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun updateThemeControls() {
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
-        val quickThemes = listOf(
-            R.id.themePaperButton to ReaderBackgrounds.DEFAULT_ID,
+        val selection = currentReaderBackgroundSelection()
+        val quickColors = listOf(
+            R.id.themePaperButton to ReaderBackgrounds.DEFAULT_COLOR_ID,
             R.id.themeEyeButton to "solid_eye",
             R.id.themeWhiteButton to "solid_white"
         )
-        quickThemes.forEach { (id, styleId) ->
-            val selected = !night && readerBackgroundStyleId == styleId
+        quickColors.forEach { (id, colorId) ->
+            val selected = !night && selection.colorId == colorId
+            val previewSelection = selection.copy(colorId = colorId)
             findViewById<TextView>(id).apply {
                 isEnabled = true
                 alpha = 1f
                 gravity = Gravity.CENTER
                 text = if (selected) "✓" else ""
-                setTextColor(ReaderBackgrounds.preset(styleId).textColor)
-                background = ReaderBackgrounds.previewDrawable(styleId, selected)
+                setTextColor(ReaderBackgrounds.color(colorId).textColor)
+                background = ReaderBackgrounds.previewDrawable(
+                    context = this@ReaderActivity,
+                    selection = previewSelection,
+                    selected = selected
+                )
             }
         }
         findViewById<TextView>(R.id.themeMoreButton).apply {
@@ -3526,6 +3568,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key"
         private const val PREF_BACKGROUND_STYLE = "background_style_v582"
+        private const val PREF_BACKGROUND_COLOR_ID = "background_color_v585"
+        private const val PREF_BACKGROUND_TEXTURE_ID = "background_texture_v585"
+        private const val PREF_BACKGROUND_MATERIAL_ID = "background_material_v585"
         private const val PREF_CHROME_ACTIVATION = "chrome_activation_v582"
         private const val CHROME_ACTIVATION_CENTER = "center_tap"
         private const val CHROME_ACTIVATION_LONG_PRESS = "long_press"
