@@ -45,6 +45,7 @@ jobs:
           test -s app/src/main/res/drawable-nodpi/reader_material_patina.png
           test -s THIRD_PARTY_TEXTURES.md
           file app/src/main/res/drawable-nodpi/reader_*.png
+          sha256sum app/src/main/res/drawable-nodpi/reader_*.png | tee /tmp/v585-source-textures.sha256
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -71,16 +72,19 @@ jobs:
           "$build_tools/aapt2" dump badging /tmp/SimpleReader-v585-unsigned.apk | tee /tmp/v585-badging.log
           grep -Fq "package: name='com.simplereader.app'" /tmp/v585-badging.log
           grep -Fq "versionCode='2098000585'" /tmp/v585-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v585-unsigned.apk | tee /tmp/v585-resources.log
+          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v585-resources.log
+          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v585-resources.log
+          grep -Fq 'drawable/reader_material_frosted' /tmp/v585-resources.log
+          grep -Fq 'drawable/reader_material_patina' /tmp/v585-resources.log
           unzip -l /tmp/SimpleReader-v585-unsigned.apk | tee /tmp/v585-zip-list.log
-          grep -Fq 'reader_texture_paper_grain' /tmp/v585-zip-list.log
-          grep -Fq 'reader_texture_paper_fiber' /tmp/v585-zip-list.log
-          grep -Fq 'reader_material_frosted' /tmp/v585-zip-list.log
-          grep -Fq 'reader_material_patina' /tmp/v585-zip-list.log
+          test "$(unzip -l /tmp/SimpleReader-v585-unsigned.apk | awk '$4 ~ /^res\/.*\.png$/ && $1 >= 30000 {count++} END {print count+0}')" -ge 4
           unzip -p /tmp/SimpleReader-v585-unsigned.apk classes.dex | strings | grep -Fq 'background_texture_v585'
           unzip -p /tmp/SimpleReader-v585-unsigned.apk classes.dex | strings | grep -Fq 'background_material_v585'
           sha256sum /tmp/SimpleReader-v585-unsigned.apk | tee /tmp/v585-unsigned.sha256
 
       - name: Upload unsigned v585 and logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v585-unsigned-${{ github.run_number }}
@@ -89,7 +93,9 @@ jobs:
             /tmp/v585-tests.log
             /tmp/v585-build.log
             /tmp/v585-badging.log
+            /tmp/v585-resources.log
             /tmp/v585-zip-list.log
+            /tmp/v585-source-textures.sha256
             /tmp/v585-unsigned.sha256
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
