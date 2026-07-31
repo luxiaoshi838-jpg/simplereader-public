@@ -22,7 +22,6 @@ object ReaderBackgroundPicker {
 
         var currentSelection = ReaderBackgrounds.validated(selected)
         var activeCategory = ReaderBackgrounds.Category.COLOR
-        var dialog: AlertDialog? = null
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -101,6 +100,8 @@ object ReaderBackgroundPicker {
             ReaderBackgrounds.Category.MATERIAL -> ReaderBackgrounds.materialOptions.map { it.id to it.title }
         }
 
+        var renderGrid: () -> Unit = {}
+
         fun selectOption(category: ReaderBackgrounds.Category, id: String) {
             currentSelection = ReaderBackgrounds.validated(previewSelection(category, id))
             onSelectionChanged(currentSelection)
@@ -109,7 +110,7 @@ object ReaderBackgroundPicker {
             renderGrid()
         }
 
-        fun renderGridInternal() {
+        renderGrid = {
             grid.removeAllViews()
             optionPairs().chunked(3).forEach { chunk ->
                 val row = LinearLayout(activity).apply {
@@ -168,8 +169,6 @@ object ReaderBackgroundPicker {
             }
         }
 
-        fun renderGrid() = renderGridInternal()
-
         ReaderBackgrounds.Category.values().forEach { category ->
             val tab = TextView(activity).apply {
                 text = category.title
@@ -195,11 +194,10 @@ object ReaderBackgroundPicker {
         renderSummary()
         renderTabs()
         renderGrid()
-        dialog = AlertDialog.Builder(activity)
+        AlertDialog.Builder(activity)
             .setTitle("阅读背景 · 自由搭配")
             .setView(root)
             .setPositiveButton("完成", null)
-            .create()
-        dialog?.show()
+            .show()
     }
 }
