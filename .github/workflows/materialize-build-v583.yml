@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - agent/v582-duokan-backgrounds
+  pull_request:
+    branches:
+      - baseline/v575
 
 permissions:
   contents: write
 
 concurrency:
-  group: materialize-build-v583
+  group: materialize-build-v583-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -36,6 +39,7 @@ jobs:
           grep -Fq 'private fun showMoveSelectedBooksToGroup()' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
 
       - name: Commit materialized source
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
