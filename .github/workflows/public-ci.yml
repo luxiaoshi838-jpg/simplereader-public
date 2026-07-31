@@ -4,168 +4,32 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - agent/v14-real-epub-chm-continuous
       - agent/v582-duokan-backgrounds
-  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-debug:
-    name: Build public APK
+  diagnose-v590-patch:
+    name: Diagnose v590 patch blocks
     runs-on: ubuntu-latest
-    timeout-minutes: 24
-    env:
-      SIMPLE_READER_VERSION_CODE: '2098000590'
-      SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-chapter-page-index.590'
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout current v590 branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: agent/v582-duokan-backgrounds
-          fetch-depth: 0
-
-      - name: Materialize v590 chapter page index
+      - name: Print block metadata
         shell: bash
         run: |
-          set -euo pipefail
-          test "$(sha256sum scripts/v590_patch_exact_00.b64 | cut -d' ' -f1)" = "e9707fedd385a54361eca950209114f939137aa4e432f9a655d4b942485159d5"
-          test "$(sha256sum scripts/v590_patch_exact_01.b64 | cut -d' ' -f1)" = "7aa76ef59659ad38e62d05968136166584a5b57d1ab63abd82e3a045c2edc851"
-          test "$(sha256sum scripts/v590_patch_exact_02.b64 | cut -d' ' -f1)" = "e5f5a44b65afd4e1685084e80398c79920220d4b4ca1e20bfe0c21c17398fc68"
-          cat scripts/v590_patch_exact_*.b64 | base64 -d | gzip -dc > /tmp/v590.patch
-          if git apply --check /tmp/v590.patch; then
-            git apply /tmp/v590.patch
-          elif git apply --reverse --check /tmp/v590.patch; then
-            echo "v590 source already materialized"
-          else
-            echo "v590 source patch does not match the current branch" >&2
-            exit 1
-          fi
-          git add app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt \
-                  app/src/test/java/com/simplereader/app/parser/TxtChapterSequenceStabilityTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/ReaderPageIndexStoreTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v590: paginate and count every chapter independently'
-            git push origin HEAD:agent/v582-duokan-backgrounds
-          fi
-
-      - name: Pack exact source
-        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
-
-      - name: Upload exact source
-        uses: actions/upload-artifact@v4
-        with:
-          name: simplereader-current-source-${{ github.run_number }}
-          path: /tmp/simplereader-current-source.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Export official Android signing tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -x "$build_tools/apksigner"
-          test -x "$build_tools/zipalign"
-          test -x "$build_tools/aapt2"
-          tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools.tar.gz "$(basename "$build_tools")"
-
-      - name: Upload Android signing tools
-        uses: actions/upload-artifact@v4
-        with:
-          name: Android-build-tools-${{ github.run_number }}
-          path: /tmp/android-build-tools.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Verify v590 architecture contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -Fq 'private fun isPagedReaderMode(): Boolean = pageTurnMode != TURN_MODE_VERTICAL' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'maybeExtendStructuredContinuousBuffer(scrollY)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'actualPageLabel(page)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'hasStableTxtChapterIndex()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'TxtParser.readRange' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'ReaderPageIndexStore' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'pagedChapterPageStarts' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'pagedChapterSourceStarts' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'return "本章 ${pageIndex + 1}/$safeChapterPages"' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'buildVisiblePagedWindow(anchor, signature)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'pagedReaderView.cancelNavigation()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'ValueAnimator' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'fun cancelNavigation()' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          ! grep -Fq 'TurnMode.VERTICAL' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          ! grep -Fq 'val unitsPerPage = pageSize' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'val layout = StaticLayout.Builder.obtain' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
-          grep -Fq 'neutralTexture' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          ! grep -Fq 'PorterDuff.Mode.MULTIPLY' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-
-      - name: Run release unit tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v590-tests.log
-
-      - name: Build release APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v590-build.log
-          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v590-unsigned.apk
-
-      - name: Verify v590 APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v590-unsigned.apk | tee /tmp/v590-badging.log
-          grep -Fq "package: name='com.simplereader.app'" /tmp/v590-badging.log
-          grep -Fq "versionCode='2098000590'" /tmp/v590-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v590-unsigned.apk | tee /tmp/v590-resources.log
-          grep -Fq 'id/pagedReaderView' /tmp/v590-resources.log
-          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v590-resources.log
-          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v590-resources.log
-          ! grep -Fq 'drawable/reader_material_patina' /tmp/v590-resources.log
-          unzip -t /tmp/SimpleReader-v590-unsigned.apk | tee /tmp/v590-unzip.log
-          sha256sum /tmp/SimpleReader-v590-unsigned.apk | tee /tmp/v590-unsigned.sha256
-
-      - name: Upload unsigned v590 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v590-unsigned-${{ github.run_number }}
-          path: |
-            /tmp/SimpleReader-v590-unsigned.apk
-            /tmp/v590-tests.log
-            /tmp/v590-build.log
-            /tmp/v590-badging.log
-            /tmp/v590-resources.log
-            /tmp/v590-unzip.log
-            /tmp/v590-unsigned.sha256
-          if-no-files-found: error
-          retention-days: 3
+          set -u
+          wc -c scripts/v590_patch_exact_*.b64
+          sha256sum scripts/v590_patch_exact_*.b64
+          cat scripts/v590_patch_exact_*.b64 | wc -c
+          cat scripts/v590_patch_exact_*.b64 | base64 -d > /tmp/v590.patch.gz
+          wc -c /tmp/v590.patch.gz
+          sha256sum /tmp/v590.patch.gz
+          gzip -t /tmp/v590.patch.gz
