@@ -90,13 +90,13 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          timeout --signal=INT 7m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v587-tests.log
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v587-tests.log
 
       - name: Build release APK
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=INT 7m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v587-build.log
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v587-build.log
           apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
           test -n "$apk"
           cp "$apk" /tmp/SimpleReader-v587-unsigned.apk
