@@ -70,7 +70,9 @@ jobs:
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          cp app/build/outputs/apk/release/app-release.apk /tmp/SimpleReader-v586-unsigned.apk
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v586-unsigned.apk
           test -s /tmp/SimpleReader-v586-unsigned.apk
           "$build_tools/aapt2" dump badging /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/aapt2-badging.log
           grep -Fq "package: name='com.simplereader.app'" /tmp/aapt2-badging.log
