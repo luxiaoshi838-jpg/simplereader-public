@@ -37,16 +37,24 @@ class LayeredReaderBackgroundContractTest {
     }
 
     @Test
-    fun bitmapLayersAreVisibleAndPatinaIsRemoved() {
+    fun textureUsesNeutralLuminanceAndBalancedStrength() {
+        assertTrue(backgrounds.contains("alpha = 118"))
+        assertTrue(backgrounds.contains("alpha = 126"))
+        assertTrue(backgrounds.contains("contrast = 0.42f"))
+        assertTrue(backgrounds.contains("contrast = 0.48f"))
+        assertTrue(backgrounds.contains("neutralTexture"))
+        assertTrue(backgrounds.contains("val mean ="))
+        assertTrue(backgrounds.contains("coerceIn(96, 160)"))
+        assertTrue(backgrounds.contains("PorterDuff.Mode.OVERLAY"))
+        assertFalse(backgrounds.contains("PorterDuff.Mode.MULTIPLY"))
+    }
+
+    @Test
+    fun removedMaterialHasNoImplementation() {
         assertTrue(backgrounds.contains("reader_texture_paper_grain"))
         assertTrue(backgrounds.contains("reader_texture_paper_fiber"))
         assertTrue(backgrounds.contains("reader_material_frosted"))
-        assertTrue(backgrounds.contains("alpha = 188"))
-        assertTrue(backgrounds.contains("alpha = 205"))
-        assertTrue(backgrounds.contains("alpha = 152"))
-        assertTrue(backgrounds.contains("PorterDuff.Mode.MULTIPLY"))
         assertFalse(backgrounds.contains("reader_material_patina"))
-        assertFalse(backgrounds.contains("旧纸质感"))
         assertFalse(backgrounds.contains("PATINA"))
         assertTrue(backgrounds.contains("BitmapShader"))
         assertTrue(backgrounds.contains("PorterDuffXfermode"))

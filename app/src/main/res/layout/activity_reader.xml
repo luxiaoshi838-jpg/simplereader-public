@@ -4,6 +4,12 @@
     android:layout_height="match_parent"
     android:background="#F5E9C8">
 
+    <com.simplereader.app.ui.PagedReaderView
+        android:id="@+id/pagedReaderView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <androidx.core.widget.NestedScrollView
         android:id="@+id/readerScrollView"
         android:layout_width="match_parent"

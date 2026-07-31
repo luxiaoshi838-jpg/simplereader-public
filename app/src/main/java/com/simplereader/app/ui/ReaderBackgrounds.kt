@@ -19,14 +19,16 @@ import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import com.simplereader.app.R
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
- * v586 分层阅读背景。
+ * v587 分层阅读背景。
  *
  * 颜色、纹理、质感分别保存和组合：
- * - 颜色恢复 v575/v581 的原始纸张色、护眼色和白色；
- * - 纹理使用更清晰的真实位图叠加；
- * - 质感增强明暗层次，同时移除旧纸质感。
+ * - 颜色保留 v575/v581 的原始纸张色、护眼色和白色；
+ * - 纹理先转为均值归一的中性灰明暗层，不再给底色染色；
+ * - 纹理强度处于 v585 与 v586 之间，保留纸感但避免斑驳皮肤感；
+ * - 质感继续作为独立层，旧纸质感保持删除。
  *
  * 位图素材来自 CC0 资源，来源记录在 THIRD_PARTY_TEXTURES.md。
  */
@@ -61,7 +63,8 @@ object ReaderBackgrounds {
         val title: String,
         val effect: TextureEffect,
         val drawableRes: Int? = null,
-        val alpha: Int = 0
+        val alpha: Int = 0,
+        val contrast: Float = 1f
     )
 
     enum class MaterialEffect {
@@ -100,14 +103,16 @@ object ReaderBackgrounds {
             title = "纸张颗粒",
             effect = TextureEffect.PAPER_GRAIN,
             drawableRes = R.drawable.reader_texture_paper_grain,
-            alpha = 188
+            alpha = 146,
+            contrast = 0.54f
         ),
         TextureOption(
             id = "texture_paper_fiber",
             title = "宣纸纤维",
             effect = TextureEffect.PAPER_FIBER,
             drawableRes = R.drawable.reader_texture_paper_fiber,
-            alpha = 205
+            alpha = 158,
+            contrast = 0.58f
         )
     )
 
@@ -119,7 +124,7 @@ object ReaderBackgrounds {
             title = "雾面",
             effect = MaterialEffect.FROSTED,
             drawableRes = R.drawable.reader_material_frosted,
-            alpha = 152
+            alpha = 118
         )
     )
 
@@ -212,11 +217,74 @@ object ReaderBackgrounds {
 }
 
 private object ReaderBackgroundBitmapCache {
-    private val cache = mutableMapOf<Int, Bitmap>()
+    private data class NeutralKey(val resId: Int, val contrastStep: Int)
 
-    fun bitmap(context: Context, resId: Int): Bitmap? = synchronized(cache) {
-        cache[resId] ?: BitmapFactory.decodeResource(context.resources, resId)?.also { cache[resId] = it }
+    private val originalCache = mutableMapOf<Int, Bitmap>()
+    private val neutralCache = mutableMapOf<NeutralKey, Bitmap>()
+
+    private fun original(context: Context, resId: Int): Bitmap? = synchronized(originalCache) {
+        originalCache[resId]
+            ?: BitmapFactory.decodeResource(context.resources, resId)?.also { originalCache[resId] = it }
     }
+
+    /**
+     * 把纹理位图转换成平均值为 128 的中性灰明暗层。
+     * 这样 OVERLAY 只改变局部明暗，不会把纸张、护眼、浅蓝等底色染成另一种颜色。
+     */
+    fun neutralTexture(context: Context, resId: Int, contrast: Float): Bitmap? {
+        val safeContrast = contrast.coerceIn(0f, 1f)
+        val key = NeutralKey(resId, (safeContrast * 1000f).roundToInt())
+        return synchronized(neutralCache) {
+            neutralCache[key] ?: buildNeutralTexture(
+                source = original(context, resId) ?: return@synchronized null,
+                contrast = safeContrast
+            )?.also { neutralCache[key] = it }
+        }
+    }
+
+    private fun buildNeutralTexture(source: Bitmap, contrast: Float): Bitmap? {
+        val width = source.width
+        val height = source.height
+        if (width <= 0 || height <= 0) return null
+        val pixels = IntArray(width * height)
+        source.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        var luminanceSum = 0L
+        var visibleCount = 0L
+        for (pixel in pixels) {
+            val alpha = Color.alpha(pixel)
+            if (alpha == 0) continue
+            val luminance = (
+                Color.red(pixel) * 0.2126f +
+                    Color.green(pixel) * 0.7152f +
+                    Color.blue(pixel) * 0.0722f
+                ).roundToInt()
+            luminanceSum += luminance.toLong()
+            visibleCount++
+        }
+        val mean = if (visibleCount > 0L) {
+            luminanceSum.toFloat() / visibleCount.toFloat()
+        } else {
+            128f
+        }
+
+        for (index in pixels.indices) {
+            val pixel = pixels[index]
+            val alpha = Color.alpha(pixel)
+            val luminance =
+                Color.red(pixel) * 0.2126f +
+                    Color.green(pixel) * 0.7152f +
+                    Color.blue(pixel) * 0.0722f
+            val neutralGray = (128f + (luminance - mean) * contrast)
+                .roundToInt()
+                .coerceIn(96, 160)
+            pixels[index] = Color.argb(alpha, neutralGray, neutralGray, neutralGray)
+        }
+
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    fun bitmap(context: Context, resId: Int): Bitmap? = original(context, resId)
 }
 
 private class LayeredReaderBackgroundDrawable(
@@ -247,27 +315,46 @@ private class LayeredReaderBackgroundDrawable(
             ReaderBackgrounds.TextureEffect.NONE -> Unit
             ReaderBackgrounds.TextureEffect.PAPER_GRAIN -> {
                 val resId = texture.drawableRes ?: return
-                drawBitmapLayer(
+                drawNeutralTextureLayer(
                     canvas = canvas,
                     area = area,
                     resId = resId,
-                    targetTilePx = 210f * density,
+                    targetTilePx = 205f * density,
                     alpha = texture.alpha,
-                    mode = PorterDuff.Mode.MULTIPLY
+                    contrast = texture.contrast
                 )
             }
             ReaderBackgrounds.TextureEffect.PAPER_FIBER -> {
                 val resId = texture.drawableRes ?: return
-                drawBitmapLayer(
+                drawNeutralTextureLayer(
                     canvas = canvas,
                     area = area,
                     resId = resId,
-                    targetTilePx = 245f * density,
+                    targetTilePx = 255f * density,
                     alpha = texture.alpha,
-                    mode = PorterDuff.Mode.MULTIPLY
+                    contrast = texture.contrast
                 )
             }
         }
+    }
+
+    private fun drawNeutralTextureLayer(
+        canvas: Canvas,
+        area: Rect,
+        resId: Int,
+        targetTilePx: Float,
+        alpha: Int,
+        contrast: Float
+    ) {
+        val bitmap = ReaderBackgroundBitmapCache.neutralTexture(context, resId, contrast) ?: return
+        drawBitmapLayer(
+            canvas = canvas,
+            area = area,
+            bitmap = bitmap,
+            targetTilePx = targetTilePx,
+            alpha = alpha,
+            mode = PorterDuff.Mode.OVERLAY
+        )
     }
 
     private fun drawMaterial(canvas: Canvas, area: Rect) {
@@ -279,12 +366,12 @@ private class LayeredReaderBackgroundDrawable(
                 drawBitmapLayer(
                     canvas = canvas,
                     area = area,
-                    resId = resId,
-                    targetTilePx = 420f * density,
+                    bitmap = ReaderBackgroundBitmapCache.bitmap(context, resId) ?: return,
+                    targetTilePx = 430f * density,
                     alpha = material.alpha,
                     mode = PorterDuff.Mode.OVERLAY
                 )
-                drawSoftHighlight(canvas, area, 58)
+                drawSoftHighlight(canvas, area, 28)
             }
         }
     }
@@ -292,12 +379,11 @@ private class LayeredReaderBackgroundDrawable(
     private fun drawBitmapLayer(
         canvas: Canvas,
         area: Rect,
-        resId: Int,
+        bitmap: Bitmap,
         targetTilePx: Float,
         alpha: Int,
         mode: PorterDuff.Mode
     ) {
-        val bitmap = ReaderBackgroundBitmapCache.bitmap(context, resId) ?: return
         val shader = BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
         val scale = targetTilePx / bitmap.width.coerceAtLeast(1).toFloat()
         matrix.reset()
@@ -319,16 +405,16 @@ private class LayeredReaderBackgroundDrawable(
             area.right.toFloat(),
             area.bottom.toFloat(),
             intArrayOf(
-                Color.argb(66 * globalAlpha / 255, 255, 255, 255),
-                Color.argb(8 * globalAlpha / 255, 255, 255, 255),
-                Color.argb(52 * globalAlpha / 255, 68, 59, 48)
+                Color.argb(42 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(5 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(34 * globalAlpha / 255, 68, 59, 48)
             ),
             floatArrayOf(0f, 0.50f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(area, effectPaint)
         effectPaint.shader = null
-        drawSoftHighlight(canvas, area, 38)
+        drawSoftHighlight(canvas, area, 24)
     }
 
     private fun drawSoftHighlight(canvas: Canvas, area: Rect, strength: Int) {
@@ -341,7 +427,7 @@ private class LayeredReaderBackgroundDrawable(
                 Color.TRANSPARENT,
                 Color.argb((strength / 2) * globalAlpha / 255, 52, 48, 42)
             ),
-            floatArrayOf(0f, 0.64f, 1f),
+            floatArrayOf(0f, 0.66f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(area, effectPaint)
