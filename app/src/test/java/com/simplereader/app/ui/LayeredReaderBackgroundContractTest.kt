@@ -21,6 +21,13 @@ class LayeredReaderBackgroundContractTest {
     }
 
     @Test
+    fun originalBasicColorsAreRestored() {
+        assertTrue(backgrounds.contains("ColorOption(\"solid_ivory\", \"纸张\", Color.rgb(245, 233, 200), Color.rgb(59, 52, 40))"))
+        assertTrue(backgrounds.contains("ColorOption(\"solid_eye\", \"护眼\", Color.rgb(218, 238, 205), Color.rgb(48, 60, 42))"))
+        assertTrue(backgrounds.contains("ColorOption(\"solid_white\", \"白色\", Color.WHITE, Color.rgb(35, 35, 35))"))
+    }
+
+    @Test
     fun textureAndMaterialBothKeepPureOptions() {
         assertTrue(backgrounds.contains("TextureOption(NONE_TEXTURE_ID"))
         assertTrue(backgrounds.contains("MaterialOption(NONE_MATERIAL_ID"))
@@ -30,11 +37,17 @@ class LayeredReaderBackgroundContractTest {
     }
 
     @Test
-    fun realBitmapLayersAreUsedInsteadOfColorOnlyPresets() {
+    fun bitmapLayersAreVisibleAndPatinaIsRemoved() {
         assertTrue(backgrounds.contains("reader_texture_paper_grain"))
         assertTrue(backgrounds.contains("reader_texture_paper_fiber"))
         assertTrue(backgrounds.contains("reader_material_frosted"))
-        assertTrue(backgrounds.contains("reader_material_patina"))
+        assertTrue(backgrounds.contains("alpha = 188"))
+        assertTrue(backgrounds.contains("alpha = 205"))
+        assertTrue(backgrounds.contains("alpha = 152"))
+        assertTrue(backgrounds.contains("PorterDuff.Mode.MULTIPLY"))
+        assertFalse(backgrounds.contains("reader_material_patina"))
+        assertFalse(backgrounds.contains("旧纸质感"))
+        assertFalse(backgrounds.contains("PATINA"))
         assertTrue(backgrounds.contains("BitmapShader"))
         assertTrue(backgrounds.contains("PorterDuffXfermode"))
     }
