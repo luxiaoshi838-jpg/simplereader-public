@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
@@ -14,279 +17,372 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
+import com.simplereader.app.R
 import kotlin.math.max
 
 /**
- * v582 阅读背景库。
+ * v585 分层阅读背景。
  *
- * 多看只作为“快捷背景 + 更多分类”的交互参考；所有纹理均由简阅自行绘制，
- * 不包含或复制第三方专有图片资源。
+ * 颜色、纹理、质感分别保存和组合：
+ * - 颜色只决定底色与正文颜色；
+ * - 纹理是可关闭的真实位图表面纹理；
+ * - 质感是可关闭的独立明暗/表面层。
+ *
+ * 位图素材来自 CC0 资源，来源记录在 THIRD_PARTY_TEXTURES.md。
  */
 object ReaderBackgrounds {
-    const val DEFAULT_ID = "texture_paper"
-    const val NIGHT_ID = "night_soft"
+    const val DEFAULT_COLOR_ID = "solid_ivory"
+    const val DEFAULT_TEXTURE_ID = "texture_paper_grain"
+    const val DEFAULT_MATERIAL_ID = "material_none"
+    const val NONE_TEXTURE_ID = "texture_none"
+    const val NONE_MATERIAL_ID = "material_none"
 
     enum class Category(val title: String) {
-        SOLID("纯色"),
+        COLOR("纯色"),
         TEXTURE("纹理"),
         MATERIAL("质感")
     }
 
-    enum class Effect {
-        SOLID,
-        PAPER,
-        LINEN,
-        FIBER,
-        SOFT_GRAIN,
-        PARCHMENT,
-        CLOUD,
-        WARM_VIGNETTE,
-        NIGHT_SOFT
-    }
-
-    data class Preset(
+    data class ColorOption(
         val id: String,
         val title: String,
-        val category: Category,
         val backgroundColor: Int,
-        val textColor: Int,
-        val effect: Effect
+        val textColor: Int
     )
 
-    val presets: List<Preset> = listOf(
-        Preset("solid_ivory", "象牙白", Category.SOLID, Color.rgb(248, 244, 232), Color.rgb(52, 48, 40), Effect.SOLID),
-        Preset("solid_eye", "护眼绿", Category.SOLID, Color.rgb(218, 238, 205), Color.rgb(48, 60, 42), Effect.SOLID),
-        Preset("solid_white", "净白", Category.SOLID, Color.WHITE, Color.rgb(35, 35, 35), Effect.SOLID),
-        Preset("solid_mist", "雾灰", Category.SOLID, Color.rgb(232, 234, 231), Color.rgb(49, 51, 49), Effect.SOLID),
-        Preset("solid_peach", "浅桃", Category.SOLID, Color.rgb(246, 229, 221), Color.rgb(66, 48, 43), Effect.SOLID),
-        Preset("solid_blue", "浅蓝", Category.SOLID, Color.rgb(224, 237, 243), Color.rgb(40, 54, 61), Effect.SOLID),
+    enum class TextureEffect {
+        NONE,
+        PAPER_GRAIN,
+        PAPER_FIBER
+    }
 
-        Preset("texture_paper", "经典纸张", Category.TEXTURE, Color.rgb(245, 233, 200), Color.rgb(59, 52, 40), Effect.PAPER),
-        Preset("texture_linen", "细麻纹", Category.TEXTURE, Color.rgb(239, 232, 212), Color.rgb(58, 52, 43), Effect.LINEN),
-        Preset("texture_fiber", "宣纸纤维", Category.TEXTURE, Color.rgb(244, 239, 222), Color.rgb(57, 52, 43), Effect.FIBER),
-        Preset("texture_green", "青禾纸", Category.TEXTURE, Color.rgb(224, 235, 214), Color.rgb(47, 59, 43), Effect.SOFT_GRAIN),
-        Preset("texture_grey", "柔灰纸", Category.TEXTURE, Color.rgb(228, 228, 222), Color.rgb(50, 50, 47), Effect.SOFT_GRAIN),
-
-        Preset("material_parchment", "羊皮纸", Category.MATERIAL, Color.rgb(229, 205, 158), Color.rgb(67, 51, 30), Effect.PARCHMENT),
-        Preset("material_cloud", "云雾", Category.MATERIAL, Color.rgb(229, 237, 235), Color.rgb(43, 54, 53), Effect.CLOUD),
-        Preset("material_warm", "暖绒", Category.MATERIAL, Color.rgb(238, 220, 199), Color.rgb(64, 48, 38), Effect.WARM_VIGNETTE),
-        Preset("material_jade", "浅玉", Category.MATERIAL, Color.rgb(215, 232, 220), Color.rgb(42, 58, 49), Effect.CLOUD)
+    data class TextureOption(
+        val id: String,
+        val title: String,
+        val effect: TextureEffect,
+        val drawableRes: Int? = null,
+        val alpha: Int = 0
     )
 
-    val quickIds: List<String> = listOf(DEFAULT_ID, "solid_eye", "solid_white")
+    enum class MaterialEffect {
+        NONE,
+        MATTE,
+        FROSTED,
+        PATINA
+    }
 
-    val nightPreset = Preset(
-        NIGHT_ID,
-        "夜间",
-        Category.SOLID,
-        Color.rgb(32, 33, 36),
-        Color.rgb(232, 234, 237),
-        Effect.NIGHT_SOFT
+    data class MaterialOption(
+        val id: String,
+        val title: String,
+        val effect: MaterialEffect,
+        val drawableRes: Int? = null,
+        val alpha: Int = 0
     )
 
-    fun preset(id: String?): Preset = presets.firstOrNull { it.id == id } ?: presets.first { it.id == DEFAULT_ID }
+    data class Selection(
+        val colorId: String = DEFAULT_COLOR_ID,
+        val textureId: String = DEFAULT_TEXTURE_ID,
+        val materialId: String = DEFAULT_MATERIAL_ID
+    )
 
-    fun closestId(backgroundColor: Int): String {
+    val colorOptions: List<ColorOption> = listOf(
+        ColorOption("solid_ivory", "象牙白", Color.rgb(248, 244, 232), Color.rgb(52, 48, 40)),
+        ColorOption("solid_eye", "护眼绿", Color.rgb(218, 238, 205), Color.rgb(48, 60, 42)),
+        ColorOption("solid_white", "净白", Color.WHITE, Color.rgb(35, 35, 35)),
+        ColorOption("solid_mist", "雾灰", Color.rgb(232, 234, 231), Color.rgb(49, 51, 49)),
+        ColorOption("solid_peach", "浅桃", Color.rgb(246, 229, 221), Color.rgb(66, 48, 43)),
+        ColorOption("solid_blue", "浅蓝", Color.rgb(224, 237, 243), Color.rgb(40, 54, 61))
+    )
+
+    val textureOptions: List<TextureOption> = listOf(
+        TextureOption(NONE_TEXTURE_ID, "纯净", TextureEffect.NONE),
+        TextureOption(
+            id = "texture_paper_grain",
+            title = "纸张颗粒",
+            effect = TextureEffect.PAPER_GRAIN,
+            drawableRes = R.drawable.reader_texture_paper_grain,
+            alpha = 112
+        ),
+        TextureOption(
+            id = "texture_paper_fiber",
+            title = "宣纸纤维",
+            effect = TextureEffect.PAPER_FIBER,
+            drawableRes = R.drawable.reader_texture_paper_fiber,
+            alpha = 124
+        )
+    )
+
+    val materialOptions: List<MaterialOption> = listOf(
+        MaterialOption(NONE_MATERIAL_ID, "纯净", MaterialEffect.NONE),
+        MaterialOption("material_matte", "柔和哑光", MaterialEffect.MATTE),
+        MaterialOption(
+            id = "material_frosted",
+            title = "雾面",
+            effect = MaterialEffect.FROSTED,
+            drawableRes = R.drawable.reader_material_frosted,
+            alpha = 76
+        ),
+        MaterialOption(
+            id = "material_patina",
+            title = "旧纸质感",
+            effect = MaterialEffect.PATINA,
+            drawableRes = R.drawable.reader_material_patina,
+            alpha = 84
+        )
+    )
+
+    val quickColorIds: List<String> = listOf(DEFAULT_COLOR_ID, "solid_eye", "solid_white")
+
+    private val nightColor = ColorOption(
+        id = "night_soft",
+        title = "夜间",
+        backgroundColor = Color.rgb(32, 33, 36),
+        textColor = Color.rgb(232, 234, 237)
+    )
+
+    fun color(id: String?): ColorOption =
+        colorOptions.firstOrNull { it.id == id } ?: colorOptions.first { it.id == DEFAULT_COLOR_ID }
+
+    fun texture(id: String?): TextureOption =
+        textureOptions.firstOrNull { it.id == id } ?: textureOptions.first { it.id == DEFAULT_TEXTURE_ID }
+
+    fun material(id: String?): MaterialOption =
+        materialOptions.firstOrNull { it.id == id } ?: materialOptions.first { it.id == DEFAULT_MATERIAL_ID }
+
+    fun validated(selection: Selection): Selection = Selection(
+        colorId = color(selection.colorId).id,
+        textureId = texture(selection.textureId).id,
+        materialId = material(selection.materialId).id
+    )
+
+    fun closestColorId(backgroundColor: Int): String {
         fun distance(candidate: Int): Long {
             val dr = Color.red(candidate) - Color.red(backgroundColor)
             val dg = Color.green(candidate) - Color.green(backgroundColor)
             val db = Color.blue(candidate) - Color.blue(backgroundColor)
             return (dr * dr + dg * dg + db * db).toLong()
         }
-        return presets.minByOrNull { distance(it.backgroundColor) }?.id ?: DEFAULT_ID
+        return colorOptions.minByOrNull { distance(it.backgroundColor) }?.id ?: DEFAULT_COLOR_ID
     }
 
-    fun presets(category: Category): List<Preset> = presets.filter { it.category == category }
+    /** 将 v582-v584 的互斥预设迁移成 v585 的三层组合。 */
+    fun selectionFromLegacy(styleId: String?, paletteBackground: Int): Selection {
+        return validated(
+            when (styleId) {
+                "solid_ivory" -> Selection("solid_ivory", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "solid_eye" -> Selection("solid_eye", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "solid_white" -> Selection("solid_white", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "solid_mist" -> Selection("solid_mist", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "solid_peach" -> Selection("solid_peach", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "solid_blue" -> Selection("solid_blue", NONE_TEXTURE_ID, NONE_MATERIAL_ID)
+                "texture_paper" -> Selection("solid_ivory", "texture_paper_grain", NONE_MATERIAL_ID)
+                "texture_linen" -> Selection("solid_ivory", "texture_paper_grain", NONE_MATERIAL_ID)
+                "texture_fiber" -> Selection("solid_ivory", "texture_paper_fiber", NONE_MATERIAL_ID)
+                "texture_green" -> Selection("solid_eye", "texture_paper_grain", NONE_MATERIAL_ID)
+                "texture_grey" -> Selection("solid_mist", "texture_paper_grain", NONE_MATERIAL_ID)
+                "material_parchment" -> Selection("solid_ivory", NONE_TEXTURE_ID, "material_patina")
+                "material_cloud" -> Selection("solid_blue", NONE_TEXTURE_ID, "material_frosted")
+                "material_warm" -> Selection("solid_peach", NONE_TEXTURE_ID, "material_matte")
+                "material_jade" -> Selection("solid_eye", NONE_TEXTURE_ID, "material_frosted")
+                else -> Selection(
+                    colorId = closestColorId(paletteBackground),
+                    textureId = DEFAULT_TEXTURE_ID,
+                    materialId = DEFAULT_MATERIAL_ID
+                )
+            }
+        )
+    }
 
-    fun drawable(preset: Preset): Drawable = ReaderBackgroundDrawable(preset)
+    fun summary(selection: Selection): String {
+        val safe = validated(selection)
+        return "${color(safe.colorId).title} + ${texture(safe.textureId).title} + ${material(safe.materialId).title}"
+    }
 
-    fun previewDrawable(id: String, selected: Boolean): Drawable =
-        ReaderBackgroundPreviewDrawable(preset(id), selected)
+    fun drawable(context: Context, selection: Selection): Drawable {
+        val safe = validated(selection)
+        return LayeredReaderBackgroundDrawable(
+            context = context,
+            color = color(safe.colorId),
+            texture = texture(safe.textureId),
+            material = material(safe.materialId)
+        )
+    }
+
+    fun nightDrawable(context: Context): Drawable = LayeredReaderBackgroundDrawable(
+        context = context,
+        color = nightColor,
+        texture = texture(NONE_TEXTURE_ID),
+        material = material(NONE_MATERIAL_ID)
+    )
+
+    fun previewDrawable(context: Context, selection: Selection, selected: Boolean): Drawable =
+        ReaderBackgroundPreviewDrawable(context, validated(selection), selected)
 }
 
-private class ReaderBackgroundDrawable(
-    private val preset: ReaderBackgrounds.Preset
-) : Drawable() {
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = preset.backgroundColor }
-    private val detailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-        alpha = 72
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
+private object ReaderBackgroundBitmapCache {
+    private val cache = mutableMapOf<Int, Bitmap>()
+
+    fun bitmap(context: Context, resId: Int): Bitmap? = synchronized(cache) {
+        cache[resId] ?: BitmapFactory.decodeResource(context.resources, resId)?.also { cache[resId] = it }
     }
+}
+
+private class LayeredReaderBackgroundDrawable(
+    private val context: Context,
+    private val color: ReaderBackgrounds.ColorOption,
+    private val texture: ReaderBackgrounds.TextureOption,
+    private val material: ReaderBackgrounds.MaterialOption
+) : Drawable() {
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = this@LayeredReaderBackgroundDrawable.color.backgroundColor }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val matrix = Matrix()
+    private val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+    private var globalAlpha = 255
 
     override fun draw(canvas: Canvas) {
         val area = bounds
         if (area.isEmpty) return
         canvas.drawRect(area, fillPaint)
-        when (preset.effect) {
-            ReaderBackgrounds.Effect.SOLID -> Unit
-            ReaderBackgrounds.Effect.PAPER -> drawPaper(canvas, area)
-            ReaderBackgrounds.Effect.LINEN -> drawLinen(canvas, area)
-            ReaderBackgrounds.Effect.FIBER -> drawFiber(canvas, area)
-            ReaderBackgrounds.Effect.SOFT_GRAIN -> drawSoftGrain(canvas, area)
-            ReaderBackgrounds.Effect.PARCHMENT -> drawParchment(canvas, area)
-            ReaderBackgrounds.Effect.CLOUD -> drawCloud(canvas, area)
-            ReaderBackgrounds.Effect.WARM_VIGNETTE -> drawWarmVignette(canvas, area)
-            ReaderBackgrounds.Effect.NIGHT_SOFT -> drawNight(canvas, area)
+        drawTexture(canvas, area)
+        drawMaterial(canvas, area)
+    }
+
+    private fun drawTexture(canvas: Canvas, area: Rect) {
+        when (texture.effect) {
+            ReaderBackgrounds.TextureEffect.NONE -> Unit
+            ReaderBackgrounds.TextureEffect.PAPER_GRAIN,
+            ReaderBackgrounds.TextureEffect.PAPER_FIBER -> {
+                val resId = texture.drawableRes ?: return
+                drawBitmapLayer(
+                    canvas = canvas,
+                    area = area,
+                    resId = resId,
+                    targetTilePx = 260f * density,
+                    alpha = texture.alpha,
+                    mode = PorterDuff.Mode.OVERLAY
+                )
+            }
         }
     }
 
-    private fun drawPaper(canvas: Canvas, area: Rect) {
-        val texture = PaperTextureData.bitmap()
-        val shader = BitmapShader(texture, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-        val scale = max(
-            area.width().toFloat() / texture.width.toFloat(),
-            area.height().toFloat() / texture.height.toFloat()
-        )
+    private fun drawMaterial(canvas: Canvas, area: Rect) {
+        when (material.effect) {
+            ReaderBackgrounds.MaterialEffect.NONE -> Unit
+            ReaderBackgrounds.MaterialEffect.MATTE -> drawMatte(canvas, area)
+            ReaderBackgrounds.MaterialEffect.FROSTED -> {
+                val resId = material.drawableRes ?: return
+                drawBitmapLayer(
+                    canvas = canvas,
+                    area = area,
+                    resId = resId,
+                    targetTilePx = 520f * density,
+                    alpha = material.alpha,
+                    mode = PorterDuff.Mode.SOFT_LIGHT
+                )
+                drawSoftHighlight(canvas, area, 24)
+            }
+            ReaderBackgrounds.MaterialEffect.PATINA -> {
+                val resId = material.drawableRes ?: return
+                drawBitmapLayer(
+                    canvas = canvas,
+                    area = area,
+                    resId = resId,
+                    targetTilePx = 620f * density,
+                    alpha = material.alpha,
+                    mode = PorterDuff.Mode.MULTIPLY
+                )
+                drawEdgePatina(canvas, area)
+            }
+        }
+    }
+
+    private fun drawBitmapLayer(
+        canvas: Canvas,
+        area: Rect,
+        resId: Int,
+        targetTilePx: Float,
+        alpha: Int,
+        mode: PorterDuff.Mode
+    ) {
+        val bitmap = ReaderBackgroundBitmapCache.bitmap(context, resId) ?: return
+        val shader = BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+        val scale = targetTilePx / bitmap.width.coerceAtLeast(1).toFloat()
         matrix.reset()
         matrix.setScale(scale, scale)
-        matrix.postTranslate(
-            area.left + (area.width() - texture.width * scale) / 2f,
-            area.top + (area.height() - texture.height * scale) / 2f
-        )
+        matrix.postTranslate(area.left.toFloat(), area.top.toFloat())
         shader.setLocalMatrix(matrix)
-        texturePaint.shader = shader
-        texturePaint.alpha = 72
-        canvas.drawRect(area, texturePaint)
-        texturePaint.shader = null
+        bitmapPaint.shader = shader
+        bitmapPaint.alpha = (alpha * globalAlpha / 255).coerceIn(0, 255)
+        bitmapPaint.xfermode = PorterDuffXfermode(mode)
+        canvas.drawRect(area, bitmapPaint)
+        bitmapPaint.shader = null
+        bitmapPaint.xfermode = null
     }
 
-    private fun drawLinen(canvas: Canvas, area: Rect) {
-        detailPaint.strokeWidth = 1f
-        var y = area.top.toFloat()
-        var index = 0
-        while (y <= area.bottom) {
-            detailPaint.color = if (index % 2 == 0) {
-                Color.argb(18, 255, 255, 255)
-            } else {
-                Color.argb(12, 66, 55, 42)
-            }
-            canvas.drawLine(area.left.toFloat(), y, area.right.toFloat(), y, detailPaint)
-            y += 5f
-            index++
-        }
-        var x = area.left.toFloat()
-        index = 0
-        while (x <= area.right) {
-            detailPaint.color = if (index % 3 == 0) {
-                Color.argb(12, 255, 255, 255)
-            } else {
-                Color.argb(8, 70, 59, 48)
-            }
-            canvas.drawLine(x, area.top.toFloat(), x, area.bottom.toFloat(), detailPaint)
-            x += 7f
-            index++
-        }
-    }
-
-    private fun drawFiber(canvas: Canvas, area: Rect) {
-        var state = 0x13579BDF
-        repeat(120) { index ->
-            state = state * 1103515245 + 12345
-            val x = area.left + ((state ushr 8) and 0x7FFF) % area.width().coerceAtLeast(1)
-            state = state * 1103515245 + 12345
-            val y = area.top + ((state ushr 8) and 0x7FFF) % area.height().coerceAtLeast(1)
-            val length = 8f + (index % 17)
-            detailPaint.strokeWidth = if (index % 5 == 0) 1.2f else 0.7f
-            detailPaint.color = if (index % 4 == 0) {
-                Color.argb(24, 118, 101, 72)
-            } else {
-                Color.argb(22, 255, 255, 255)
-            }
-            canvas.drawLine(x.toFloat(), y.toFloat(), x + length, y.toFloat() + (index % 3 - 1).toFloat(), detailPaint)
-        }
-    }
-
-    private fun drawSoftGrain(canvas: Canvas, area: Rect) {
-        var state = 0x2468ACE
-        repeat(180) { index ->
-            state = state * 1664525 + 1013904223
-            val x = area.left + ((state ushr 9) and 0x7FFF) % area.width().coerceAtLeast(1)
-            state = state * 1664525 + 1013904223
-            val y = area.top + ((state ushr 9) and 0x7FFF) % area.height().coerceAtLeast(1)
-            detailPaint.color = if (index % 3 == 0) {
-                Color.argb(14, 65, 73, 60)
-            } else {
-                Color.argb(18, 255, 255, 255)
-            }
-            canvas.drawCircle(x.toFloat(), y.toFloat(), if (index % 7 == 0) 1.3f else 0.8f, detailPaint)
-        }
-    }
-
-    private fun drawParchment(canvas: Canvas, area: Rect) {
-        detailPaint.shader = RadialGradient(
-            area.exactCenterX(),
-            area.exactCenterY(),
-            max(area.width(), area.height()).toFloat() * 0.72f,
-            intArrayOf(Color.argb(0, 255, 250, 223), Color.argb(28, 102, 68, 31), Color.argb(64, 80, 48, 18)),
-            floatArrayOf(0.36f, 0.82f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(area, detailPaint)
-        detailPaint.shader = null
-        drawFiber(canvas, area)
-    }
-
-    private fun drawCloud(canvas: Canvas, area: Rect) {
-        detailPaint.shader = LinearGradient(
+    private fun drawMatte(canvas: Canvas, area: Rect) {
+        effectPaint.shader = LinearGradient(
             area.left.toFloat(),
             area.top.toFloat(),
             area.right.toFloat(),
             area.bottom.toFloat(),
-            intArrayOf(Color.argb(42, 255, 255, 255), Color.argb(8, 255, 255, 255), Color.argb(24, 83, 109, 103)),
+            intArrayOf(
+                Color.argb(34 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(4 * globalAlpha / 255, 255, 255, 255),
+                Color.argb(28 * globalAlpha / 255, 68, 59, 48)
+            ),
             floatArrayOf(0f, 0.52f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawRect(area, detailPaint)
-        detailPaint.shader = null
-        repeat(8) { index ->
-            val cx = area.left + area.width() * ((index * 37 % 100) / 100f)
-            val cy = area.top + area.height() * ((index * 61 % 100) / 100f)
-            detailPaint.color = Color.argb(10 + index % 3 * 4, 255, 255, 255)
-            canvas.drawCircle(cx, cy, area.width() * (0.16f + (index % 3) * 0.03f), detailPaint)
-        }
+        canvas.drawRect(area, effectPaint)
+        effectPaint.shader = null
+        drawSoftHighlight(canvas, area, 18)
     }
 
-    private fun drawWarmVignette(canvas: Canvas, area: Rect) {
-        detailPaint.shader = RadialGradient(
+    private fun drawSoftHighlight(canvas: Canvas, area: Rect, strength: Int) {
+        effectPaint.shader = RadialGradient(
             area.exactCenterX(),
-            area.top + area.height() * 0.28f,
-            max(area.width(), area.height()).toFloat(),
-            intArrayOf(Color.argb(38, 255, 248, 232), Color.argb(0, 255, 255, 255), Color.argb(36, 115, 75, 49)),
-            floatArrayOf(0f, 0.54f, 1f),
+            area.top + area.height() * 0.30f,
+            max(area.width(), area.height()).toFloat() * 0.82f,
+            intArrayOf(
+                Color.argb(strength * globalAlpha / 255, 255, 255, 255),
+                Color.TRANSPARENT,
+                Color.argb((strength / 2) * globalAlpha / 255, 52, 48, 42)
+            ),
+            floatArrayOf(0f, 0.66f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawRect(area, detailPaint)
-        detailPaint.shader = null
-        drawSoftGrain(canvas, area)
+        canvas.drawRect(area, effectPaint)
+        effectPaint.shader = null
     }
 
-    private fun drawNight(canvas: Canvas, area: Rect) {
-        detailPaint.shader = LinearGradient(
-            area.left.toFloat(),
-            area.top.toFloat(),
-            area.right.toFloat(),
-            area.bottom.toFloat(),
-            intArrayOf(Color.argb(16, 83, 88, 96), Color.argb(0, 0, 0, 0), Color.argb(18, 0, 0, 0)),
-            null,
+    private fun drawEdgePatina(canvas: Canvas, area: Rect) {
+        effectPaint.shader = RadialGradient(
+            area.exactCenterX(),
+            area.exactCenterY(),
+            max(area.width(), area.height()).toFloat() * 0.72f,
+            intArrayOf(
+                Color.TRANSPARENT,
+                Color.argb(18 * globalAlpha / 255, 101, 72, 39),
+                Color.argb(46 * globalAlpha / 255, 72, 47, 22)
+            ),
+            floatArrayOf(0.48f, 0.84f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawRect(area, detailPaint)
-        detailPaint.shader = null
+        canvas.drawRect(area, effectPaint)
+        effectPaint.shader = null
     }
 
     override fun setAlpha(alpha: Int) {
-        fillPaint.alpha = alpha
-        detailPaint.alpha = alpha
-        texturePaint.alpha = (72 * alpha / 255).coerceIn(0, 255)
+        globalAlpha = alpha.coerceIn(0, 255)
+        fillPaint.alpha = globalAlpha
         invalidateSelf()
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         fillPaint.colorFilter = colorFilter
-        detailPaint.colorFilter = colorFilter
-        texturePaint.colorFilter = colorFilter
+        bitmapPaint.colorFilter = colorFilter
+        effectPaint.colorFilter = colorFilter
         invalidateSelf()
     }
 
@@ -295,14 +391,15 @@ private class ReaderBackgroundDrawable(
 }
 
 private class ReaderBackgroundPreviewDrawable(
-    private val preset: ReaderBackgrounds.Preset,
+    context: Context,
+    selection: ReaderBackgrounds.Selection,
     private val selected: Boolean
 ) : Drawable() {
-    private val background = ReaderBackgroundDrawable(preset)
+    private val background = ReaderBackgrounds.drawable(context, selection)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = if (selected) 5f else 2f
-        color = if (selected) Color.rgb(239, 122, 40) else Color.argb(70, 255, 255, 255)
+        color = if (selected) Color.rgb(239, 122, 40) else Color.argb(80, 92, 84, 72)
     }
 
     override fun draw(canvas: Canvas) {
@@ -314,8 +411,8 @@ private class ReaderBackgroundPreviewDrawable(
             bounds.top + inset,
             bounds.right - inset,
             bounds.bottom - inset,
-            8f,
-            8f,
+            9f,
+            9f,
             borderPaint
         )
     }
