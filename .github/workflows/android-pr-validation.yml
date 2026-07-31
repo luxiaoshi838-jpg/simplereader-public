@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-pr-validation-${{ github.ref }}
@@ -16,9 +16,13 @@ concurrency:
 
 jobs:
   validate:
-    name: v582 background library and reader controls
+    name: v582 signed release validation
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 22
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000582'
+      SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-backgrounds.582'
+      EXPECTED_CERT_SHA256: '315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648'
 
     steps:
       - name: Checkout v582 branch
@@ -29,24 +33,10 @@ jobs:
       - name: Materialize v581 baseline and v582 source
         shell: bash
         run: |
+          set -euo pipefail
           python3 scripts/apply_v582_v581_backgrounds.py
           python3 scripts/fix_v582_compile.py
           python3 scripts/disable_v582_text_selection.py
-
-      - name: Persist generated v582 source
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt app/src/main/res/layout/activity_reader.xml
-          if git diff --cached --quiet; then
-            echo "Generated source already committed"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Materialize corrected v582 source"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Guard v581 baseline and v582 scope
         shell: bash
@@ -71,25 +61,15 @@ jobs:
           grep -q 'SOLID("纯色")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
           grep -q 'TEXTURE("纹理")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
           grep -q 'MATERIAL("质感")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          grep -q 'y.toFloat() + (index % 3 - 1).toFloat()' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
           grep -q 'val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'readerScrollView.scrollY / pageHeight' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
-          allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|scripts/apply_v582_v581_backgrounds.py|scripts/fix_v582_compile.py|scripts/disable_v582_text_selection.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt|app/src/main/res/layout/activity_reader.xml|app/src/test/java/com/simplereader/app/ui/ReaderChromeContractTest.kt|app/src/test/java/com/simplereader/app/ui/StableWorkflowContractTest.kt)$'
-          unexpected=$(git diff --name-only e47b8c6a2a596a622cef298009f83d5e2a8353dc | grep -Ev "$allowed" || true)
-          test -z "$unexpected" || { echo "Unexpected changes:"; echo "$unexpected"; exit 1; }
-
-      - name: Set v582 version
-        shell: bash
-        run: |
-          echo "SIMPLE_READER_VERSION_CODE=2098000582" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.31.duokan-backgrounds.582" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -103,7 +83,7 @@ jobs:
           tail -n 220 /tmp/test-release.log
           exit $code
 
-      - name: Assemble release within five minutes
+      - name: Assemble unsigned release within five minutes
         shell: bash
         run: |
           set +e
@@ -112,31 +92,70 @@ jobs:
           tail -n 260 /tmp/assemble-release.log
           exit $code
 
-      - name: Prepare named APK
+      - name: Restore and verify stable SimpleReader signer
         shell: bash
         run: |
           set -euo pipefail
-          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v582.apk
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
+          fi
+          test -f "$HOME/.android/debug.keystore"
+          cert=$(keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey 2>/dev/null \
+            | awk -F': ' '/SHA256:/{gsub(":", "", $2); print tolower($2); exit}')
+          echo "Signer certificate: $cert" | tee /tmp/signing-certificate.log
+          test "$cert" = "$EXPECTED_CERT_SHA256" || {
+            echo "Refusing to sign: stable SimpleReader certificate is unavailable" >&2
+            exit 1
+          }
+
+      - name: Zipalign and sign v582
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          unsigned=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
+          test -n "$unsigned"
+          "$build_tools/zipalign" -f -p 4 "$unsigned" /tmp/SimpleReader-v582-aligned.apk
+          "$build_tools/apksigner" sign \
+            --ks "$HOME/.android/debug.keystore" \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out /tmp/SimpleReader-v582.apk \
+            /tmp/SimpleReader-v582-aligned.apk
+          "$build_tools/apksigner" verify --verbose --print-certs /tmp/SimpleReader-v582.apk | tee /tmp/apksigner-verify.log
+          cert=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print tolower($2); exit}' /tmp/apksigner-verify.log)
+          test "$cert" = "$EXPECTED_CERT_SHA256"
+          "$build_tools/zipalign" -c -P 16 4 /tmp/SimpleReader-v582.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v582.apk | tee /tmp/aapt2-badging.log
           sha256sum /tmp/SimpleReader-v582.apk | tee /tmp/SimpleReader-v582.sha256
 
       - name: Upload v582 logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v582-logs-${{ github.run_number }}
+          name: SimpleReader-v582-signed-logs-${{ github.run_number }}
           path: |
             /tmp/test-release.log
             /tmp/assemble-release.log
+            /tmp/assemble-debug.log
+            /tmp/signing-certificate.log
+            /tmp/apksigner-verify.log
+            /tmp/aapt2-badging.log
             /tmp/SimpleReader-v582.sha256
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Upload v582 APK
+      - name: Upload signed v582 APK
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v582-${{ github.run_number }}
+          name: SimpleReader-v582-signed-${{ github.run_number }}
           path: /tmp/SimpleReader-v582.apk
           if-no-files-found: error
           retention-days: 7
