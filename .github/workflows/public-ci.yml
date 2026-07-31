@@ -45,6 +45,7 @@ jobs:
             echo "v589 patch does not apply cleanly" >&2
             exit 1
           fi
+          python3 scripts/fix_v589_compile_01.py
           git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
                   app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
                   app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
@@ -53,7 +54,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v589: restore continuous flow and actual layout page index'
+            git commit -m 'v589: fix actual bookmark page label'
             git push origin HEAD:agent/v582-duokan-backgrounds
           fi
 
