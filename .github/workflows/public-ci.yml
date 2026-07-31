@@ -10,7 +10,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
@@ -31,32 +31,6 @@ jobs:
         with:
           ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
-
-      - name: Materialize v589 Duokan flow and page index
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat scripts/v589_patch_chunk_*.b64 | base64 -d | gzip -dc > /tmp/v589.patch
-          if git apply --check /tmp/v589.patch; then
-            git apply /tmp/v589.patch
-          elif git apply --reverse --check /tmp/v589.patch; then
-            echo "v589 source already materialized"
-          else
-            echo "v589 patch does not apply cleanly" >&2
-            exit 1
-          fi
-          python3 scripts/fix_v589_compile_01.py
-          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-                  app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
-                  app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v589: fix actual bookmark page label'
-            git push origin HEAD:agent/v582-duokan-backgrounds
-          fi
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
