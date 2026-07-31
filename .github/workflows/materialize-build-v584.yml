@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - agent/v582-duokan-backgrounds
+  pull_request:
+    branches:
+      - baseline/v575
 
 permissions:
   contents: write
 
 concurrency:
-  group: materialize-build-v584
+  group: materialize-build-v584-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -37,6 +40,7 @@ jobs:
           grep -Fq 'showShelfSelectionActions()' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
 
       - name: Commit materialized source
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
@@ -76,7 +80,7 @@ jobs:
           sha256sum /tmp/SimpleReader-v584-unsigned.apk | tee /tmp/v584-unsigned.sha256
 
       - name: Publish temporary unsigned package to branch
-        if: github.actor != 'github-actions[bot]'
+        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
         run: |
           set -euo pipefail
           mkdir -p ci-artifacts
