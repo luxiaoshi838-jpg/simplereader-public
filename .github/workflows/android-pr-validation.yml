@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-pr-validation-${{ github.ref }}
@@ -16,22 +16,37 @@ concurrency:
 
 jobs:
   validate:
-    name: v575 texture-only release build
+    name: v582 background library and reader controls
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 18
 
     steps:
-      - name: Checkout exact v575 branch
+      - name: Checkout v582 branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Apply only reader texture and unified page source
+      - name: Materialize v581 baseline and v582 source
         shell: bash
         run: |
-          python3 scripts/apply_v579_v575_texture_page.py
+          python3 scripts/apply_v582_v581_backgrounds.py
 
-      - name: Guard v575 functionality and modification scope
+      - name: Persist generated ReaderActivity and layout
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/res/layout/activity_reader.xml
+          if git diff --cached --quiet; then
+            echo "Generated source already committed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Materialize v582 reader settings source"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Guard v581 baseline and v582 scope
         shell: bash
         run: |
           set -euo pipefail
@@ -39,23 +54,28 @@ jobs:
           grep -q 'private var shelfSelectionMode = false' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -q 'confirmDeleteShelfSelection' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -q 'confirmDeleteSelection' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
-          grep -q 'contentView.background = PaperPageDrawable' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -q 'readerProgressLabel.setTextColor(palette.textColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          ! grep -q 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
-          grep -q 'PorterDuff.Mode.OVERLAY' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
-          grep -q 'alpha = 72' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
-          grep -q 'Shader.TileMode.CLAMP' app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt
+          grep -q 'ReaderBackgroundPicker.show' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'ReaderBackgrounds.drawable(activePreset)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'readerProgressLabel.setTextColor(currentTextColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'CHROME_ACTIVATION_LONG_PRESS' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q '@+id/themeMoreButton' app/src/main/res/layout/activity_reader.xml
+          grep -q '@+id/chromeCenterButton' app/src/main/res/layout/activity_reader.xml
+          grep -q '@+id/chromeLongPressButton' app/src/main/res/layout/activity_reader.xml
+          grep -q 'SOLID("纯色")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          grep -q 'TEXTURE("纹理")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          grep -q 'MATERIAL("质感")' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
           grep -q 'val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'readerScrollView.scrollY / pageHeight' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt|app/src/main/res/layout/activity_reader.xml)$'
+          ! grep -q 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
+          allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|scripts/apply_v582_v581_backgrounds.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt|app/src/main/res/layout/activity_reader.xml)$'
           unexpected=$(git diff --name-only e47b8c6a2a596a622cef298009f83d5e2a8353dc | grep -Ev "$allowed" || true)
           test -z "$unexpected" || { echo "Unexpected changes:"; echo "$unexpected"; exit 1; }
 
-      - name: Set v581 version
+      - name: Set v582 version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=2098000581" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.31.natural-page-label.581" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_CODE=2098000582" >> "$GITHUB_ENV"
+          echo "SIMPLE_READER_VERSION_NAME=2026.07.31.duokan-backgrounds.582" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -66,28 +86,49 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Release unit tests within five minutes
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/test-release.log 2>&1
+          code=$?
+          tail -n 220 /tmp/test-release.log
+          exit $code
+
       - name: Assemble release within five minutes
         shell: bash
         run: |
           set +e
-          timeout --signal=INT 5m ./gradlew clean assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
           code=$?
-          tail -n 220 /tmp/assemble-release.log
+          tail -n 260 /tmp/assemble-release.log
           exit $code
 
-      - name: Upload build log
+      - name: Prepare named APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v582.apk
+          sha256sum /tmp/SimpleReader-v582.apk | tee /tmp/SimpleReader-v582.sha256
+
+      - name: Upload v582 logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v581-v575-logs-${{ github.run_number }}
-          path: /tmp/assemble-release.log
+          name: SimpleReader-v582-logs-${{ github.run_number }}
+          path: |
+            /tmp/test-release.log
+            /tmp/assemble-release.log
+            /tmp/SimpleReader-v582.sha256
           if-no-files-found: warn
-          retention-days: 2
+          retention-days: 3
 
-      - name: Upload v581 APK
+      - name: Upload v582 APK
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v581-v575-${{ github.run_number }}
-          path: app/build/outputs/apk/release/*.apk
+          name: SimpleReader-v582-${{ github.run_number }}
+          path: /tmp/SimpleReader-v582.apk
           if-no-files-found: error
           retention-days: 7
