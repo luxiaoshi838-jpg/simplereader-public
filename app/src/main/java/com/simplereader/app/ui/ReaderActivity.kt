@@ -148,6 +148,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         database = SimpleReaderDatabase.getDatabase(this)
         contentView = findViewById(R.id.contentView)
         contentView.setTextIsSelectable(false)
+        contentView.isLongClickable = false
+        contentView.isFocusable = false
+        contentView.isFocusableInTouchMode = false
         readerScrollView = findViewById(R.id.readerScrollView)
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
         readerProgressLabel = findViewById(R.id.readerProgressLabel)
