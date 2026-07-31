@@ -22,26 +22,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 24
     env:
-      SIMPLE_READER_VERSION_CODE: '2098000587'
-      SIMPLE_READER_VERSION_NAME: '2026.07.31.paged-reader.587'
+      SIMPLE_READER_VERSION_CODE: '2098000588'
+      SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-unified-reader.588'
 
     steps:
-      - name: Checkout current v587 branch
+      - name: Checkout current v588 branch
         uses: actions/checkout@v4
         with:
           ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
 
-      - name: Materialize v587 compile fix
+      - name: Materialize v588 unified reader
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/fix_v587_charsequence.py
-          git add app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          cat scripts/v588_patch_part_*.b64 | base64 -d > /tmp/v588.patch
+          if git apply --check /tmp/v588.patch; then
+            git apply /tmp/v588.patch
+          elif git apply --reverse --check /tmp/v588.patch; then
+            echo "v588 patch already applied"
+          else
+            echo "v588 patch does not apply cleanly" >&2
+            exit 1
+          fi
+          git add app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
+                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+                  app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
+                  app/src/main/res/layout/activity_reader.xml \
+                  app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt \
+                  app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt \
+                  docs/DUOKAN_READING_ARCHITECTURE_NOTES.md
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'Fix v587 CharSequence page binding'
+            git commit -m 'v588: unify reader host and page state'
             git push origin HEAD:agent/v582-duokan-backgrounds
           fi
 
@@ -83,18 +97,21 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Verify v587 architecture contract
+      - name: Verify v588 architecture contract
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'data class ReaderPageAnchor' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
-          grep -Fq 'class PagedReaderView' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'private suspend fun buildPagedWindow' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'applyPagedAnchor(target.startAnchor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'com.simplereader.app.ui.PagedReaderView' app/src/main/res/layout/activity_reader.xml
-          grep -Fq 'TurnMode.SIMULATE' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'TurnMode.SLIDE' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'TurnMode.FADE' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'private fun isPagedReaderMode(): Boolean = true' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'TURN_MODE_VERTICAL -> PagedReaderView.TurnMode.VERTICAL' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'readerProgressLabel.text = pageCountLabel()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'ValueAnimator' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'fun updateAdjacent' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'TurnMode.VERTICAL' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          ! grep -Fq 'withEndAction' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'val contentKey: Long = 0L' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
+          grep -Fq 'android:visibility="visible"' app/src/main/res/layout/activity_reader.xml
+          grep -Fq 'android:visibility="gone"' app/src/main/res/layout/activity_reader.xml
+          grep -Fq 'ReadingView' docs/DUOKAN_READING_ARCHITECTURE_NOTES.md
           grep -Fq 'neutralTexture' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
           ! grep -Fq 'PorterDuff.Mode.MULTIPLY' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
 
@@ -103,44 +120,44 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v587-tests.log
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v588-tests.log
 
       - name: Build release APK
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v587-build.log
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v588-build.log
           apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
           test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v587-unsigned.apk
+          cp "$apk" /tmp/SimpleReader-v588-unsigned.apk
 
-      - name: Verify v587 APK
+      - name: Verify v588 APK
         shell: bash
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v587-unsigned.apk | tee /tmp/v587-badging.log
-          grep -Fq "package: name='com.simplereader.app'" /tmp/v587-badging.log
-          grep -Fq "versionCode='2098000587'" /tmp/v587-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v587-unsigned.apk | tee /tmp/v587-resources.log
-          grep -Fq 'id/pagedReaderView' /tmp/v587-resources.log
-          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v587-resources.log
-          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v587-resources.log
-          ! grep -Fq 'drawable/reader_material_patina' /tmp/v587-resources.log
-          unzip -t /tmp/SimpleReader-v587-unsigned.apk | tee /tmp/v587-unzip.log
-          sha256sum /tmp/SimpleReader-v587-unsigned.apk | tee /tmp/v587-unsigned.sha256
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v588-unsigned.apk | tee /tmp/v588-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v588-badging.log
+          grep -Fq "versionCode='2098000588'" /tmp/v588-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v588-unsigned.apk | tee /tmp/v588-resources.log
+          grep -Fq 'id/pagedReaderView' /tmp/v588-resources.log
+          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v588-resources.log
+          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v588-resources.log
+          ! grep -Fq 'drawable/reader_material_patina' /tmp/v588-resources.log
+          unzip -t /tmp/SimpleReader-v588-unsigned.apk | tee /tmp/v588-unzip.log
+          sha256sum /tmp/SimpleReader-v588-unsigned.apk | tee /tmp/v588-unsigned.sha256
 
-      - name: Upload unsigned v587 artifact
+      - name: Upload unsigned v588 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v587-unsigned-${{ github.run_number }}
+          name: SimpleReader-v588-unsigned-${{ github.run_number }}
           path: |
-            /tmp/SimpleReader-v587-unsigned.apk
-            /tmp/v587-tests.log
-            /tmp/v587-build.log
-            /tmp/v587-badging.log
-            /tmp/v587-resources.log
-            /tmp/v587-unzip.log
-            /tmp/v587-unsigned.sha256
+            /tmp/SimpleReader-v588-unsigned.apk
+            /tmp/v588-tests.log
+            /tmp/v588-build.log
+            /tmp/v588-badging.log
+            /tmp/v588-resources.log
+            /tmp/v588-unzip.log
+            /tmp/v588-unsigned.sha256
           if-no-files-found: error
           retention-days: 3
