@@ -10,7 +10,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
@@ -31,34 +31,6 @@ jobs:
         with:
           ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
-
-      - name: Materialize v588 unified reader
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 -d scripts/v588_patch.gz.b64 | gzip -dc > /tmp/v588.patch
-          if git apply --check /tmp/v588.patch; then
-            git apply /tmp/v588.patch
-          elif git apply --reverse --check /tmp/v588.patch; then
-            echo "v588 patch already applied"
-          else
-            echo "v588 patch does not apply cleanly" >&2
-            exit 1
-          fi
-          python3 scripts/fix_v588_turn_mode_syntax.py
-          git add app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-                  app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt \
-                  app/src/main/res/layout/activity_reader.xml \
-                  app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt \
-                  app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt \
-                  docs/DUOKAN_READING_ARCHITECTURE_NOTES.md
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v588: fix unified reader build'
-            git push origin HEAD:agent/v582-duokan-backgrounds
-          fi
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
