@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - agent/v582-duokan-backgrounds
+  pull_request:
 
 permissions:
   contents: read
