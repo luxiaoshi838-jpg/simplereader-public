@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d scripts/v590_source_patch.gz.b64 | gzip -dc > /tmp/v590.patch
+          base64 -d scripts/v590_source_patch_v2.gz.b64 | gzip -dc > /tmp/v590.patch
           if git apply --check /tmp/v590.patch; then
             git apply /tmp/v590.patch
           elif git apply --reverse --check /tmp/v590.patch; then
