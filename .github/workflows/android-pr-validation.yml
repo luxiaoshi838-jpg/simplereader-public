@@ -18,7 +18,7 @@ jobs:
   validate:
     name: v582 signed release validation
     runs-on: ubuntu-latest
-    timeout-minutes: 22
+    timeout-minutes: 18
     env:
       SIMPLE_READER_VERSION_CODE: '2098000582'
       SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-backgrounds.582'
@@ -37,6 +37,37 @@ jobs:
           python3 scripts/apply_v582_v581_backgrounds.py
           python3 scripts/fix_v582_compile.py
           python3 scripts/disable_v582_text_selection.py
+
+      - name: Use the established SimpleReader signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/build.gradle.kts')
+          text = path.read_text()
+          old = '''        release {
+                      if (permanentSigningConfigured) {
+                          signingConfig = signingConfigs.getByName("permanentV2")
+                      }
+                      isMinifyEnabled = true'''
+          if old not in text:
+              old = '''        release {
+                  if (permanentSigningConfigured) {
+                      signingConfig = signingConfigs.getByName("permanentV2")
+                  }
+                  isMinifyEnabled = true'''
+          new = '''        release {
+                  signingConfig = if (permanentSigningConfigured) {
+                      signingConfigs.getByName("permanentV2")
+                  } else {
+                      signingConfigs.getByName("debug")
+                  }
+                  isMinifyEnabled = true'''
+          if old not in text:
+              raise SystemExit('release signing block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
 
       - name: Guard v581 baseline and v582 scope
         shell: bash
@@ -83,7 +114,7 @@ jobs:
           tail -n 220 /tmp/test-release.log
           exit $code
 
-      - name: Assemble unsigned release within five minutes
+      - name: Assemble signed release within five minutes
         shell: bash
         run: |
           set +e
@@ -92,45 +123,17 @@ jobs:
           tail -n 260 /tmp/assemble-release.log
           exit $code
 
-      - name: Restore and verify stable SimpleReader signer
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
-          fi
-          test -f "$HOME/.android/debug.keystore"
-          cert=$(keytool -list -v \
-            -keystore "$HOME/.android/debug.keystore" \
-            -storepass android \
-            -alias androiddebugkey 2>/dev/null \
-            | awk -F': ' '/SHA256:/{gsub(":", "", $2); print tolower($2); exit}')
-          echo "Signer certificate: $cert" | tee /tmp/signing-certificate.log
-          test "$cert" = "$EXPECTED_CERT_SHA256" || {
-            echo "Refusing to sign: stable SimpleReader certificate is unavailable" >&2
-            exit 1
-          }
-
-      - name: Zipalign and sign v582
+      - name: Verify package parsing, alignment and signing identity
         shell: bash
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          unsigned=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          test -n "$unsigned"
-          "$build_tools/zipalign" -f -p 4 "$unsigned" /tmp/SimpleReader-v582-aligned.apk
-          "$build_tools/apksigner" sign \
-            --ks "$HOME/.android/debug.keystore" \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --out /tmp/SimpleReader-v582.apk \
-            /tmp/SimpleReader-v582-aligned.apk
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v582.apk
           "$build_tools/apksigner" verify --verbose --print-certs /tmp/SimpleReader-v582.apk | tee /tmp/apksigner-verify.log
           cert=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print tolower($2); exit}' /tmp/apksigner-verify.log)
+          echo "Signer certificate: $cert" | tee /tmp/signing-certificate.log
           test "$cert" = "$EXPECTED_CERT_SHA256"
           "$build_tools/zipalign" -c -P 16 4 /tmp/SimpleReader-v582.apk
           "$build_tools/aapt2" dump badging /tmp/SimpleReader-v582.apk | tee /tmp/aapt2-badging.log
@@ -144,7 +147,6 @@ jobs:
           path: |
             /tmp/test-release.log
             /tmp/assemble-release.log
-            /tmp/assemble-debug.log
             /tmp/signing-certificate.log
             /tmp/apksigner-verify.log
             /tmp/aapt2-badging.log
