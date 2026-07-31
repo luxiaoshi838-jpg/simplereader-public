@@ -4,10 +4,10 @@ path = Path("app/src/test/java/com/simplereader/app/ui/ShelfSelectionActionsCont
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text('''package com.simplereader.app.ui
 
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 import java.io.File
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertFalse
 
 class ShelfSelectionActionsContractTest {
     private val source = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
@@ -16,28 +16,28 @@ class ShelfSelectionActionsContractTest {
     fun singleBookSelectionOffersRenameAndGroupMove() {
         val block = source.substringAfter("private fun showShelfSelectionActions()")
             .substringBefore("private fun showMoveSelectedBooksToGroup()")
-        assertContains(block, "selectedBooks.size == 1")
-        assertContains(block, "修改书名")
-        assertContains(block, "导入分组")
-        assertContains(block, "showRenameBookDialog(book)")
+        assertTrue(block.contains("selectedBooks.size == 1"))
+        assertTrue(block.contains("修改书名"))
+        assertTrue(block.contains("导入分组"))
+        assertTrue(block.contains("showRenameBookDialog(book)"))
     }
 
     @Test
     fun multiBookSelectionKeepsGroupMoveButHidesRename() {
-        val marker = ".setTitle(\\\"已选择 ${'$'}{selectedBooks.size} 本书\\\")"
+        val marker = ".setTitle(\\\"已选择 \\${selectedBooks.size} 本书\\\")"
         val block = source.substringAfter(marker)
             .substringBefore("private fun showMoveSelectedBooksToGroup()")
-        assertContains(block, "导入分组")
-        assertContains(block, "删除")
+        assertTrue(block.contains("导入分组"))
+        assertTrue(block.contains("删除"))
         assertFalse(block.contains("修改书名"))
     }
 
     @Test
     fun selectionToolbarUsesActionsInsteadOfDeleteOnly() {
-        assertContains(source, "showShelfSelectionActions()")
-        assertContains(source, "操作(${'$'}count)")
-        assertContains(source, "showMoveSelectedBooksToGroup()")
+        assertTrue(source.contains("showShelfSelectionActions()"))
+        assertTrue(source.contains("操作(\\$count)"))
+        assertTrue(source.contains("showMoveSelectedBooksToGroup()"))
     }
 }
 ''', encoding="utf-8")
-print("v583 contract test syntax fixed")
+print("v583 JUnit contract test fixed")
