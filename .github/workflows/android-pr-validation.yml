@@ -31,6 +31,7 @@ jobs:
         run: |
           python3 scripts/apply_v582_v581_backgrounds.py
           python3 scripts/fix_v582_compile.py
+          python3 scripts/disable_v582_text_selection.py
 
       - name: Persist generated v582 source
         if: github.event_name == 'push'
@@ -60,6 +61,10 @@ jobs:
           grep -q 'readerProgressLabel.setTextColor(currentTextColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -q 'private const val PREF_BACKGROUND_STYLE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -q 'private const val CHROME_ACTIVATION_LONG_PRESS' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'contentView.setTextIsSelectable(false)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'contentView.isLongClickable = false' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -q 'android:textIsSelectable="false"' app/src/main/res/layout/activity_reader.xml
+          grep -q 'android:longClickable="false"' app/src/main/res/layout/activity_reader.xml
           grep -q '@+id/themeMoreButton' app/src/main/res/layout/activity_reader.xml
           grep -q '@+id/chromeCenterButton' app/src/main/res/layout/activity_reader.xml
           grep -q '@+id/chromeLongPressButton' app/src/main/res/layout/activity_reader.xml
@@ -70,7 +75,7 @@ jobs:
           grep -q 'val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'readerScrollView.scrollY / pageHeight' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -q 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
-          allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|scripts/apply_v582_v581_backgrounds.py|scripts/fix_v582_compile.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt|app/src/main/res/layout/activity_reader.xml)$'
+          allowed='^(\.github/workflows/android-pr-validation.yml|scripts/apply_v579_v575_texture_page.py|scripts/apply_v582_v581_backgrounds.py|scripts/fix_v582_compile.py|scripts/disable_v582_text_selection.py|app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperPageDrawable.kt|app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt|app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt|app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt|app/src/main/res/layout/activity_reader.xml|app/src/test/java/com/simplereader/app/ui/ReaderChromeContractTest.kt|app/src/test/java/com/simplereader/app/ui/StableWorkflowContractTest.kt)$'
           unexpected=$(git diff --name-only e47b8c6a2a596a622cef298009f83d5e2a8353dc | grep -Ev "$allowed" || true)
           test -z "$unexpected" || { echo "Unexpected changes:"; echo "$unexpected"; exit 1; }
 
