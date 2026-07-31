@@ -38,10 +38,10 @@ class LayeredReaderBackgroundContractTest {
 
     @Test
     fun textureUsesNeutralLuminanceAndBalancedStrength() {
-        assertTrue(backgrounds.contains("alpha = 118"))
-        assertTrue(backgrounds.contains("alpha = 126"))
-        assertTrue(backgrounds.contains("contrast = 0.42f"))
-        assertTrue(backgrounds.contains("contrast = 0.48f"))
+        assertTrue(backgrounds.contains("alpha = 146"))
+        assertTrue(backgrounds.contains("alpha = 158"))
+        assertTrue(backgrounds.contains("contrast = 0.54f"))
+        assertTrue(backgrounds.contains("contrast = 0.58f"))
         assertTrue(backgrounds.contains("neutralTexture"))
         assertTrue(backgrounds.contains("val mean ="))
         assertTrue(backgrounds.contains("coerceIn(96, 160)"))
