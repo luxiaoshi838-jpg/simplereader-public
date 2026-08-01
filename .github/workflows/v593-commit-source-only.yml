@@ -1,0 +1,71 @@
+name: v593 commit source only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  commit-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v593-duokan-page-anchor
+          fetch-depth: 0
+
+      - name: Rebuild and commit only source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m bash -c '
+            set -euo pipefail
+            source_commit=7010a5cac46a1e465837f0f1541ae466a8dad4da
+            {
+              cat scripts/v593-correct00-0 scripts/v593-correct00-1 scripts/v593-correct00-2 scripts/v593-correct00-3
+              for part in 01 02 03; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+              cat scripts/v593-correct04-0 scripts/v593-correct04-1
+              for part in 05 06a 06b 06c 06d 07a 07b; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+            } | base64 -d > /tmp/v593-source.patch
+
+            patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
+            echo "v593 corrected patch sha256=$patch_sha"
+            git apply --check /tmp/v593-source.patch
+            git apply /tmp/v593-source.patch
+
+            files=(
+              app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+              app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+              app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
+              app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
+            )
+            git add -- "${files[@]}"
+            git diff --cached --check
+            staged=$(git diff --cached --name-only)
+            test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 7
+            for file in "${files[@]}"; do
+              printf "%s\n" "$staged" | grep -Fxq "$file"
+            done
+
+            grep -Fq "arrayOf(\"批量管理分组\", \"同步书架\", \"一键缓存\")" app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+            grep -Fq "ReaderPageCacheManager.enqueue" app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+            grep -Fq "completeChapterCount" app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+            grep -Fq "completeChapterCount" app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
+            grep -Fq "TXT_INITIAL_WINDOW_BYTES = 32 * 1024" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            grep -Fq "txtCatalogChapters" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            ! grep -Fq "MENU_CACHE_BOOK" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "v593: commit Duokan anchors and shelf cache source"
+            git push origin HEAD:agent/v593-duokan-page-anchor
+          '

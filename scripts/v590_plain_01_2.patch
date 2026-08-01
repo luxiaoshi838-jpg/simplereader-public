@@ -1,0 +1,155 @@
+diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+index 7591c42..3657265 100644
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+@@ -2419,6 +2543,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                 chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
+                             )
+                         }
++                        readerPageCache.clear()
++                        resetPagedPageIndex()
++                        if (openSucceeded) displayContent()
+                     }
+                     onChanged()
+                 }
+@@ -2755,13 +2882,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+ 
+     private fun actualPageLabelForDocumentPosition(position: Long): String? {
+         val signature = currentPagedSignature ?: return null
+-        if (txtStreamingMode) return null
+-        val anchor = if (isStructuredChapterDocument() && structuredWholeText != null) {
+-            val safe = position.coerceIn(0L, structuredWholeText.orEmpty().length.toLong()).toInt()
+-            val chapter = epubChapterStartPositions.indexOfLast { it <= safe }.coerceAtLeast(0)
+-            ReaderPageAnchor(chapter, safe - epubChapterStartPositions.getOrElse(chapter) { 0 })
+-        } else {
+-            ReaderPageAnchor(0, position.coerceIn(0L, currentContent.length.toLong()).toInt())
++        val anchor = when {
++            txtStreamingMode && hasStableTxtChapterIndex() -> {
++                val safe = position.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
++                val chapter = epubChapterStartPositions
++                    .indexOfLast { it.toLong() <= safe }
++                    .coerceAtLeast(0)
++                    .coerceAtMost(epubChapters.lastIndex)
++                ReaderPageAnchor(chapter, 0, safe)
++            }
++            txtStreamingMode -> return null
++            isStructuredChapterDocument() && structuredWholeText != null -> {
++                val safe = position.coerceIn(0L, structuredWholeText.orEmpty().length.toLong()).toInt()
++                val chapter = epubChapterStartPositions.indexOfLast { it <= safe }.coerceAtLeast(0)
++                ReaderPageAnchor(chapter, safe - epubChapterStartPositions.getOrElse(chapter) { 0 })
++            }
++            else -> ReaderPageAnchor(0, position.coerceIn(0L, currentContent.length.toLong()).toInt())
+         }
+         if (pagedPageIndexSignature != signature) return null
+         return actualPageLabelForAnchor(anchor)
+@@ -2892,8 +3028,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                 textSizeSp = readerTextSize,
+                 textColor = currentTextColor,
+                 horizontalPaddingPx = dp(28),
+-                topPaddingPx = dp(26),
+-                bottomPaddingPx = dp(42),
++                topPaddingPx = readerTopInsetPx + dp(26),
++                bottomPaddingPx = readerBottomInsetPx + dp(42),
+                 lineSpacingMultiplier = 1.75f,
+                 typeface = Typeface.DEFAULT,
+                 backgroundFactory = {
+@@ -2913,8 +3049,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         textSizePx = (readerTextSize * resources.displayMetrics.scaledDensity).toInt().coerceAtLeast(1),
+         lineSpacingMultiplierX100 = 175,
+         horizontalPaddingPx = dp(28),
+-        verticalPaddingPx = dp(34),
+-        contentKey = if (txtStreamingMode) {
++        topPaddingPx = readerTopInsetPx + dp(26),
++        bottomPaddingPx = readerBottomInsetPx + dp(42),
++        chapterTitleScaleX100 = 130,
++        contentKey = if (txtStreamingMode && !hasStableTxtChapterIndex()) {
+             txtCurrentPageStartByte * 31L + txtCurrentPageEndByte
+         } else {
+             0L
+@@ -2922,7 +3060,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+     )
+ 
+     private fun pagedChapterCount(): Int =
+-        if (isStructuredChapterDocument()) epubChapters.size.coerceAtLeast(1) else 1
++        if (hasStableChapterPageAxis()) epubChapters.size.coerceAtLeast(1) else 1
+ 
+     private fun pagedChapterRawText(chapterIndex: Int): String {
+         if (!isStructuredChapterDocument()) return currentContent
+@@ -2936,7 +3074,44 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         return wholeText.substring(start, end).trimEnd()
+     }
+ 
++    private suspend fun pagedChapterSource(chapterIndex: Int): PagedChapterSource {
++        if (!hasStableTxtChapterIndex()) {
++            return PagedChapterSource(pagedChapterRawText(chapterIndex))
++        }
++        val safeIndex = chapterIndex.coerceIn(0, epubChapters.lastIndex)
++        val startByte = epubChapterStartPositions.getOrElse(safeIndex) { 0 }.toLong()
++            .coerceAtLeast(0L)
++        val endByte = epubChapterStartPositions.getOrNull(safeIndex + 1)?.toLong()
++            ?.coerceAtLeast(startByte)
++            ?: txtTotalBytes.coerceAtLeast(startByte)
++        val selectedBook = book ?: return PagedChapterSource(currentContent, txtCurrentPageStartByte, txtCurrentPageEndByte)
++        val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
++        val text = withContext(Dispatchers.IO) {
++            contentResolver.openInputStream(Uri.parse(selectedBook.filePath))?.let { stream ->
++                TxtParser.readRange(
++                    inputStream = stream,
++                    charsetName = charsetName,
++                    startByte = startByte,
++                    endByte = endByte
++                ).text
++            } ?: error("Cannot open TXT chapter source")
++        }.trimEnd()
++        return PagedChapterSource(
++            text = text,
++            startSourceOffset = startByte,
++            endSourceOffset = endByte
++        )
++    }
++
+     private fun pagedAnchorFromCurrentPosition(): ReaderPageAnchor {
++        if (txtStreamingMode && hasStableTxtChapterIndex()) {
++            val sourceOffset = currentPosition.toLong().coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
++            val chapterIndex = epubChapterStartPositions
++                .indexOfLast { it.toLong() <= sourceOffset }
++                .coerceAtLeast(0)
++                .coerceAtMost(epubChapters.lastIndex)
++            return ReaderPageAnchor(chapterIndex, 0, sourceOffset)
++        }
+         if (txtStreamingMode) {
+             val span = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+             val fraction = ((currentPosition.toLong() - txtCurrentPageStartByte).toDouble() / span.toDouble())
+@@ -2956,9 +3131,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         signature: ReaderLayoutSignature
+     ): List<ReaderPageSnapshot> {
+         readerPageCache.get(chapterIndex, signature)?.let { return it }
+-        val raw = pagedChapterRawText(chapterIndex)
++        val source = pagedChapterSource(chapterIndex)
++        val raw = source.text
+         val styled = styledReadingText(raw)
+-        val sourceMapper: (Int) -> Long = if (txtStreamingMode) {
++        val sourceMapper: (Int) -> Long = if (source.startSourceOffset >= 0L) {
++            val byteSpan = (source.endSourceOffset - source.startSourceOffset).coerceAtLeast(0L)
++            val charCount = raw.length.coerceAtLeast(1)
++            ({ characterOffset: Int ->
++                source.startSourceOffset +
++                    (byteSpan * characterOffset.coerceIn(0, charCount).toLong() / charCount.toLong())
++            })
++        } else if (txtStreamingMode) {
+             val startByte = txtCurrentPageStartByte
+             val byteSpan = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(0L)
+             val charCount = raw.length.coerceAtLeast(1)
+@@ -2987,6 +3170,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         pages: List<ReaderPageSnapshot>,
+         anchor: ReaderPageAnchor
+     ): ReaderPageSnapshot {
++        if (anchor.sourceOffset >= 0L && (pages.firstOrNull()?.startAnchor?.sourceOffset ?: -1L) >= 0L) {
++            return pages.firstOrNull { page ->
++                anchor.sourceOffset >= page.startAnchor.sourceOffset &&
++                    anchor.sourceOffset < page.endAnchor.sourceOffset
++            } ?: pages.last()
++        }
+         return pages.firstOrNull { page ->
+             anchor.chapterOffset >= page.startAnchor.chapterOffset &&
+                 anchor.chapterOffset < page.endAnchor.chapterOffset

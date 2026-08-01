@@ -1,0 +1,161 @@
+diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+index 7591c42..3657265 100644
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+@@ -1096,9 +1205,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+             pagedChapterPageStarts[chapterIndex] = pages
+                 .map { it.startAnchor.chapterOffset }
+                 .toIntArray()
++            val sourceStarts = pages.map { it.startAnchor.sourceOffset }.toLongArray()
++            if (sourceStarts.any { it >= 0L }) {
++                pagedChapterSourceStarts[chapterIndex] = sourceStarts
++            }
+         }
+-        pagedPageIndexComplete = !txtStreamingMode &&
++        pagedPageIndexComplete =
+             (0 until pagedChapterCount()).all { pagedChapterPageCounts.containsKey(it) }
++        val checkpoint = pagedPageIndexComplete || pagedChapterPageCounts.size % 24 == 0
++        schedulePersistPageIndex(signature, immediate = checkpoint)
+     }
+ 
+     private fun actualPageLabelForIndex(
+@@ -1106,21 +1221,21 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         pageIndex: Int,
+         pageCountInChapter: Int
+     ): String {
+-        if (txtStreamingMode) {
++        val safeChapterPages = pageCountInChapter.coerceAtLeast(1)
++        if (!hasStableChapterPageAxis()) {
+             val base = txtPagedWindowBasePage
+-            return if (base != null) "第 ${base + pageIndex} 页"
+-            else "本段 ${pageIndex + 1}/${pageCountInChapter.coerceAtLeast(1)}"
++            return if (txtStreamingMode && base != null) "第 ${base + pageIndex} 页"
++            else "本段 ${pageIndex + 1}/$safeChapterPages"
+         }
+-        val precedingKnown = (0 until chapter).all { pagedChapterPageCounts.containsKey(it) }
+-        if (!precedingKnown) {
+-            return "本章 ${pageIndex + 1}/${pageCountInChapter.coerceAtLeast(1)}"
++        if (!pagedPageIndexComplete) {
++            // Duokan does not expose a changing fake whole-book total while chapter
++            // layouts are still being generated. The chapter-local count is exact.
++            return "本章 ${pageIndex + 1}/$safeChapterPages"
+         }
+         val prefix = (0 until chapter).sumOf { pagedChapterPageCounts[it] ?: 0 }
+         val current = prefix + pageIndex + 1
+-        val total = if (pagedPageIndexComplete) {
+-            (0 until pagedChapterCount()).sumOf { pagedChapterPageCounts[it] ?: 0 }
+-        } else null
+-        return if (total != null && total > 0) "$current/$total" else "第 $current 页"
++        val total = (0 until pagedChapterCount()).sumOf { pagedChapterPageCounts[it] ?: 0 }
++        return "$current/$total"
+     }
+ 
+     private fun actualPageLabel(page: ReaderPageSnapshot): String = actualPageLabelForIndex(
+@@ -1130,14 +1245,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+     )
+ 
+     private fun actualPageLabelForAnchor(anchor: ReaderPageAnchor): String? {
+-        val starts = pagedChapterPageStarts[anchor.chapterIndex] ?: return null
+-        if (starts.isEmpty()) return null
++        val sourceStarts = pagedChapterSourceStarts[anchor.chapterIndex]
++        val localStarts = pagedChapterPageStarts[anchor.chapterIndex]
++        val useSource = anchor.sourceOffset >= 0L && sourceStarts != null && sourceStarts.isNotEmpty()
++        val size = if (useSource) sourceStarts!!.size else localStarts?.size ?: return null
++        if (size <= 0) return null
+         var low = 0
+-        var high = starts.lastIndex
++        var high = size - 1
+         var result = 0
+         while (low <= high) {
+             val mid = (low + high) ushr 1
+-            if (starts[mid] <= anchor.chapterOffset) {
++            val startValue = if (useSource) sourceStarts!![mid] else localStarts!![mid].toLong()
++            val targetValue = if (useSource) anchor.sourceOffset else anchor.chapterOffset.toLong()
++            if (startValue <= targetValue) {
+                 result = mid
+                 low = mid + 1
+             } else {
+@@ -1147,7 +1267,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         return actualPageLabelForIndex(
+             chapter = anchor.chapterIndex,
+             pageIndex = result,
+-            pageCountInChapter = pagedChapterPageCounts[anchor.chapterIndex] ?: starts.size
++            pageCountInChapter = pagedChapterPageCounts[anchor.chapterIndex] ?: size
+         )
+     }
+ 
+@@ -1164,7 +1284,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+     private fun renderedPageCountLabel(): String? = pageCountLabel()
+ 
+     private fun ensureWholeBookPageIndex(signature: ReaderLayoutSignature) {
+-        if (txtStreamingMode || pagedPageIndexComplete || pagedPageIndexJob?.isActive == true) return
++        if (!hasStableChapterPageAxis() || pagedPageIndexComplete || pagedPageIndexJob?.isActive == true) return
+         pagedPageIndexJob = lifecycleScope.launch {
+             delay(120L)
+             try {
+@@ -1176,6 +1296,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                 }
+                 pagedPageIndexComplete =
+                     (0 until pagedChapterCount()).all { pagedChapterPageCounts.containsKey(it) }
++                schedulePersistPageIndex(signature, immediate = true)
+                 currentLayoutPage()?.let(::updatePagedProgressLabel)
+             } catch (_: Throwable) {
+                 // The visible page remains valid; indexing can retry later.
+@@ -1214,7 +1335,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+             val line = text.substring(lineStart, lineEnd).trim()
+             if (TxtParser.isLikelyChapterTitle(line)) {
+                 spannable.setSpan(
+-                    RelativeSizeSpan(1.12f),
++                    RelativeSizeSpan(1.30f),
+                     lineStart,
+                     lineEnd,
+                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+@@ -1276,17 +1397,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         }
+     }
+ 
+-    private fun estimatedTxtBytesPerPage(): Long {
+-        val visibleBytes = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(1L)
+-        val visibleCharacters = currentContent.length.coerceAtLeast(1)
+-        val averageBytesPerCharacter = visibleBytes.toDouble() / visibleCharacters.toDouble()
+-        return (pageSize * averageBytesPerCharacter)
+-            .toLong()
+-            .coerceAtLeast(pageSize.toLong())
+-    }
+-
+     private fun configureVerticalScrollIfNeeded() {
+         val continuous = pageTurnMode == TURN_MODE_VERTICAL
++        contentView.setPadding(
++            dp(28),
++            readerTopInsetPx + dp(26),
++            dp(28),
++            readerBottomInsetPx + dp(118)
++        )
+         contentView.setTextIsSelectable(false)
+         contentView.isVerticalScrollBarEnabled = false
+         readerScrollView.isVerticalScrollBarEnabled = continuous
+@@ -1305,14 +1423,20 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         if (pageTurnMode != TURN_MODE_VERTICAL || !openSucceeded || currentContent.isBlank()) return
+         val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+         if (maxScroll <= 0) return
+-        val scrollProgress = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
++        val layout = contentView.layout ?: return
++        val centerY = (scrollY + readerScrollView.height / 2 - contentView.paddingTop)
++            .coerceIn(0, layout.height.coerceAtLeast(0))
++        val line = layout.getLineForVertical(centerY)
++        val characterOffset = layout.getLineStart(line).coerceIn(0, currentContent.length)
++        val characterFraction = if (currentContent.isEmpty()) 0f else {
++            (characterOffset.toFloat() / currentContent.length.toFloat()).coerceIn(0f, 1f)
++        }
+         currentPosition = if (txtStreamingMode) {
+-            (txtPageWindow?.byteForScroll(scrollY, maxScroll)
+-                ?: txtByteForScrollPosition(scrollY, maxScroll, scrollProgress))
++            txtContinuousBuffer.byteForFraction(characterFraction)
+                 .coerceAtMost(Int.MAX_VALUE.toLong())
+                 .toInt()
+         } else {
+-            (currentContent.length * scrollProgress).toInt().coerceIn(0, currentContent.length)
++            characterOffset
+         }
+         updateStructuredLocationFromCurrentPosition()
+         updateProgressViews(progressForCurrentPosition())

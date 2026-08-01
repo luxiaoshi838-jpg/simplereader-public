@@ -1,74 +1,296 @@
 name: Public Android CI
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - agent/v14-real-epub-chm-continuous
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: public-v593-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  build-debug:
-    name: Build public debug APK
+  build-v593:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 16
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000593'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.page-anchor-cache.593'
     steps:
-      - name: Checkout current source
-        uses: actions/checkout@v4
-
-      - name: Pack exact source
-        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
-
-      - name: Upload exact source
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: simplereader-current-source-${{ github.run_number }}
-          path: /tmp/simplereader-current-source.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          ref: agent/v593-duokan-page-anchor
+          fetch-depth: 0
+
+      - name: Materialize repaired v593 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          if grep -Fq 'TXT_INITIAL_WINDOW_BYTES = 32 * 1024' "$activity" \
+            && grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' "$main" \
+            && grep -Fq 'completeChapterCount' "$worker"; then
+            echo 'v593 source already materialized'
+          else
+            source_commit=7010a5cac46a1e465837f0f1541ae466a8dad4da
+            {
+              cat scripts/v593-correct00-0 scripts/v593-correct00-1 scripts/v593-correct00-2 scripts/v593-correct00-3
+              for part in 01 02 03; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+              cat scripts/v593-correct04-0 scripts/v593-correct04-1
+              for part in 05 06a 06b 06c 06d 07a 07b; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+            } | base64 -d > /tmp/v593-source.raw.patch
+            sed '/^com\/simplereader\/app\/reader\/cache\/ReaderPageCacheManager.kt$/d' \
+              /tmp/v593-source.raw.patch > /tmp/v593-source.patch
+
+            python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/v593-source.patch')
+          text = path.read_text()
+          start_marker = '@@ -2605,7 +2562,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {'
+          end_marker = '@@ -3239,8 +3214,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = r'''@@ -2605,13 +2562,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+           
+                       fun requestTxtCatalogScan(onChanged: () -> Unit) {
+                           val document = currentReadableDocument ?: return
+          -                if (!txtStreamingMode || epubChapters.isNotEmpty()) return
+          +                if (!txtStreamingMode || txtCatalogChapters.isNotEmpty()) return
+                           if (chapterScanJob?.isActive == true) return
+                           chapterScanJob = lifecycleScope.launch {
+                               val chapters = try {
+                                   val charsetName = txtCharsetName ?: book?.txtCharset ?: Charsets.UTF_8.name()
+                                   withContext(Dispatchers.IO) {
+          -                            contentResolver.openInputStream(document.uri)?.let { stream ->
+          +                            contentResolver.openInputStream(document.uri)?.use { stream ->
+                                           TxtParser.scanChapters(stream, charsetName)
+                                       }.orEmpty()
+                                   }
+          @@ -2619,10 +2576,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                   emptyList()
+                               }
+                               if (chapters.isNotEmpty()) {
+          -                        epubChapters = chapters.map { chapter ->
+          +                        txtCatalogChapters = chapters.map { chapter ->
+                                       EpubChapter(name = chapter.title, text = "")
+                                   }
+          -                        epubChapterStartPositions = chapters.map {
+          +                        txtCatalogStartPositions = chapters.map {
+                                       it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                                   }
+                                   withContext(Dispatchers.IO) {
+          @@ -2633,9 +2590,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                           chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
+                                       )
+                                   }
+          -                        readerPageCache.clear()
+          -                        resetPagedPageIndex()
+          -                        if (openSucceeded) displayContent()
+                               }
+                               onChanged()
+                           }
+          @@ -2720,10 +2674,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                       }
+           
+                       fun currentChapterIndex(): Int {
+          -                if (epubChapterStartPositions.isEmpty()) return -1
+          -                if (isStructuredChapterDocument()) return structuredChapterIndex.coerceIn(0, epubChapterStartPositions.lastIndex)
+          +                val starts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+          +                if (starts.isEmpty()) return -1
+          +                if (isStructuredChapterDocument()) return structuredChapterIndex.coerceIn(0, starts.lastIndex)
+                           val current = currentPosition.coerceAtLeast(0)
+          -                return epubChapterStartPositions.indexOfLast { it <= current }
+          +                return starts.indexOfLast { it <= current }
+                               .coerceAtLeast(0)
+                       }
+           
+          @@ -2731,6 +2686,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                           catalogButton.isEnabled = !showingCatalog
+                           bookmarkButton.isEnabled = showingCatalog
+                           if (showingCatalog) {
+          +                    val catalogChapters = if (txtStreamingMode) txtCatalogChapters else epubChapters
+          +                    val catalogStarts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+                               val currentChapter = currentChapterIndex()
+                               val useStructuredCatalog = false
+                               val highlightedCatalogIndex = if (useStructuredCatalog) {
+          @@ -2740,12 +2697,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                               } else {
+                                   currentChapter
+                               }
+          -                    val labels = if (epubChapters.isEmpty()) {
+          +                    val labels = if (catalogChapters.isEmpty()) {
+                                   requestTxtCatalogScan { render() }
+                                   if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
+                               } else if (useStructuredCatalog) {
+                                   structuredCatalogEntries.map { entry ->
+          -                            val position = epubChapterStartPositions.getOrElse(entry.targetChapterIndex) { 0 }
+          +                            val position = catalogStarts.getOrElse(entry.targetChapterIndex) { 0 }
+                                       structuredCatalogLabel(
+                                           entry = entry,
+                                           position = position,
+          @@ -2753,11 +2710,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                       )
+                                   }
+                               } else {
+          -                        epubChapters.mapIndexed { index, chapter ->
+          +                        catalogChapters.mapIndexed { index, chapter ->
+                                       val title = chapter.text.ifBlank {
+                                           chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
+                                       }
+          -                            val position = epubChapterStartPositions.getOrElse(index) { 0 }
+          +                            val position = catalogStarts.getOrElse(index) { 0 }
+                                       catalogLabel(index, title, position, index == currentChapter)
+                                   }
+                               }
+          @@ -2767,7 +2724,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                   listView.post { listView.setSelection(highlightedCatalogIndex) }
+                               }
+                               listView.setOnItemClickListener { _, _, which, _ ->
+          -                        if (epubChapters.isNotEmpty()) {
+          +                        if (catalogChapters.isNotEmpty()) {
+                                       if (isStructuredChapterDocument()) {
+                                           val targetChapter = if (useStructuredCatalog) {
+                                               structuredCatalogEntries.getOrNull(which)?.targetChapterIndex
+          @@ -2779,7 +2736,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                                           }
+                                       } else {
+                                           beginProgrammaticScrollGuard()
+          -                                currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+          +                                currentPosition = catalogStarts.getOrElse(which) { 0 }
+                                           if (txtStreamingMode) {
+                                               showStreamingTxtPage(
+                                                   currentPosition.toLong(),
+          @@ -2915,21 +2872,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+               }
+           
+               private fun showTableOfContents() {
+          -        if (epubChapters.isEmpty()) {
+          +        val chapters = if (txtStreamingMode) txtCatalogChapters else epubChapters
+          +        val starts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+          +        if (chapters.isEmpty()) {
+                       Toast.makeText(this, "未识别到目录", Toast.LENGTH_SHORT).show()
+                       return
+                   }
+          -        val items = epubChapters.mapIndexed { index, chapter ->
+          +        val items = chapters.mapIndexed { index, chapter ->
+                       val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
+                       "${index + 1}. $title"
+                   }.toTypedArray()
+                   AlertDialog.Builder(this)
+                       .setTitle("目录")
+                       .setItems(items) { _, which ->
+          -                currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+          -                displayContent()
+          -                markProgressDirty()
+          -                scheduleProgressSave()
+          +                currentPosition = starts.getOrElse(which) { 0 }
+          +                if (txtStreamingMode) {
+          +                    showStreamingTxtPage(
+          +                        currentPosition.toLong(),
+          +                        saveImmediately = true,
+          +                        keepContextBeforeTarget = false,
+          +                        preloadAdjacentWindows = true
+          +                    )
+          +                } else {
+          +                    displayContent()
+          +                    markProgressDirty()
+          +                    scheduleProgressSave()
+          +                }
+                       }
+                       .setNegativeButton("关闭", null)
+                       .show()
+          '''
+          path.write_text(text[:start] + replacement + text[end:])
+          PY
+
+            sha256sum /tmp/v593-source.patch
+            timeout --signal=INT 5m git apply --check /tmp/v593-source.patch
+            git apply /tmp/v593-source.patch
+
+            files=(
+              app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+              app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+              app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
+              app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
+            )
+            sha256sum "${files[@]}"
+            printf '%s  %s\n' \
+              9b3ce5153583d933aa5b675163b382825316d3c2255aeb1348f64cd4887791fb "${files[0]}" \
+              2dc7fb4774221c7898991897431e05443b02da4d325b5487787566dbd52097f3 "${files[1]}" \
+              86ccecc9f957bcbca8c969de6af98b0734389c461ca8ec8a394222e633100e3a "${files[2]}" \
+              437c5425628e9b7d2a3e76e6b7b6dacec62d55e9226d9c6cf2b3b135dfdfb03b "${files[3]}" \
+              789984080ee8358c84868fe5548a1d61efa3c40ccd0718ceb4c83045eafb2ce3 "${files[4]}" \
+              3305d79fceae0336a77050f42d3295edf84bfef1300177b622fd8af54adb83af "${files[5]}" \
+              068d814379eaeff42be39d2cede1c47ff23a8d0d45a1543b32c53f12c95d9154 "${files[6]}" \
+              | sha256sum -c -
+
+            git add -- "${files[@]}"
+            git diff --cached --check
+            test "$(git diff --cached --name-only | wc -l)" -eq 7
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'v593: separate TXT catalog anchors and add shelf cache'
+            git push origin HEAD:agent/v593-duokan-page-anchor
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Export official Android signing tools
+      - name: Test release with five-minute limit
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain 2>&1 | tee /tmp/v593-test.log
+
+      - name: Build release with five-minute limit
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain 2>&1 | tee /tmp/v593-build.log
+
+      - name: Verify unsigned APK
         shell: bash
         run: |
           set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -x "$build_tools/apksigner"
-          test -x "$build_tools/zipalign"
-          test -x "$build_tools/aapt2"
-          tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools.tar.gz "$(basename "$build_tools")"
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v593-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v593-badging.log
+          grep -Fq "versionCode='2098000593'" /tmp/v593-badging.log
+          grep -Fq "versionName='2026.08.01.page-anchor-cache.593'" /tmp/v593-badging.log
+          unzip -t /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-unzip.log
+          sha256sum /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-unsigned.sha256
 
-      - name: Upload Android signing tools
+      - name: Upload v593 APK and logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Android-build-tools-${{ github.run_number }}
-          path: /tmp/android-build-tools.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Build debug APK
-        shell: bash
-        run: |
-          chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew clean assembleDebug --stacktrace --console=plain
-
-      - name: Upload public debug artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-public-debug-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 7
+          name: SimpleReader-v593-unsigned-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v593-unsigned.apk
+            /tmp/v593-test.log
+            /tmp/v593-build.log
+            /tmp/v593-badging.log
+            /tmp/v593-unzip.log
+            /tmp/v593-unsigned.sha256
+          if-no-files-found: warn
+          retention-days: 3
