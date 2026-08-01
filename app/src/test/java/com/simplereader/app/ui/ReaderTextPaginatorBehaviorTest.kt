@@ -79,7 +79,12 @@ class ReaderTextPaginatorBehaviorTest {
 
     @Test
     fun pageAnchorsUseTheExactSourceOffsetMapper() {
-        val text = "第1章 标题\n" + "甲乙丙丁戊己庚辛壬癸。".repeat(900)
+        val text = buildString {
+            append("第1章 标题\n")
+            repeat(900) {
+                append("甲乙丙丁戊己庚辛壬癸。\n")
+            }
+        }
         val baseByte = 8_000_000L
         val offsets = LongArray(text.length + 1) { index -> baseByte + index * 3L }
 
