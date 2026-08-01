@@ -23,12 +23,24 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=INT 5m bash -c '
+            set -euo pipefail
             source_commit=7010a5cac46a1e465837f0f1541ae466a8dad4da
-            for part in 00 01 02 03 04 05 06a 06b 06c 06d 07a 07b; do
-              git show "$source_commit:scripts/v593-source.part$part"
-            done | base64 -d > /tmp/v593-source.patch
+            {
+              cat scripts/v593-correct00-0 scripts/v593-correct00-1 scripts/v593-correct00-2 scripts/v593-correct00-3
+              for part in 01 02 03; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+              cat scripts/v593-correct04-0 scripts/v593-correct04-1
+              for part in 05 06a 06b 06c 06d 07a 07b; do
+                git show "$source_commit:scripts/v593-source.part$part"
+              done
+            } | base64 -d > /tmp/v593-source.patch
 
-            echo "477bee88799d66e76e53e47fa06a12ed9c1eb33ab32426982508dca8612473f3  /tmp/v593-source.patch" | sha256sum -c -
+            patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
+            echo "v593 corrected patch sha256=$patch_sha"
+            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/MainActivity.kt" /tmp/v593-source.patch
+            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt" /tmp/v593-source.patch
+            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt" /tmp/v593-source.patch
             git apply --check /tmp/v593-source.patch
             git apply /tmp/v593-source.patch
 
@@ -51,8 +63,11 @@ jobs:
             done
 
             grep -Fq "arrayOf(\"批量管理分组\", \"同步书架\", \"一键缓存\")" app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+            grep -Fq "ReaderPageCacheManager.enqueue" app/src/main/java/com/simplereader/app/ui/MainActivity.kt
             grep -Fq "completeChapterCount" app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+            grep -Fq "completeChapterCount" app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
             grep -Fq "TXT_INITIAL_WINDOW_BYTES = 32 * 1024" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            grep -Fq "txtCatalogChapters" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
             ! grep -Fq "MENU_CACHE_BOOK" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 
             git config user.name "github-actions[bot]"
