@@ -1,24 +1,17 @@
 package com.simplereader.app.reader.cache
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
-import android.os.Build
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ImageSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
-import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.simplereader.app.data.cache.StructuredBookCache
@@ -45,8 +38,8 @@ import kotlin.coroutines.coroutineContext
  *
  * Directory recognition is separated from page layout. Every chapter is laid out
  * with the same metrics as the reader, but only page start anchors are persisted;
- * page text and page views are never retained. WorkManager keeps this task alive
- * after ReaderActivity closes and resumes it from persisted chapter checkpoints.
+ * page text and page views are never retained. The ordinary serialized worker resumes
+ * from persisted chapter checkpoints without starting a foreground service.
  */
 class ReaderPageCacheWorker(
     appContext: Context,
@@ -62,7 +55,6 @@ class ReaderPageCacheWorker(
             SimpleReaderDatabase.getDatabase(applicationContext).bookDao().getBook(bookId)
         } ?: return@withContext failure("书籍记录不存在")
 
-        setForeground(foreground(book, 0, 1, "准备目录"))
         try {
             when (book.format.uppercase()) {
                 "TXT" -> cacheTxt(book, signature)
@@ -117,7 +109,6 @@ class ReaderPageCacheWorker(
         val chapters = if (saved.isNotEmpty()) {
             saved
         } else {
-            setForeground(foreground(book, 0, 1, "识别目录"))
             val scanned = withContext(Dispatchers.IO) {
                 openSource(book)?.let { TxtParser.scanChapters(it, charset) }.orEmpty()
             }
@@ -268,7 +259,6 @@ class ReaderPageCacheWorker(
             ReaderPageCacheManager.PROGRESS_CHAPTER to chapter
         )
         setProgress(progress)
-        setForeground(foreground(book, done, total, chapter.ifBlank { "计算页数" }))
     }
 
     private fun sourceRevision(totalBytes: Long, lastModified: Long): String =
@@ -395,75 +385,23 @@ class ReaderPageCacheWorker(
         }
     }
 
-    private fun foreground(
-        book: Book,
-        done: Int,
-        total: Int,
-        detail: String
-    ): ForegroundInfo {
-        createChannel()
-        val cancelIntent = WorkManager.getInstance(applicationContext).createCancelPendingIntent(id)
-        val safeTotal = total.coerceAtLeast(1)
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("正在缓存《${book.title}》")
-            .setContentText(detail)
-            .setOnlyAlertOnce(true)
-            .setOngoing(true)
-            .setProgress(safeTotal, done.coerceIn(0, safeTotal), total <= 1 && done == 0)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "取消", cancelIntent)
-            .build()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(
-                notificationId(book.id),
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+    private suspend fun notifyComplete(book: Book, chapters: Int) {
+        setProgress(
+            workDataOf(
+                ReaderPageCacheManager.PROGRESS_DONE to chapters,
+                ReaderPageCacheManager.PROGRESS_TOTAL to chapters,
+                ReaderPageCacheManager.PROGRESS_CHAPTER to "${book.title} · 缓存完成"
             )
-        } else {
-            ForegroundInfo(notificationId(book.id), notification)
-        }
+        )
     }
-
-    private fun notifyComplete(book: Book, chapters: Int) {
-        createChannel()
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("《${book.title}》缓存完成")
-            .setContentText("已计算 $chapters 个章节的准确页数")
-            .setAutoCancel(true)
-            .build()
-        notificationManager().notify(notificationId(book.id), notification)
-    }
-
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager().createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "书籍分页缓存",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "在后台识别目录并计算每章准确页数"
-                }
-            )
-        }
-    }
-
-    private fun notificationManager(): NotificationManager =
-        applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-    private fun notificationId(bookId: Long): Int =
-        (NOTIFICATION_BASE + (bookId % 100_000L).toInt()).coerceAtLeast(NOTIFICATION_BASE)
 
     private fun failure(message: String): Result =
         Result.failure(workDataOf(ReaderPageCacheManager.OUTPUT_MESSAGE to message))
 
     companion object {
         private val CACHE_MUTEX = Mutex()
-        private const val CHANNEL_ID = "reader_page_cache"
-        private const val NOTIFICATION_BASE = 59_200
         private const val CHECKPOINT_CHAPTERS = 8
-        private const val PAGINATION_INDEX_SCHEMA_VERSION = 3
+        private const val PAGINATION_INDEX_SCHEMA_VERSION = 4
         private val EPUB_IMAGE_MARKER = Regex("\\[\\[SR_IMAGE:([^\\]]+)]]")
     }
 }

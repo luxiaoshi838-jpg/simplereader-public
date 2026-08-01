@@ -38,10 +38,11 @@ class ReaderOneClickCacheArchitectureTest {
     }
 
     @Test
-    fun workerIsForegroundAndPersistsOnlyPageStarts() {
+    fun workerIsOrdinarySerialBackgroundWorkAndPersistsOnlyPageStarts() {
         assertTrue(worker.contains("CoroutineWorker"))
-        assertTrue(worker.contains("setForeground("))
-        assertTrue(worker.contains("FOREGROUND_SERVICE_TYPE_DATA_SYNC"))
+        assertTrue(worker.contains("CACHE_MUTEX.withLock"))
+        assertFalse(worker.contains("setForeground("))
+        assertFalse(worker.contains("ForegroundInfo"))
         assertTrue(worker.contains("ReaderPageBoundaryCalculator.calculate"))
         assertTrue(worker.contains("ReaderPageIndexStore"))
         assertFalse(worker.contains("ReaderPageSnapshot("))
@@ -74,23 +75,20 @@ class ReaderOneClickCacheArchitectureTest {
     }
 
     @Test
-    fun cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis() {
-        val loadBlock = activity.substringAfter("val cachedCatalog = cachedChapters.map")
+    fun cachedTxtCatalogBecomesTheStablePerChapterPageAxis() {
+        val loadBlock = activity.substringAfter("val cachedCatalog = resolvedChapters.map")
             .substringBefore("isStreamingTxt = true")
         assertTrue(loadBlock.contains("txtCatalogChapters = cachedCatalog"))
         assertTrue(loadBlock.contains("txtCatalogStartPositions = cachedStarts"))
-        assertTrue(loadBlock.contains("epubChapters = emptyList()"))
-        assertTrue(loadBlock.contains("epubChapterStartPositions = emptyList()"))
-        assertFalse(loadBlock.contains("epubChapters = cachedCatalog"))
-        assertFalse(loadBlock.contains("epubChapterStartPositions = cachedStarts"))
+        assertTrue(activity.contains("hasStableTxtChapterIndex() -> txtCatalogChapters.size"))
+        assertTrue(activity.contains("val startByte = txtCatalogStartPositions.getOrElse"))
     }
 
     @Test
-    fun target35ForegroundServiceTypeIsDeclared() {
-        assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE"))
-        assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE_DATA_SYNC"))
-        assertTrue(manifest.contains("SystemForegroundService"))
-        assertTrue(manifest.contains("android:foregroundServiceType=\"dataSync\""))
+    fun manifestDoesNotDeclareForegroundCacheService() {
+        assertFalse(manifest.contains("android.permission.FOREGROUND_SERVICE"))
+        assertFalse(manifest.contains("SystemForegroundService"))
+        assertFalse(manifest.contains("android:foregroundServiceType"))
     }
 
     @Test
@@ -100,4 +98,30 @@ class ReaderOneClickCacheArchitectureTest {
         assertTrue(store.contains("context.filesDir"))
         assertFalse(store.contains("context.cacheDir"))
     }
+    @Test
+    fun stableTxtUsesCatalogAsTheOnlyChapterPageAxis() {
+        val source = activity
+        assertTrue(source.contains("txtCatalogStartPositions.size == txtCatalogChapters.size"))
+        assertTrue(source.contains("hasStableTxtChapterIndex() -> txtCatalogChapters.size"))
+        assertTrue(source.contains("val startByte = txtCatalogStartPositions.getOrElse"))
+        assertTrue(source.contains("if (hasStableTxtChapterIndex()) {\n            currentPosition = byteOffset"))
+    }
+
+    @Test
+    fun cacheWorkerNeverStartsForegroundService() {
+        val source = worker
+        assertFalse(source.contains("setForeground("))
+        assertFalse(source.contains("ForegroundInfo"))
+        assertFalse(source.contains("SystemForegroundService"))
+    }
+
+    @Test
+    fun readerLayoutAlwaysIncludesStableSystemBarInsets() {
+        val source = activity
+        assertTrue(source.contains("private fun stableTopInsetPx()"))
+        assertTrue(source.contains("topPaddingPx = stableTopInsetPx() + dp(26)"))
+        assertTrue(source.contains("bottomPaddingPx = stableBottomInsetPx() + dp(42)"))
+        assertTrue(source.contains("ReaderViewportMetrics.resolveHeight"))
+    }
+
 }
