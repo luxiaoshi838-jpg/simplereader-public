@@ -31,12 +31,23 @@ class SimpleReaderApplication : Application() {
                 appendLine("thread=${thread.name}")
                 appendLine("android=${Build.VERSION.RELEASE} sdk=${Build.VERSION.SDK_INT}")
                 appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}")
-                appendLine("appVersion=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                appendLine("appVersion=${installedVersionLabel()}")
                 appendLine()
                 append(writer.toString())
             }
         )
     }
+
+    private fun installedVersionLabel(): String = runCatching {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        "${info.versionName.orEmpty()} ($code)"
+    }.getOrElse { "unknown" }
 
     companion object {
         private const val CRASH_DIRECTORY = "crash_logs"
