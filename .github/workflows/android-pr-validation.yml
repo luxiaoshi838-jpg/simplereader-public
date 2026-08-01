@@ -1,4 +1,4 @@
-name: Materialize v592 through PR validation
+name: Materialize v592 application source
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ jobs:
           ref: agent/v592-demand-page-controller
           fetch-depth: 0
 
-      - name: Materialize direct source commit
+      - name: Commit application source without workflow changes
         shell: bash
         run: |
           set -euxo pipefail
@@ -37,11 +37,14 @@ jobs:
               scripts/v592_materialize.part03 \
             | base64 --decode | gzip --decompress > /tmp/v592.patch
 
-          base=6159c37699e9aca7d15ee20035ca0d2163f3822a
-          git show "$base":.github/workflows/public-ci.yml > .github/workflows/public-ci.yml
-          git show "$base":.github/workflows/android-pr-validation.yml > .github/workflows/android-pr-validation.yml
-          git apply --whitespace=nowarn --check /tmp/v592.patch
-          git apply --whitespace=nowarn /tmp/v592.patch
+          git apply --whitespace=nowarn \
+            --exclude=.github/workflows/public-ci.yml \
+            --exclude=.github/workflows/android-pr-validation.yml \
+            --check /tmp/v592.patch
+          git apply --whitespace=nowarn \
+            --exclude=.github/workflows/public-ci.yml \
+            --exclude=.github/workflows/android-pr-validation.yml \
+            /tmp/v592.patch
 
           rm -f scripts/v592_materialize.part00 \
                 scripts/v592_materialize.part01 \
@@ -54,11 +57,10 @@ jobs:
           grep -Fn 'MENU_CACHE_BOOK' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fn 'work-runtime-ktx' app/build.gradle.kts
           grep -Fn 'foregroundServiceType="dataSync"' app/src/main/AndroidManifest.xml
-          grep -Fn '2098000592' .github/workflows/public-ci.yml
           git status --short
 
-          git add -A
+          git add app scripts
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'v592: materialize demand paging and background page cache'
+          git commit -m 'v592: add demand paging and background page cache source'
           git push origin HEAD:agent/v592-demand-page-controller
