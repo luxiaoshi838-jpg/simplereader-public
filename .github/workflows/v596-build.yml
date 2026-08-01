@@ -4,16 +4,18 @@ on:
   push:
     branches:
       - agent/v596-android16-scrollbar-guard
+  pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: v596-android16-scrollbar-guard
+  group: v596-android16-scrollbar-guard-${{ github.event.pull_request.number || 'push' }}
   cancel-in-progress: true
 
 jobs:
   build-v596:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v596-android16-scrollbar-guard'
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
