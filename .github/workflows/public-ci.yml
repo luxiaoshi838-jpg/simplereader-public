@@ -8,6 +8,7 @@ on:
       - agent/v14-real-epub-chm-continuous
       - agent/v582-duokan-backgrounds
       - agent/v592-demand-page-controller
+      - agent/v593-duokan-page-anchor
   pull_request:
 
 permissions:
@@ -23,11 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 24
     env:
-      SIMPLE_READER_VERSION_CODE: '2098000592'
-      SIMPLE_READER_VERSION_NAME: '2026.08.01.demand-page-cache.592'
+      SIMPLE_READER_VERSION_CODE: '2098000593'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-anchor-cache.593'
 
     steps:
-      - name: Checkout current v592 source
+      - name: Checkout current v593 source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -70,11 +71,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Verify v592 demand-page cache contract
+      - name: Verify v593 Duokan anchor/cache contract
         shell: bash
         run: |
           set -euo pipefail
           activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          index=app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
           paged=app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
           vertical=app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
           model=app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
@@ -104,8 +108,15 @@ jobs:
           grep -Fq '.setIncludePad(false)' "$model"
           grep -Fq 'val layout = StaticLayout.Builder.obtain' "$model"
           grep -Fq 'ReaderPageIndexStore' "$activity"
-          grep -Fq 'MENU_CACHE_BOOK' "$activity"
-          grep -Fq 'ReaderPageCacheManager.enqueue' "$activity"
+          ! grep -Fq 'MENU_CACHE_BOOK' "$activity"
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' "$main"
+          grep -Fq 'confirmCacheBookshelf' "$main"
+          grep -Fq 'ReaderPageCacheManager.enqueue' "$main"
+          grep -Fq 'completeChapterCount' "$worker"
+          grep -Fq 'completeChapterCount' "$index"
+          grep -Fq 'TXT_INITIAL_WINDOW_BYTES = 32 * 1024' "$activity"
+          grep -Fq 'txtCatalogChapters' "$activity"
+          grep -Fq 'CHAPTER_SCAN_BUFFER_BYTES = 64 * 1024' "$parser"
           grep -Fq 'ReaderPageBoundaryCalculator' "$model"
           grep -Fq 'androidx.work:work-runtime-ktx:2.9.1' app/build.gradle.kts
           grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' app/src/main/AndroidManifest.xml
@@ -115,52 +126,55 @@ jobs:
           ! grep -Fq 'val unitsPerPage = pageSize' "$activity"
           ! test -e scripts/v592_import_app_r.patch
           ! test -e .github/workflows/v592-apply-r-imports.yml
+          ! compgen -G 'scripts/v593-final.part*' > /dev/null
+          ! test -e scripts/v593_patch.part00
+          ! test -e .github/workflows/v593-materialize.yml
 
       - name: Run release unit tests
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v592-tests.log
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v593-tests.log
 
       - name: Build release APK
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v592-build.log
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v593-build.log
           apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
           test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v592-unsigned.apk
+          cp "$apk" /tmp/SimpleReader-v593-unsigned.apk
 
-      - name: Verify v592 APK
+      - name: Verify v593 APK
         shell: bash
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/v592-badging.log
-          grep -Fq "package: name='com.simplereader.app'" /tmp/v592-badging.log
-          grep -Fq "versionCode='2098000592'" /tmp/v592-badging.log
-          grep -Fq "versionName='2026.08.01.demand-page-cache.592'" /tmp/v592-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/v592-resources.log
-          grep -Fq 'id/pagedReaderView' /tmp/v592-resources.log
-          grep -Fq 'id/verticalPageFlowView' /tmp/v592-resources.log
-          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v592-resources.log
-          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v592-resources.log
-          ! grep -Fq 'drawable/reader_material_patina' /tmp/v592-resources.log
-          unzip -t /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/v592-unzip.log
-          sha256sum /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/v592-unsigned.sha256
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v593-badging.log
+          grep -Fq "versionCode='2098000593'" /tmp/v593-badging.log
+          grep -Fq "versionName='2026.08.01.duokan-anchor-cache.593'" /tmp/v593-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-resources.log
+          grep -Fq 'id/pagedReaderView' /tmp/v593-resources.log
+          grep -Fq 'id/verticalPageFlowView' /tmp/v593-resources.log
+          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v593-resources.log
+          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v593-resources.log
+          ! grep -Fq 'drawable/reader_material_patina' /tmp/v593-resources.log
+          unzip -t /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-unzip.log
+          sha256sum /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/v593-unsigned.sha256
 
-      - name: Upload unsigned v592 artifact
+      - name: Upload unsigned v593 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v592-unsigned-${{ github.run_number }}
+          name: SimpleReader-v593-unsigned-${{ github.run_number }}
           path: |
-            /tmp/SimpleReader-v592-unsigned.apk
-            /tmp/v592-tests.log
-            /tmp/v592-build.log
-            /tmp/v592-badging.log
-            /tmp/v592-resources.log
-            /tmp/v592-unzip.log
-            /tmp/v592-unsigned.sha256
+            /tmp/SimpleReader-v593-unsigned.apk
+            /tmp/v593-tests.log
+            /tmp/v593-build.log
+            /tmp/v593-badging.log
+            /tmp/v593-resources.log
+            /tmp/v593-unzip.log
+            /tmp/v593-unsigned.sha256
           if-no-files-found: error
           retention-days: 3
