@@ -18,6 +18,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.simplereader.app.R
 
 /**
  * Continuous vertical reader backed by the same fixed logical pages used by every
