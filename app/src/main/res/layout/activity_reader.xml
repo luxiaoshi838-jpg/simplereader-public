@@ -2,7 +2,8 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F5E9C8">
+    android:background="#F5E9C8"
+    android:fitsSystemWindows="true">
 
     <androidx.core.widget.NestedScrollView
         android:id="@+id/readerScrollView"
@@ -13,7 +14,7 @@
         android:fillViewport="true"
         android:focusable="true"
         android:overScrollMode="ifContentScrolls"
-        android:scrollbars="vertical"
+        android:scrollbars="none"
         >
 
         <TextView
@@ -24,7 +25,7 @@
             android:paddingStart="28dp"
             android:paddingTop="26dp"
             android:paddingEnd="28dp"
-            android:paddingBottom="118dp"
+            android:paddingBottom="48dp"
             android:textColor="#3B3428"
             android:textSize="20sp" />
     </androidx.core.widget.NestedScrollView>

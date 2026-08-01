@@ -23,6 +23,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
+import android.util.TypedValue
 import android.widget.EditText
 import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
@@ -37,6 +38,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.widget.NestedScrollView
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
@@ -63,6 +65,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.nio.charset.Charset
+import kotlin.math.roundToInt
 
 class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private lateinit var database: SimpleReaderDatabase
@@ -88,6 +93,18 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var txtReachedEnd: Boolean = false
     private var txtForwardAppendAnchor: TxtForwardAppendAnchor? = null
     private var txtPageWindow: ReaderPageWindow? = null
+    private var txtChapterStartPositionsLong: List<Long> = emptyList()
+    private var txtSourceLastModified: Long = 0L
+    private var txtCurrentChapterIndex: Int = 0
+    private var txtCurrentPageIndex: Int = 0
+    private var txtCurrentChapterText: String = ""
+    private var txtCurrentChapterSourceOffsets: LongArray = longArrayOf()
+    private var txtCurrentChapterPages: List<ReaderPageSnapshot> = emptyList()
+    private var txtCurrentLayoutSignature: ReaderLayoutSignature? = null
+    private val txtPageStartsByChapter = linkedMapOf<Int, IntArray>()
+    private val txtSourceStartsByChapter = linkedMapOf<Int, LongArray>()
+    private var txtWholeBookPageIndexComplete: Boolean = false
+    private var txtPageIndexJob: Job? = null
     private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
@@ -139,6 +156,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         setContentView(R.layout.activity_reader)
         supportActionBar?.setBackgroundDrawable(ColorDrawable(Color.rgb(72, 67, 58)))
         supportActionBar?.hide()
@@ -156,7 +174,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         gestureDetector = GestureDetector(this, this)
         readerScrollView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            pageTurnMode != TURN_MODE_VERTICAL
+            txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
@@ -720,17 +738,39 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 documentFile.lastModified(),
                                 charsetName
                             )
+                            val detectedChapters = if (cachedChapters.isNotEmpty()) {
+                                cachedChapters
+                            } else {
+                                val scanned = contentResolver.openInputStream(documentFile.uri)?.let { stream ->
+                                    TxtParser.scanChapters(stream, charsetName)
+                                }.orEmpty().map { TxtChapterIndexLong(it.title, it.byteOffset) }
+                                val resolved = scanned.ifEmpty { listOf(TxtChapterIndexLong("正文", 0L)) }
+                                writeTxtChapterCache(
+                                    totalBytes = fileSize,
+                                    lastModified = documentFile.lastModified(),
+                                    charsetName = charsetName,
+                                    chapters = resolved
+                                )
+                                resolved
+                            }
+                            val stableChapters = if (detectedChapters.firstOrNull()?.start?.let { it > 0L } == true) {
+                                listOf(TxtChapterIndexLong("正文", 0L)) + detectedChapters
+                            } else {
+                                detectedChapters
+                            }.distinctBy { it.start }.sortedBy { it.start }
                             LoadedContent(
                                 text = window.text,
-                                epubChapters = cachedChapters.map { chapter ->
+                                epubChapters = stableChapters.map { chapter ->
                                     EpubChapter(name = chapter.title, text = "")
                                 },
-                                epubChapterStartPositions = cachedChapters.map {
+                                epubChapterStartPositions = stableChapters.map {
                                     it.start.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                                 },
+                                txtChapterStartPositions = stableChapters.map { it.start },
                                 isStreamingTxt = true,
                                 txtCharsetName = charsetName,
                                 txtTotalBytes = fileSize,
+                                txtSourceLastModified = documentFile.lastModified(),
                                 txtStartByte = window.startByte,
                                 txtNextByte = window.nextByte,
                                 txtTargetByte = targetOffset
@@ -823,6 +863,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         txtStreamingMode = loadedContent.isStreamingTxt
         txtCharsetName = loadedContent.txtCharsetName
         txtTotalBytes = loadedContent.txtTotalBytes
+        txtChapterStartPositionsLong = loadedContent.txtChapterStartPositions
+        txtSourceLastModified = loadedContent.txtSourceLastModified
         txtCurrentPageStartByte = loadedContent.txtStartByte
         txtCurrentPageEndByte = loadedContent.txtNextByte
         if (txtStreamingMode) {
@@ -888,9 +930,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 )
             }
         }
-        displayContent()
-        if (txtStreamingMode && pageTurnMode == TURN_MODE_VERTICAL) {
-            readerScrollView.post { maybeExtendTxtContinuousBuffer(readerScrollView.scrollY) }
+        if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+            readerScrollView.post {
+                openFixedTxtAtSourceOffset(
+                    sourceOffset = currentPosition.toLong(),
+                    saveImmediately = false
+                )
+            }
+        } else {
+            displayContent()
         }
     }
 
@@ -951,6 +999,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun displayContent() {
         activeReaderSearchHighlight = false
+        if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+            openFixedTxtAtSourceOffset(currentPosition.toLong())
+            return
+        }
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
         updateStructuredLocationFromCurrentPosition()
         if (txtStreamingMode) {
@@ -1017,6 +1069,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun pageCountLabel(): String {
+        if (txtStreamingMode && txtCurrentChapterPages.isNotEmpty()) {
+            return fixedTxtPageCountLabel()
+        }
         val (positionUnits, totalUnits) = readerPageUnits()
         val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)
         val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
@@ -1045,7 +1100,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             val line = text.substring(lineStart, lineEnd).trim()
             if (TxtParser.isLikelyChapterTitle(line)) {
                 spannable.setSpan(
-                    RelativeSizeSpan(1.12f),
+                    RelativeSizeSpan(1.30f),
                     lineStart,
                     lineEnd,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -1117,12 +1172,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun configureVerticalScrollIfNeeded() {
-        val continuous = pageTurnMode == TURN_MODE_VERTICAL
+        val continuous = pageTurnMode == TURN_MODE_VERTICAL && !txtStreamingMode
         contentView.setTextIsSelectable(false)
         contentView.isVerticalScrollBarEnabled = false
-        readerScrollView.isVerticalScrollBarEnabled = continuous
-        readerScrollView.isScrollbarFadingEnabled = false
-        readerScrollView.isSmoothScrollingEnabled = true
+        readerScrollView.isVerticalScrollBarEnabled = false
+        readerScrollView.isHorizontalScrollBarEnabled = false
+        readerScrollView.isSmoothScrollingEnabled = continuous
         readerScrollView.overScrollMode = if (continuous) {
             View.OVER_SCROLL_IF_CONTENT_SCROLLS
         } else {
@@ -2108,7 +2163,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         currentPosition = epubChapterStartPositions[targetIndex]
-        if (txtStreamingMode) {
+        if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+            loadFixedTxtChapter(
+                chapterIndex = targetIndex,
+                requestedPageIndex = 0,
+                saveImmediately = true,
+                direction = direction
+            )
+        } else if (txtStreamingMode) {
             beginProgrammaticScrollGuard()
             showStreamingTxtPage(
                 currentPosition.toLong(),
@@ -2178,6 +2240,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         epubChapterStartPositions = chapters.map {
                             it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                         }
+                        txtChapterStartPositionsLong = chapters.map { it.byteOffset }
                         withContext(Dispatchers.IO) {
                             writeTxtChapterCache(
                                 totalBytes = txtTotalBytes,
@@ -2334,7 +2397,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                             } else {
                                 beginProgrammaticScrollGuard()
                                 currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
-                                if (txtStreamingMode) {
+                                if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+                                    loadFixedTxtChapter(
+                                        chapterIndex = which,
+                                        requestedPageIndex = 0,
+                                        saveImmediately = true
+                                    )
+                                } else if (txtStreamingMode) {
                                     showStreamingTxtPage(
                                         currentPosition.toLong(),
                                         saveImmediately = true,
@@ -2481,9 +2550,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             .setTitle("目录")
             .setItems(items) { _, which ->
                 currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
-                displayContent()
-                markProgressDirty()
-                scheduleProgressSave()
+                if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+                    loadFixedTxtChapter(which, requestedPageIndex = 0, saveImmediately = true)
+                } else {
+                    displayContent()
+                    markProgressDirty()
+                    scheduleProgressSave()
+                }
             }
             .setNegativeButton("关闭", null)
             .show()
@@ -2630,6 +2703,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun nextPage() {
+        if (txtStreamingMode && txtCurrentChapterPages.isNotEmpty()) {
+            showNextFixedTxtPage()
+            return
+        }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             scrollContinuousPage(1)
             return
@@ -2666,6 +2743,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun previousPage() {
+        if (txtStreamingMode && txtCurrentChapterPages.isNotEmpty()) {
+            showPreviousFixedTxtPage()
+            return
+        }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             scrollContinuousPage(-1)
             return
@@ -2847,6 +2928,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun seekToProgress(progress: Int) {
+        if (txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+            val target = ((progress.coerceIn(0, 1000) / 1000.0) * txtTotalBytes).toLong()
+            openFixedTxtAtSourceOffset(target, saveImmediately = true)
+            return
+        }
         if (txtStreamingMode) {
             val targetByte = ((progress / 1000f) * txtTotalBytes).toLong()
                 .coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
@@ -2896,6 +2982,363 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
+
+    private data class FixedTxtChapterData(
+        val text: String,
+        val sourceOffsets: LongArray
+    )
+
+    private fun openFixedTxtAtSourceOffset(
+        sourceOffset: Long,
+        saveImmediately: Boolean = false,
+        direction: Int = 0
+    ) {
+        if (txtChapterStartPositionsLong.isEmpty()) return
+        val safeOffset = sourceOffset.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
+        val chapterIndex = txtChapterStartPositionsLong.indexOfLast { it <= safeOffset }
+            .coerceAtLeast(0)
+            .coerceAtMost(txtChapterStartPositionsLong.lastIndex)
+        loadFixedTxtChapter(
+            chapterIndex = chapterIndex,
+            targetSourceOffset = safeOffset,
+            saveImmediately = saveImmediately,
+            direction = direction
+        )
+    }
+
+    private fun loadFixedTxtChapter(
+        chapterIndex: Int,
+        requestedPageIndex: Int? = null,
+        targetSourceOffset: Long? = null,
+        saveImmediately: Boolean = false,
+        direction: Int = 0
+    ) {
+        val selectedBook = book ?: return
+        if (txtChapterStartPositionsLong.isEmpty()) return
+        val safeChapter = chapterIndex.coerceIn(0, txtChapterStartPositionsLong.lastIndex)
+        val signature = currentReaderLayoutSignature()
+        if (signature.viewportWidthPx <= 1 || signature.viewportHeightPx <= 1) {
+            readerScrollView.post {
+                loadFixedTxtChapter(
+                    safeChapter,
+                    requestedPageIndex,
+                    targetSourceOffset,
+                    saveImmediately,
+                    direction
+                )
+            }
+            return
+        }
+        val targetUri = Uri.parse(selectedBook.filePath)
+        val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
+        txtBufferLoadJob?.cancel()
+        txtBufferLoadJob = lifecycleScope.launch {
+            try {
+                val data = withContext(Dispatchers.IO) {
+                    readFixedTxtChapter(targetUri, charsetName, safeChapter)
+                }
+                val styled = styledReadingText(data.text)
+                val pages = withContext(Dispatchers.Default) {
+                    ReaderTextPaginator.paginate(
+                        chapterIndex = safeChapter,
+                        text = styled,
+                        signature = signature,
+                        typeface = contentView.typeface,
+                        lineSpacingMultiplier = 1.75f,
+                        sourceOffsetForCharacter = { offset ->
+                            data.sourceOffsets[offset.coerceIn(0, data.sourceOffsets.lastIndex)]
+                        }
+                    )
+                }
+                val pageIndex = when {
+                    requestedPageIndex != null -> requestedPageIndex.coerceIn(0, pages.lastIndex)
+                    targetSourceOffset != null -> pages.indexOfLast {
+                        it.startAnchor.sourceOffset <= targetSourceOffset
+                    }.coerceAtLeast(0)
+                    else -> 0
+                }
+                if (txtCurrentLayoutSignature != null && txtCurrentLayoutSignature != signature) {
+                    txtPageIndexJob?.cancel()
+                    txtPageIndexJob = null
+                    txtPageStartsByChapter.clear()
+                    txtSourceStartsByChapter.clear()
+                    txtWholeBookPageIndexComplete = false
+                }
+                txtCurrentChapterIndex = safeChapter
+                txtCurrentChapterText = data.text
+                txtCurrentChapterSourceOffsets = data.sourceOffsets
+                txtCurrentChapterPages = pages
+                txtCurrentPageIndex = pageIndex
+                txtCurrentLayoutSignature = signature
+                registerFixedTxtChapterPages(safeChapter, pages)
+                renderFixedTxtPage(direction)
+                markProgressDirty()
+                if (saveImmediately) saveProgressNow() else scheduleProgressSave()
+                startFixedTxtWholeBookIndex(signature)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                showError("读取章节失败：${error.message ?: error.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun renderFixedTxtPage(direction: Int = 0) {
+        val page = txtCurrentChapterPages.getOrNull(txtCurrentPageIndex) ?: return
+        currentContent = txtCurrentChapterText
+        currentPosition = page.startAnchor.sourceOffset
+            .coerceAtLeast(0L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        txtCurrentPageStartByte = page.startAnchor.sourceOffset.coerceAtLeast(0L)
+        txtCurrentPageEndByte = page.endAnchor.sourceOffset
+            .coerceAtLeast(txtCurrentPageStartByte)
+        contentView.setTextSize(TypedValue.COMPLEX_UNIT_SP, readerTextSize)
+        contentView.text = page.content
+        contentView.minimumHeight = readerScrollView.height.coerceAtLeast(1)
+        configureVerticalScrollIfNeeded()
+        readerScrollView.scrollTo(0, 0)
+        updateProgressViews(progressForCurrentPosition())
+        scheduleReaderSearchHighlight()
+        if (direction != 0) animatePageTurn(direction)
+    }
+
+    private fun showNextFixedTxtPage() {
+        if (txtCurrentPageIndex < txtCurrentChapterPages.lastIndex) {
+            txtCurrentPageIndex += 1
+            renderFixedTxtPage(1)
+            markProgressDirty()
+            scheduleProgressSave()
+            return
+        }
+        if (txtCurrentChapterIndex < txtChapterStartPositionsLong.lastIndex) {
+            loadFixedTxtChapter(
+                chapterIndex = txtCurrentChapterIndex + 1,
+                requestedPageIndex = 0,
+                saveImmediately = false,
+                direction = 1
+            )
+        } else {
+            Toast.makeText(this, "已经到末尾", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showPreviousFixedTxtPage() {
+        if (txtCurrentPageIndex > 0) {
+            txtCurrentPageIndex -= 1
+            renderFixedTxtPage(-1)
+            markProgressDirty()
+            scheduleProgressSave()
+            return
+        }
+        if (txtCurrentChapterIndex > 0) {
+            loadFixedTxtChapter(
+                chapterIndex = txtCurrentChapterIndex - 1,
+                requestedPageIndex = Int.MAX_VALUE,
+                saveImmediately = false,
+                direction = -1
+            )
+        } else {
+            Toast.makeText(this, "已经到开头", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun currentReaderLayoutSignature(): ReaderLayoutSignature {
+        contentView.setTextSize(TypedValue.COMPLEX_UNIT_SP, readerTextSize)
+        val viewportWidth = readerScrollView.width
+            .takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val viewportHeight = readerScrollView.height
+            .takeIf { it > 0 }
+            ?: resources.displayMetrics.heightPixels
+        ReaderViewportMetrics.record(viewportWidth, viewportHeight)
+        return ReaderLayoutSignature(
+            widthPx = viewportWidth,
+            heightPx = viewportHeight,
+            textSizePx = contentView.textSize.roundToInt().coerceAtLeast(1),
+            lineSpacingMultiplierX100 = 175,
+            horizontalPaddingPx = contentView.paddingLeft,
+            topPaddingPx = contentView.paddingTop,
+            bottomPaddingPx = contentView.paddingBottom,
+            chapterTitleScaleX100 = 130,
+            contentKey = 598L,
+            viewportWidthPx = viewportWidth,
+            viewportHeightPx = viewportHeight
+        )
+    }
+
+    private fun readFixedTxtChapter(
+        uri: Uri,
+        charsetName: String,
+        chapterIndex: Int
+    ): FixedTxtChapterData {
+        val start = txtChapterStartPositionsLong.getOrElse(chapterIndex) { 0L }
+            .coerceIn(0L, txtTotalBytes)
+        val end = txtChapterStartPositionsLong.getOrNull(chapterIndex + 1)
+            ?.coerceIn(start, txtTotalBytes)
+            ?: txtTotalBytes
+        val byteCount = (end - start).coerceAtLeast(0L)
+        require(byteCount <= Int.MAX_VALUE.toLong()) { "单章过大，无法排版" }
+        val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            skipFully(input, start)
+            val output = ByteArrayOutputStream(byteCount.coerceAtMost(1024 * 1024L).toInt())
+            val buffer = ByteArray(64 * 1024)
+            var remaining = byteCount
+            while (remaining > 0L) {
+                val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                if (read <= 0) break
+                output.write(buffer, 0, read)
+                remaining -= read
+            }
+            output.toByteArray()
+        } ?: error("无法读取 TXT 原文件")
+        val charset = Charset.forName(charsetName)
+        var text = bytes.toString(charset)
+        var absoluteStart = start
+        if (text.startsWith('\uFEFF')) {
+            absoluteStart += "\uFEFF".toByteArray(charset).size
+            text = text.substring(1)
+        }
+        return FixedTxtChapterData(
+            text = text,
+            sourceOffsets = buildCharacterSourceOffsets(text, charset, absoluteStart)
+        )
+    }
+
+    private fun skipFully(input: java.io.InputStream, byteCount: Long) {
+        var remaining = byteCount
+        val buffer = ByteArray(16 * 1024)
+        while (remaining > 0L) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0L) {
+                remaining -= skipped
+            } else {
+                val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                if (read <= 0) break
+                remaining -= read
+            }
+        }
+    }
+
+    private fun buildCharacterSourceOffsets(
+        text: String,
+        charset: Charset,
+        absoluteStart: Long
+    ): LongArray {
+        val offsets = LongArray(text.length + 1)
+        var source = absoluteStart
+        var index = 0
+        offsets[0] = source
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            val chars = Character.charCount(codePoint)
+            val encodedLength = String(Character.toChars(codePoint)).toByteArray(charset).size
+            offsets[index] = source
+            if (chars == 2 && index + 1 < offsets.size) offsets[index + 1] = source
+            source += encodedLength
+            index += chars
+            offsets[index] = source
+        }
+        return offsets
+    }
+
+    private fun registerFixedTxtChapterPages(
+        chapterIndex: Int,
+        pages: List<ReaderPageSnapshot>
+    ) {
+        txtPageStartsByChapter[chapterIndex] = pages.map {
+            it.startAnchor.chapterOffset
+        }.toIntArray()
+        txtSourceStartsByChapter[chapterIndex] = pages.map {
+            it.startAnchor.sourceOffset
+        }.toLongArray()
+        txtWholeBookPageIndexComplete =
+            txtPageStartsByChapter.size == txtChapterStartPositionsLong.size
+    }
+
+    private fun fixedTxtPageCountLabel(): String {
+        val chapterPage = txtCurrentPageIndex + 1
+        val chapterTotal = txtCurrentChapterPages.size.coerceAtLeast(1)
+        if (!txtWholeBookPageIndexComplete) {
+            return "本章 $chapterPage/$chapterTotal"
+        }
+        val prefix = (0 until txtCurrentChapterIndex).sumOf { index ->
+            txtPageStartsByChapter[index]?.size ?: 0
+        }
+        val total = (0 until txtChapterStartPositionsLong.size).sumOf { index ->
+            txtPageStartsByChapter[index]?.size ?: 0
+        }.coerceAtLeast(1)
+        return "${(prefix + chapterPage).coerceIn(1, total)}/$total"
+    }
+
+    private fun startFixedTxtWholeBookIndex(signature: ReaderLayoutSignature) {
+        if (txtChapterStartPositionsLong.isEmpty()) return
+        if (txtCurrentLayoutSignature != signature) return
+        val sourceRevision = listOf(
+            "v598",
+            txtTotalBytes,
+            txtSourceLastModified,
+            txtChapterStartPositionsLong.size
+        ).joinToString(":")
+        val store = ReaderPageIndexStore(this, bookId)
+        val loaded = store.load(signature, sourceRevision, txtChapterStartPositionsLong.size)
+        if (loaded != null && txtPageIndexJob == null) {
+            txtPageStartsByChapter.putAll(loaded.pageStartsByChapter)
+            txtSourceStartsByChapter.putAll(loaded.sourceStartsByChapter)
+            txtWholeBookPageIndexComplete = loaded.complete
+            if (loaded.complete) {
+                readerProgressLabel.text = fixedTxtPageCountLabel()
+                return
+            }
+        }
+        if (txtPageIndexJob?.isActive == true) return
+        val selectedBook = book ?: return
+        val uri = Uri.parse(selectedBook.filePath)
+        val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
+        txtPageIndexJob = lifecycleScope.launch {
+            try {
+                for (chapterIndex in txtChapterStartPositionsLong.indices) {
+                    if (txtPageStartsByChapter.containsKey(chapterIndex)) continue
+                    val data = withContext(Dispatchers.IO) {
+                        readFixedTxtChapter(uri, charsetName, chapterIndex)
+                    }
+                    val styled = styledReadingText(data.text)
+                    val boundaries = withContext(Dispatchers.Default) {
+                        ReaderPageBoundaryCalculator.calculate(
+                            text = styled,
+                            signature = signature,
+                            typeface = contentView.typeface,
+                            lineSpacingMultiplier = 1.75f,
+                            sourceOffsetForCharacter = { offset ->
+                                data.sourceOffsets[offset.coerceIn(0, data.sourceOffsets.lastIndex)]
+                            }
+                        )
+                    }
+                    txtPageStartsByChapter[chapterIndex] = boundaries.chapterOffsets
+                    txtSourceStartsByChapter[chapterIndex] = boundaries.sourceOffsets
+                    if ((chapterIndex + 1) % 8 == 0 || chapterIndex == txtChapterStartPositionsLong.lastIndex) {
+                        withContext(Dispatchers.IO) {
+                            store.save(
+                                signature,
+                                sourceRevision,
+                                txtChapterStartPositionsLong.size,
+                                txtPageStartsByChapter.toMap(),
+                                txtSourceStartsByChapter.toMap()
+                            )
+                        }
+                    }
+                }
+                txtWholeBookPageIndexComplete =
+                    txtPageStartsByChapter.size == txtChapterStartPositionsLong.size
+                readerProgressLabel.text = fixedTxtPageCountLabel()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Current chapter remains fully usable; incomplete totals are never presented as exact.
+            }
+        }
+    }
+
     private fun showStreamingTxtPage(
         byteOffset: Long,
         saveImmediately: Boolean = false,
@@ -2903,6 +3346,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         keepContextBeforeTarget: Boolean = false,
         preloadAdjacentWindows: Boolean = false
     ) {
+        if (txtChapterStartPositionsLong.isNotEmpty()) {
+            openFixedTxtAtSourceOffset(byteOffset, saveImmediately, direction)
+            return
+        }
         val selectedBook = book ?: return
         val targetUri = Uri.parse(selectedBook.filePath)
         val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
@@ -3017,6 +3464,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             epubChapterStartPositions = chapters.map {
                 it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
+            txtChapterStartPositionsLong = chapters.map { it.byteOffset }
             withContext(Dispatchers.IO) {
                 writeTxtChapterCache(
                     totalBytes = txtTotalBytes,
@@ -3296,7 +3744,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onDown(e: MotionEvent): Boolean = true
     override fun onShowPress(e: MotionEvent) {}
     override fun onSingleTapUp(e: MotionEvent): Boolean {
-        if (pageTurnMode == TURN_MODE_VERTICAL) return false
+        if (pageTurnMode == TURN_MODE_VERTICAL && !(txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty())) return false
         val width = readerScrollView.width.takeIf { it > 0 } ?: return false
         val centerLeft = width * READER_CHROME_CENTER_START
         val centerRight = width * READER_CHROME_CENTER_END
@@ -3377,10 +3825,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         velocityX: Float,
         velocityY: Float
     ): Boolean {
-        if (pageTurnMode == TURN_MODE_VERTICAL) return false
         val start = e1 ?: return false
-        val delta = e2.x - start.x
         val threshold = 100
+        if (pageTurnMode == TURN_MODE_VERTICAL && txtStreamingMode && txtChapterStartPositionsLong.isNotEmpty()) {
+            val deltaY = e2.y - start.y
+            if (deltaY > threshold) previousPage() else if (deltaY < -threshold) nextPage()
+            return true
+        }
+        if (pageTurnMode == TURN_MODE_VERTICAL) return false
+        val delta = e2.x - start.x
         if (delta > threshold) {
             previousPage()
         } else if (delta < -threshold) {
@@ -3412,6 +3865,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     override fun onDestroy() {
+        txtPageIndexJob?.cancel()
         readerSearchSession = null
         pendingReaderSearchHighlight = null
         activeReaderSearchHighlight = false
@@ -3489,10 +3943,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val text: String,
         val epubChapters: List<EpubChapter> = emptyList(),
         val epubChapterStartPositions: List<Int> = emptyList(),
+        val txtChapterStartPositions: List<Long> = emptyList(),
         val structuredCatalogEntries: List<StructuredCatalogEntry> = emptyList(),
         val isStreamingTxt: Boolean = false,
         val txtCharsetName: String? = null,
         val txtTotalBytes: Long = 0L,
+        val txtSourceLastModified: Long = 0L,
         val txtStartByte: Long = 0L,
         val txtNextByte: Long = 0L,
         val txtTargetByte: Long = 0L,
