@@ -1,21 +1,19 @@
 name: v593 commit source only
 
 on:
-  push:
-    branches:
-      - agent/v593-duokan-page-anchor
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   commit-source:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: agent/v593-duokan-page-anchor
           fetch-depth: 0
 
       - name: Rebuild and commit only source files
@@ -38,9 +36,6 @@ jobs:
 
             patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
             echo "v593 corrected patch sha256=$patch_sha"
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/MainActivity.kt" /tmp/v593-source.patch
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt" /tmp/v593-source.patch
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt" /tmp/v593-source.patch
             git apply --check /tmp/v593-source.patch
             git apply /tmp/v593-source.patch
 
@@ -56,7 +51,6 @@ jobs:
             git add -- "${files[@]}"
             git diff --cached --check
             staged=$(git diff --cached --name-only)
-            printf "%s\n" "$staged"
             test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 7
             for file in "${files[@]}"; do
               printf "%s\n" "$staged" | grep -Fxq "$file"
