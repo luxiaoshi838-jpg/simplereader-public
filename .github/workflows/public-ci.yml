@@ -52,9 +52,9 @@ jobs:
             patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
             echo "v593 corrected patch sha256=$patch_sha"
             if ! git apply --check /tmp/v593-source.patch; then
-              echo "--- malformed patch context ---"
-              nl -ba /tmp/v593-source.patch | sed -n "1,180p"
-              echo "--- end malformed patch context ---"
+              echo "--- malformed patch lines 490-550 ---"
+              nl -ba /tmp/v593-source.patch | sed -n "490,550p"
+              echo "--- end malformed patch lines ---"
               exit 1
             fi
             git apply /tmp/v593-source.patch
