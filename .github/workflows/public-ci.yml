@@ -75,6 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          paged=app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
           vertical=app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
           model=app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
           parser=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
@@ -95,12 +96,19 @@ jobs:
           grep -Fq 'bottomViewportPaddingPx' "$vertical"
           grep -Fq 'edgeGradient' "$vertical"
           grep -Fq 'BREAK_STRATEGY_HIGH_QUALITY' "$vertical"
-          grep -Fq 'BREAK_STRATEGY_HIGH_QUALITY' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'BREAK_STRATEGY_HIGH_QUALITY' "$paged"
+          grep -Fq 'import com.simplereader.app.R' "$vertical"
+          grep -Fq 'import com.simplereader.app.R' "$paged"
+          grep -Fq 'includeFontPadding = false' "$vertical"
+          grep -Fq 'includeFontPadding = false' "$paged"
+          grep -Fq '.setIncludePad(false)' "$model"
           grep -Fq 'val layout = StaticLayout.Builder.obtain' "$model"
           grep -Fq 'ReaderPageIndexStore' "$activity"
           grep -Fq 'return "本章 ${pageIndex + 1}/$safeChapterPages"' "$activity"
           grep -Fq 'readerTextSizePx()' "$activity"
           ! grep -Fq 'val unitsPerPage = pageSize' "$activity"
+          ! test -e scripts/v591_import_app_r.patch
+          ! test -e .github/workflows/v591-apply-r-imports.yml
 
       - name: Run release unit tests
         shell: bash
