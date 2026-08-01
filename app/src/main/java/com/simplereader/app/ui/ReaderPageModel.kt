@@ -5,6 +5,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import java.util.LinkedHashMap
+import kotlin.math.abs
 
 /** Stable logical position used by every paged turn mode. */
 data class ReaderPageAnchor(
@@ -46,19 +47,65 @@ data class ReaderLayoutSignature(
     ).joinToString(":")
 }
 
-/** Small LRU cache: previous, current and next chapter page lists. */
+/**
+ * Bounded page cache for the interactive chapter window.
+ *
+ * The first read after every [put] belongs to page-index registration: the caller
+ * immediately asks the cache for the just-built pages so it can persist exact page
+ * starts. Background whole-book indexing therefore needs a temporary readable slot,
+ * but it must never evict the chapters around the visible page. Near chapters are
+ * retained in a three-entry window; one far temporary slot is overwritten as the
+ * background index advances. A temporary chapter is promoted only when it is read
+ * again later by real navigation.
+ */
 class ReaderPageCache(private val maxChapters: Int = 3) {
     private data class Key(val chapterIndex: Int, val signature: ReaderLayoutSignature)
 
-    private val pages = object : LinkedHashMap<Key, List<ReaderPageSnapshot>>(8, 0.75f, true) {
-        override fun removeEldestEntry(
-            eldest: MutableMap.MutableEntry<Key, List<ReaderPageSnapshot>>?
-        ): Boolean = size > maxChapters
-    }
+    private data class Entry(
+        var pages: List<ReaderPageSnapshot>,
+        var registrationReadPending: Boolean
+    )
+
+    private val promoted = LinkedHashMap<Key, Entry>(8, 0.75f, true)
+    private val near = LinkedHashMap<Key, Entry>(8, 0.75f, true)
+    private var far: Pair<Key, Entry>? = null
+    private var focus: Key? = null
 
     @Synchronized
-    fun get(chapterIndex: Int, signature: ReaderLayoutSignature): List<ReaderPageSnapshot>? =
-        pages[Key(chapterIndex, signature)]
+    fun get(chapterIndex: Int, signature: ReaderLayoutSignature): List<ReaderPageSnapshot>? {
+        val key = Key(chapterIndex, signature)
+        promoted[key]?.let { entry ->
+            if (entry.registrationReadPending) {
+                entry.registrationReadPending = false
+            } else if (isNearFocus(key)) {
+                moveFocus(key)
+            }
+            return entry.pages
+        }
+
+        near[key]?.let { entry ->
+            if (entry.registrationReadPending) {
+                entry.registrationReadPending = false
+                return entry.pages
+            }
+            near.remove(key)
+            promote(key, entry)
+            return entry.pages
+        }
+
+        val farEntry = far
+        if (farEntry?.first == key) {
+            val entry = farEntry.second
+            if (entry.registrationReadPending) {
+                entry.registrationReadPending = false
+                return entry.pages
+            }
+            far = null
+            promote(key, entry)
+            return entry.pages
+        }
+        return null
+    }
 
     @Synchronized
     fun put(
@@ -66,11 +113,92 @@ class ReaderPageCache(private val maxChapters: Int = 3) {
         signature: ReaderLayoutSignature,
         value: List<ReaderPageSnapshot>
     ) {
-        pages[Key(chapterIndex, signature)] = value
+        val key = Key(chapterIndex, signature)
+        promoted[key]?.let { entry ->
+            entry.pages = value
+            entry.registrationReadPending = true
+            return
+        }
+        near[key]?.let { entry ->
+            entry.pages = value
+            entry.registrationReadPending = true
+            return
+        }
+        if (far?.first == key) {
+            far = key to Entry(value, registrationReadPending = true)
+            return
+        }
+
+        if (focus == null) focus = key
+        val entry = Entry(value, registrationReadPending = true)
+        if (isNearFocus(key)) {
+            near[key] = entry
+            trimNearWindow()
+        } else {
+            // Whole-book indexing advances through distant chapters. Only its latest
+            // result must remain readable long enough for exact start registration.
+            far = key to entry
+        }
     }
 
     @Synchronized
-    fun clear() = pages.clear()
+    fun clear() {
+        promoted.clear()
+        near.clear()
+        far = null
+        focus = null
+    }
+
+    private fun promote(key: Key, entry: Entry) {
+        entry.registrationReadPending = false
+        promoted[key] = entry
+        moveFocus(key)
+        trimPromoted()
+    }
+
+    private fun moveFocus(key: Key) {
+        focus = key
+        trimNearWindow()
+        trimPromoted()
+    }
+
+    private fun isNearFocus(key: Key): Boolean {
+        val current = focus ?: return true
+        return current.signature == key.signature &&
+            abs(current.chapterIndex - key.chapterIndex) <= 1
+    }
+
+    private fun trimNearWindow() {
+        val current = focus ?: return
+        val iterator = near.entries.iterator()
+        while (iterator.hasNext()) {
+            val key = iterator.next().key
+            if (key.signature != current.signature || abs(key.chapterIndex - current.chapterIndex) > 1) {
+                iterator.remove()
+            }
+        }
+        while (near.size > maxChapters) {
+            val victim = near.keys.maxByOrNull { key -> abs(key.chapterIndex - current.chapterIndex) }
+                ?: break
+            near.remove(victim)
+        }
+    }
+
+    private fun trimPromoted() {
+        val current = focus ?: return
+        while (promoted.size > maxChapters) {
+            val victim = promoted.keys
+                .filterNot { it == current }
+                .maxByOrNull { key ->
+                    if (key.signature == current.signature) {
+                        abs(key.chapterIndex - current.chapterIndex)
+                    } else {
+                        Int.MAX_VALUE
+                    }
+                } ?: promoted.keys.firstOrNull() ?: break
+            promoted.remove(victim)
+        }
+    }
 }
 
 /**
