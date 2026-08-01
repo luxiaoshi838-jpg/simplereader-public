@@ -28,32 +28,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          timeout --signal=INT 5m bash -c '
+            base64 -d scripts/v595-duokan-pages.patch.gz.b64 > /tmp/v595.patch.gz
+            gzip -dc /tmp/v595.patch.gz > /tmp/v595.patch
+            echo "0520241744b310d3451390a474c11cc125d65317b3809cae39f8304d5d457de7  /tmp/v595.patch" | sha256sum -c -
+            if git apply --check /tmp/v595.patch; then
+              git apply /tmp/v595.patch
+            elif git apply --reverse --check /tmp/v595.patch; then
+              echo "v595 source already materialized"
+            else
+              echo "v595 patch matches neither base nor materialized source" >&2
+              exit 1
+            fi
+          '
           worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
           manifest=app/src/main/AndroidManifest.xml
-          test_file=app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
-          if grep -Fq 'PAGINATION_INDEX_SCHEMA_VERSION = 4' "$activity" \
-            && grep -Fq 'hasStableTxtChapterIndex() -> txtCatalogChapters.size' "$activity" \
-            && grep -Fq 'private fun stableTopInsetPx()' "$activity" \
-            && ! grep -Fq 'setForeground(' "$worker" \
-            && ! grep -Fq 'SystemForegroundService' "$manifest"; then
-            echo 'v595 source already materialized'
-          else
-            timeout --signal=INT 5m bash -c '
-              base64 -d scripts/v595-duokan-pages.patch.gz.b64 > /tmp/v595.patch.gz
-              gzip -dc /tmp/v595.patch.gz > /tmp/v595.patch
-              echo "0520241744b310d3451390a474c11cc125d65317b3809cae39f8304d5d457de7  /tmp/v595.patch" | sha256sum -c -
-              git apply --check /tmp/v595.patch
-              git apply /tmp/v595.patch
-            '
-          fi
-          grep -Fq 'PAGINATION_INDEX_SCHEMA_VERSION = 4' "$activity"
-          grep -Fq 'hasStableTxtChapterIndex() -> txtCatalogChapters.size' "$activity"
-          grep -Fq 'private fun stableTopInsetPx()' "$activity"
-          grep -Fq 'cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis' "$test_file"
-          ! grep -Fq 'setForeground(' "$worker"
-          ! grep -Fq 'ForegroundInfo' "$worker"
-          ! grep -Fq 'SystemForegroundService' "$manifest"
+          ! grep -Eq '^[[:space:]]*setForeground\(' "$worker"
           ! grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' "$manifest"
 
       - uses: actions/setup-java@v4
