@@ -40,8 +40,8 @@ jobs:
           base=6159c37699e9aca7d15ee20035ca0d2163f3822a
           git show "$base":.github/workflows/public-ci.yml > .github/workflows/public-ci.yml
           git show "$base":.github/workflows/android-pr-validation.yml > .github/workflows/android-pr-validation.yml
-          git apply --check /tmp/v592.patch
-          git apply /tmp/v592.patch
+          git apply --whitespace=nowarn --check /tmp/v592.patch
+          git apply --whitespace=nowarn /tmp/v592.patch
 
           rm -f scripts/v592_materialize.part00 \
                 scripts/v592_materialize.part01 \
