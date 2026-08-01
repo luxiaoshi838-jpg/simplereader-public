@@ -106,7 +106,7 @@ object ReaderTextPaginator {
         }
         val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setIncludePad(true)
+            .setIncludePad(false)
             .setLineSpacing(0f, lineSpacingMultiplier)
             .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
             .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
