@@ -11,7 +11,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
@@ -30,25 +30,7 @@ jobs:
       - name: Checkout current v591 source
         uses: actions/checkout@v4
         with:
-          ref: agent/v591-duokan-fixed-page-flow
           fetch-depth: 0
-
-      - name: Materialize missing application R imports
-        shell: bash
-        run: |
-          set -euo pipefail
-          patch_file=scripts/v591_import_app_r.patch
-          if [[ -f "$patch_file" ]]; then
-            git apply --check "$patch_file"
-            git apply "$patch_file"
-            rm "$patch_file"
-            rm -f .github/workflows/v591-apply-r-imports.yml
-            git add -A
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'v591: import application resources in reader views'
-            git push origin HEAD:agent/v591-duokan-fixed-page-flow
-          fi
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
