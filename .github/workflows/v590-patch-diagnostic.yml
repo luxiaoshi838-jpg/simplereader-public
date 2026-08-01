@@ -1,0 +1,30 @@
+name: v590 patch diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v582-duokan-backgrounds
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v582-duokan-backgrounds
+      - name: Print exact patch block metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c scripts/v590_patch_exact_*.b64
+          sha256sum scripts/v590_patch_exact_*.b64
+          cat scripts/v590_patch_exact_*.b64 | wc -c
+          cat scripts/v590_patch_exact_*.b64 | base64 -d > /tmp/v590.patch.gz
+          wc -c /tmp/v590.patch.gz
+          sha256sum /tmp/v590.patch.gz
+          gzip -t /tmp/v590.patch.gz

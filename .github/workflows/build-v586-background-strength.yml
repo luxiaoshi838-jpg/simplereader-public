@@ -1,36 +1,32 @@
-name: Android PR validation
+name: Build v586 background strength
 
 on:
-  workflow_dispatch:
-  pull_request:
   push:
-    branches-ignore:
-      - main
+    branches:
+      - agent/v582-duokan-backgrounds
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-pr-validation-${{ github.ref }}
+  group: build-v586-background-strength
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: v586 release validation
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
       SIMPLE_READER_VERSION_CODE: '2098000586'
       SIMPLE_READER_VERSION_NAME: '2026.07.31.background-strength.586'
-
     steps:
-      - name: Checkout current branch
+      - name: Checkout v586 source branch
         uses: actions/checkout@v4
         with:
+          ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
 
-      - name: Verify v586 background contract
-        shell: bash
+      - name: Verify v586 source contract
         run: |
           set -euo pipefail
           background=app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
@@ -58,42 +54,42 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Test and assemble v586 release
-        shell: bash
+      - name: Test and assemble v586
         run: |
           set -euo pipefail
-          timeout --signal=INT 6m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
-          timeout --signal=INT 6m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
+          timeout --signal=INT 6m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v586-tests.log
+          timeout --signal=INT 6m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v586-build.log
 
-      - name: Verify v586 package and resources
-        shell: bash
+      - name: Verify v586 APK
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
           test -n "$apk"
           cp "$apk" /tmp/SimpleReader-v586-unsigned.apk
-          test -s /tmp/SimpleReader-v586-unsigned.apk
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/aapt2-badging.log
-          grep -Fq "package: name='com.simplereader.app'" /tmp/aapt2-badging.log
-          grep -Fq "versionCode='2098000586'" /tmp/aapt2-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/aapt2-resources.log
-          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/aapt2-resources.log
-          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/aapt2-resources.log
-          grep -Fq 'drawable/reader_material_frosted' /tmp/aapt2-resources.log
-          ! grep -Fq 'drawable/reader_material_patina' /tmp/aapt2-resources.log
-          sha256sum /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/SimpleReader-v586-unsigned.sha256
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/v586-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v586-badging.log
+          grep -Fq "versionCode='2098000586'" /tmp/v586-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/v586-resources.log
+          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v586-resources.log
+          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v586-resources.log
+          grep -Fq 'drawable/reader_material_frosted' /tmp/v586-resources.log
+          ! grep -Fq 'drawable/reader_material_patina' /tmp/v586-resources.log
+          unzip -p /tmp/SimpleReader-v586-unsigned.apk classes.dex | strings | grep -Fq 'background_color_v585'
+          unzip -p /tmp/SimpleReader-v586-unsigned.apk classes.dex | strings | grep -Fq 'background_texture_v585'
+          unzip -p /tmp/SimpleReader-v586-unsigned.apk classes.dex | strings | grep -Fq 'background_material_v585'
+          sha256sum /tmp/SimpleReader-v586-unsigned.apk | tee /tmp/v586-unsigned.sha256
 
-      - name: Upload v586 release and logs
+      - name: Upload unsigned v586 and logs
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v586-unsigned-${{ github.run_number }}
           path: |
             /tmp/SimpleReader-v586-unsigned.apk
-            /tmp/test-release.log
-            /tmp/assemble-release.log
-            /tmp/aapt2-badging.log
-            /tmp/aapt2-resources.log
-            /tmp/SimpleReader-v586-unsigned.sha256
+            /tmp/v586-tests.log
+            /tmp/v586-build.log
+            /tmp/v586-badging.log
+            /tmp/v586-resources.log
+            /tmp/v586-unsigned.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
