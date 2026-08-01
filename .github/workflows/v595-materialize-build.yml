@@ -1,0 +1,109 @@
+name: v595 Duokan chapter pages
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v595-duokan-pages-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-v595:
+    if: github.head_ref == 'agent/v595-duokan-chapter-pages'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000595'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-chapter-pages.595'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v595-duokan-chapter-pages
+          fetch-depth: 0
+
+      - name: Apply v595 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m bash -c '
+            base64 -d scripts/v595-duokan-pages.patch.gz.b64 > /tmp/v595.patch.gz
+            gzip -dc /tmp/v595.patch.gz > /tmp/v595.patch
+            echo "0520241744b310d3451390a474c11cc125d65317b3809cae39f8304d5d457de7  /tmp/v595.patch" | sha256sum -c -
+            if git apply --check /tmp/v595.patch; then
+              git apply /tmp/v595.patch
+            elif git apply --reverse --check /tmp/v595.patch; then
+              echo "v595 source already materialized"
+            else
+              echo "v595 patch matches neither base nor materialized source" >&2
+              exit 1
+            fi
+          '
+          worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          manifest=app/src/main/AndroidManifest.xml
+          ! grep -Eq '^[[:space:]]*setForeground\(' "$worker"
+          ! grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' "$manifest"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v595-test.log
+
+      - name: Build release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v595-build.log
+
+      - name: Verify v595 APK and commit source
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v595-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v595-unsigned.apk | tee /tmp/v595-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v595-badging.log
+          grep -Fq "versionCode='2098000595'" /tmp/v595-badging.log
+          grep -Fq "versionName='2026.08.01.duokan-chapter-pages.595'" /tmp/v595-badging.log
+          unzip -t /tmp/SimpleReader-v595-unsigned.apk | tee /tmp/v595-unzip.log
+          sha256sum /tmp/SimpleReader-v595-unsigned.apk | tee /tmp/SimpleReader-v595-unsigned.sha256
+          files=(
+            app/src/main/AndroidManifest.xml
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
+          )
+          git add -- "${files[@]}"
+          git diff --cached --check
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'v595: replace TXT window paging with chapter page tables'
+            git push origin HEAD:agent/v595-duokan-chapter-pages
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v595-unsigned-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v595-unsigned.apk
+            /tmp/v595-test.log
+            /tmp/v595-build.log
+            /tmp/v595-badging.log
+            /tmp/v595-unzip.log
+            /tmp/SimpleReader-v595-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 3

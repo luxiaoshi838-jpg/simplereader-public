@@ -1,0 +1,1 @@
+Runtime hypothesis fixed in v594: cached whole-book TXT byte anchors were entering the active first-window page axis. The active first window is only 32 KB, so global offsets must remain catalog-only until normal navigation loads a new window.

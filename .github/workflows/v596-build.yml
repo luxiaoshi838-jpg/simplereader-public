@@ -1,0 +1,87 @@
+name: v596 Android 16 scrollbar guard
+
+on:
+  push:
+    branches:
+      - agent/v596-android16-scrollbar-guard
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v596-android16-scrollbar-guard-${{ github.event.pull_request.number || 'push' }}
+  cancel-in-progress: true
+
+jobs:
+  build-v596:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v596-android16-scrollbar-guard'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000596'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.android16-scrollbar-guard.596'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v596-android16-scrollbar-guard
+          fetch-depth: 0
+
+      - name: Verify scrollbar crash guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_file=app/src/main/java/com/simplereader/app/SimpleReaderApplication.kt
+          test_file=app/src/test/java/com/simplereader/app/Android16ScrollbarGuardArchitectureTest.kt
+          grep -Fq 'view.isVerticalScrollBarEnabled = false' "$source_file"
+          grep -Fq 'view.isHorizontalScrollBarEnabled = false' "$source_file"
+          grep -Fq 'view.isScrollbarFadingEnabled = false' "$source_file"
+          grep -Fq 'applicationDisablesRecyclerViewSystemScrollbarsBeforeRendering' "$test_file"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v596-test.log
+
+      - name: Build release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v596-build.log
+
+      - name: Verify v596 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v596-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v596-unsigned.apk | tee /tmp/v596-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v596-badging.log
+          grep -Fq "versionCode='2098000596'" /tmp/v596-badging.log
+          grep -Fq "versionName='2026.08.01.android16-scrollbar-guard.596'" /tmp/v596-badging.log
+          unzip -t /tmp/SimpleReader-v596-unsigned.apk | tee /tmp/v596-unzip.log
+          sha256sum /tmp/SimpleReader-v596-unsigned.apk | tee /tmp/SimpleReader-v596-unsigned.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v596-unsigned-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v596-unsigned.apk
+            /tmp/v596-test.log
+            /tmp/v596-build.log
+            /tmp/v596-badging.log
+            /tmp/v596-unzip.log
+            /tmp/SimpleReader-v596-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 3

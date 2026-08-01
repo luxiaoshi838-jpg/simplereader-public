@@ -1,0 +1,49 @@
+diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+index 7591c42..3657265 100644
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+@@ -3726,7 +3915,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+ 
+     private fun scanStreamingTxtChapters(documentFile: DocumentFile) {
+         val charsetName = txtCharsetName ?: return
+-        lifecycleScope.launch {
++        if (chapterScanJob?.isActive == true) return
++        chapterScanJob = lifecycleScope.launch {
+             val chapters = try {
+                 withContext(Dispatchers.IO) {
+                     contentResolver.openInputStream(documentFile.uri)?.let { stream ->
+@@ -3751,6 +3941,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                     chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
+                 )
+             }
++            readerPageCache.clear()
++            resetPagedPageIndex()
++            if (openSucceeded) displayContent()
+         }
+     }
+ 
+@@ -3765,6 +3958,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+             val file = txtChapterCacheFile()
+             if (!file.exists()) return emptyList()
+             val json = JSONObject(file.readText(Charsets.UTF_8))
++            if (json.optInt("version") != TXT_CHAPTER_INDEX_VERSION) return emptyList()
+             if (json.optLong("totalBytes") != totalBytes) return emptyList()
+             if (json.optLong("lastModified") != lastModified) return emptyList()
+             if (json.optString("charset") != charsetName) return emptyList()
+@@ -3802,6 +3996,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+                 )
+             }
+             val json = JSONObject()
++                .put("version", TXT_CHAPTER_INDEX_VERSION)
+                 .put("bookId", bookId)
+                 .put("totalBytes", totalBytes)
+                 .put("lastModified", lastModified)
+@@ -4169,6 +4364,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         private const val STRUCTURED_PREFETCH_FORWARD_FRACTION = 0.86f
+         private const val STRUCTURED_PREFETCH_BACKWARD_FRACTION = 0.14f
+         private const val STRUCTURED_CHAPTER_POSITION_STRIDE = 1_000_000
++        private const val TXT_CHAPTER_INDEX_VERSION = 2
++        private const val PAGINATION_INDEX_SCHEMA_VERSION = 2
+         private const val MAX_CACHED_TXT_CHAPTERS = 5000
+         private const val SEARCH_RESULT_PAGE_SIZE = 40
+         private const val MAX_SEARCH_RESULTS = 5000

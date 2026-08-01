@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Bitmap
@@ -30,7 +33,9 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
+import com.simplereader.app.SimpleReaderApplication
 import com.simplereader.app.parser.EpubParser
+import com.simplereader.app.reader.cache.ReaderPageCacheManager
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
@@ -200,7 +205,7 @@ class MainActivity : AppCompatActivity() {
             text = "编辑"
             setOnClickListener {
                 if (shelfSelectionMode) {
-                    confirmDeleteShelfSelection()
+                    showShelfSelectionActions()
                 } else {
                     Toast.makeText(this@MainActivity, "长按书籍或分组可批量选择", Toast.LENGTH_SHORT).show()
                 }
@@ -219,6 +224,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadBooks()
+        mainRoot.post { showPendingCrashReport() }
+    }
+
+    private fun showPendingCrashReport() {
+        val app = application as? SimpleReaderApplication ?: return
+        val report = SimpleReaderApplication.pendingCrashLog(app) ?: return
+        val visibleReport = report.takeLast(12_000)
+        AlertDialog.Builder(this)
+            .setTitle("上次崩溃日志")
+            .setMessage(visibleReport)
+            .setNeutralButton("复制日志") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("SimpleReader crash", report))
+                Toast.makeText(this, "崩溃日志已复制", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("暂时保留", null)
+            .setPositiveButton("已记录并清除") { _, _ ->
+                SimpleReaderApplication.clearPendingCrashLog(app)
+            }
+            .show()
     }
 
     private fun statusBarHeight(): Int {
@@ -988,11 +1013,47 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreShelfActions() {
         AlertDialog.Builder(this)
             .setTitle("书架管理")
-            .setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->
+            .setItems(arrayOf("批量管理分组", "同步书架", "一键缓存")) { _, which ->
                 when (which) {
                     0 -> showBatchGroupManagement()
                     1 -> confirmSyncBookshelf()
+                    2 -> confirmCacheBookshelf()
                 }
+            }
+            .show()
+    }
+
+
+    private fun confirmCacheBookshelf() {
+        val cacheable = books
+            .filter { it.format.uppercase() in setOf("TXT", "EPUB", "CHM") }
+            .distinctBy { it.id }
+        if (cacheable.isEmpty()) {
+            Toast.makeText(this, "书架中没有可缓存的书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("一键缓存")
+            .setMessage(
+                "将在后台依次缓存书架中的 ${cacheable.size} 本书。\n\n" +
+                    "原文件大小和修改时间未变化、且当前排版设置一致的完整缓存会直接跳过；" +
+                    "未完成的书籍从检查点继续。离开书架或切到后台后任务仍会继续。"
+            )
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始缓存") { _, _ ->
+                val signature = ReaderPageCacheManager.currentLayoutSignature(this)
+                cacheable.forEach { book ->
+                    ReaderPageCacheManager.enqueue(
+                        context = applicationContext,
+                        bookId = book.id,
+                        signature = signature
+                    )
+                }
+                Toast.makeText(
+                    this,
+                    "已加入后台缓存：${cacheable.size} 本；完整且未变化的书会自动跳过",
+                    Toast.LENGTH_LONG
+                ).show()
             }
             .show()
     }
@@ -1235,7 +1296,7 @@ class MainActivity : AppCompatActivity() {
     private fun enterShelfSelectionMode() {
         if (!shelfSelectionMode) {
             shelfSelectionMode = true
-            editButton.text = "\u5220\u9664"
+            editButton.text = "操作"
             moreButton.text = "\u53d6\u6d88"
         }
     }
@@ -1266,8 +1327,91 @@ class MainActivity : AppCompatActivity() {
     private fun updateShelfSelectionButtons() {
         if (!shelfSelectionMode) return
         val count = selectedShelfBookIds.size + selectedShelfGroupIds.size
-        editButton.text = if (count > 0) "\u5220\u9664($count)" else "\u5220\u9664"
+        editButton.text = if (count > 0) "操作($count)" else "操作"
         moreButton.text = "\u53d6\u6d88"
+    }
+
+    private fun showShelfSelectionActions() {
+        val bookCount = selectedShelfBookIds.size
+        val groupCount = selectedShelfGroupIds.size
+        val total = bookCount + groupCount
+        if (total == 0) {
+            Toast.makeText(this, "请先选择书籍或分组", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (groupCount > 0) {
+            AlertDialog.Builder(this)
+                .setTitle("已选择 $total 项")
+                .setItems(arrayOf("删除")) { _, _ -> confirmDeleteShelfSelection() }
+                .show()
+            return
+        }
+
+        val selectedBooks = books.filter { it.id in selectedShelfBookIds }
+        if (selectedBooks.size == 1) {
+            val book = selectedBooks.first()
+            AlertDialog.Builder(this)
+                .setTitle(book.title)
+                .setItems(arrayOf("修改书名", "导入分组", "删除")) { _, which ->
+                    when (which) {
+                        0 -> {
+                            exitShelfSelectionMode()
+                            showRenameBookDialog(book)
+                        }
+                        1 -> showMoveSelectedBooksToGroup()
+                        2 -> confirmDeleteShelfSelection()
+                    }
+                }
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("已选择 ${selectedBooks.size} 本书")
+                .setItems(arrayOf("导入分组", "删除")) { _, which ->
+                    when (which) {
+                        0 -> showMoveSelectedBooksToGroup()
+                        1 -> confirmDeleteShelfSelection()
+                    }
+                }
+                .show()
+        }
+    }
+
+    private fun showMoveSelectedBooksToGroup() {
+        val selectedIds = selectedShelfBookIds.toSet()
+        if (selectedIds.isEmpty()) {
+            Toast.makeText(this, "请先选择书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch {
+            val existingGroups = withContext(Dispatchers.IO) {
+                bookGroupRepository.getAllGroups().first()
+            }
+            val labels = (listOf("未分组") + existingGroups.map { group ->
+                group.displayName.ifBlank { group.name }
+            }).toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("导入分组 · ${selectedIds.size} 本")
+                .setItems(labels) { _, which ->
+                    lifecycleScope.launch {
+                        val targetGroupId = if (which == 0) null else existingGroups[which - 1].id
+                        withContext(Dispatchers.IO) {
+                            selectedIds.forEach { bookId ->
+                                database.bookDao().getBook(bookId)?.let { entity ->
+                                    bookRepository.update(entity.copy(groupId = targetGroupId))
+                                }
+                            }
+                        }
+                        Toast.makeText(
+                            this@MainActivity,
+                            "已将 ${selectedIds.size} 本书导入所选分组",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        exitShelfSelectionMode()
+                    }
+                }
+                .show()
+        }
     }
 
     private fun confirmDeleteShelfSelection() {
