@@ -50,6 +50,7 @@ class TxtChapterAndEncodingRegressionTest {
         )
         assertEquals("2 最后一章", chapters.last().title)
     }
+
     @Test
     fun mappedRangeUsesExactGb18030AndCrLfByteAnchors() {
         val source = "第1章 标题\r\n甲A乙\r\n第2章 标题"
@@ -69,7 +70,11 @@ class TxtChapterAndEncodingRegressionTest {
             .let { source.substring(0, it).toByteArray(charset).size.toLong() }
         assertEquals(expectedSecondChapterByte, mapped.sourceOffsets[secondChapter])
         assertEquals(bytes.size.toLong(), mapped.sourceOffsets.last())
-        assertTrue(mapped.sourceOffsets.zipWithNext().all { (a, b) -> b >= a })
+        assertTrue(
+            (1 until mapped.sourceOffsets.size).all { index ->
+                mapped.sourceOffsets[index] >= mapped.sourceOffsets[index - 1]
+            }
+        )
     }
 
     @Test
@@ -86,5 +91,4 @@ class TxtChapterAndEncodingRegressionTest {
         val expected = source.substring(0, afterRareCharacter).toByteArray(Charsets.UTF_8).size.toLong()
         assertEquals(expected, mapped.sourceOffsets[afterRareCharacter])
     }
-
 }
