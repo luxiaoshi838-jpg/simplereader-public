@@ -1,0 +1,39 @@
+name: Apply v591 exact stream anchors
+
+on:
+  push:
+    branches:
+      - agent/v591-duokan-fixed-page-flow
+    paths:
+      - scripts/v591_exact_stream.patch
+      - .github/workflows/v591-apply-exact-stream.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-v591-exact-stream
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v591-duokan-fixed-page-flow
+          fetch-depth: 0
+      - name: Apply fix and remove temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check scripts/v591_exact_stream.patch
+          git apply scripts/v591_exact_stream.patch
+          rm scripts/v591_exact_stream.patch
+          rm .github/workflows/v591-apply-exact-stream.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'v591: use exact bytes for streaming page anchors'
+          git push origin HEAD:agent/v591-duokan-fixed-page-flow
