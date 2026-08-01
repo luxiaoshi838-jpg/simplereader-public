@@ -1,0 +1,38 @@
+name: Check v591 signing fingerprint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v591-duokan-fixed-page-flow
+    paths:
+      - .github/workflows/v591-signing-fingerprint-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fingerprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
+      SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
+    steps:
+      - name: Print certificate fingerprint only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SIGNING_KEY_BASE64:-}" || -z "${SIGNING_PASSWORD:-}" ]]; then
+            echo 'SIGNING_SECRET_STATUS=missing'
+            exit 0
+          fi
+          key="$RUNNER_TEMP/simplereader-signing.p12"
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$key"
+          test -s "$key"
+          echo 'SIGNING_SECRET_STATUS=present'
+          keytool -list -v -keystore "$key" -storepass "$SIGNING_PASSWORD" 2>/dev/null \
+            | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' \
+            | tr -d ':' \
+            | tr 'A-F' 'a-f' \
+            | sed 's/^/SIGNING_CERT_SHA256=/'
