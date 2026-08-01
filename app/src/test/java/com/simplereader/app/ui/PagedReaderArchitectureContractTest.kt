@@ -142,4 +142,19 @@ class PagedReaderArchitectureContractTest {
         assertFalse(mapper.contains("byteSpan * characterOffset"))
     }
 
+    @Test
+    fun visibleReaderControlsBlockMovementButCenterTapCanDismissThem() {
+        val turn = view.substringAfter("fun turn(direction: Int)")
+            .substringBefore("override fun onTouchEvent")
+        assertTrue(turn.contains("isReaderChromeVisible()"))
+        assertTrue(turn.contains("cancelNavigation()"))
+        val pagedTouch = view.substringAfter("override fun onTouchEvent(event: MotionEvent)")
+            .substringBefore("private fun animateTurn")
+        assertTrue(pagedTouch.contains("isReaderChromeVisible()"))
+        assertTrue(pagedTouch.contains("onCenterTap?.invoke()"))
+        assertTrue(vertical.contains("if (isReaderChromeVisible() || direction == 0) return"))
+        assertTrue(vertical.contains("if (chromeVisible && e.actionMasked == MotionEvent.ACTION_DOWN) rv.stopScroll()"))
+        assertTrue(vertical.contains("if (e.x in width * 0.33f..width * 0.67f) onCenterTap?.invoke()"))
+    }
+
 }
