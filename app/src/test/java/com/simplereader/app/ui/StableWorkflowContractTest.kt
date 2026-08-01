@@ -10,7 +10,7 @@ class StableWorkflowContractTest {
     fun `group card opens an isolated group bookshelf activity`() {
         val source = projectFile("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val method = source.substringAfter("private fun showGroupBooksV2(")
-            .substringBefore("private fun showBookActionsV2(")
+            .substringBefore("private fun showBookActionsLegacy(")
         assertTrue(method.contains("GroupBooksActivity::class.java"))
         assertTrue(method.contains("GroupBooksActivity.EXTRA_GROUP_ID"))
         assertFalse(method.contains("selectedGroupId = group.id"))
