@@ -26,7 +26,7 @@ jobs:
       - name: Materialize direct source commit
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           for part in 00 01 02 03; do
             test -s "scripts/v592_materialize.part${part}"
           done
@@ -48,14 +48,15 @@ jobs:
                 scripts/v592_materialize.part02 \
                 scripts/v592_materialize.part03
 
-          grep -Fq 'class ReaderPageCacheWorker' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
-          grep -Fq 'ExistingWorkPolicy.KEEP' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
-          grep -Fq 'ReaderPageBoundaryCalculator' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
-          grep -Fq 'MENU_CACHE_BOOK' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'work-runtime-ktx' app/build.gradle.kts
-          grep -Fq 'foregroundServiceType="dataSync"' app/src/main/AndroidManifest.xml
-          grep -Fq '2098000592' .github/workflows/public-ci.yml
-          grep -Fq '2098000592' .github/workflows/android-pr-validation.yml
+          grep -Fn 'class ReaderPageCacheWorker' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          grep -Fn 'ExistingWorkPolicy.KEEP' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+          grep -Fn 'ReaderPageBoundaryCalculator' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
+          grep -Fn 'MENU_CACHE_BOOK' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fn 'work-runtime-ktx' app/build.gradle.kts
+          grep -Fn 'foregroundServiceType="dataSync"' app/src/main/AndroidManifest.xml
+          grep -Fn '2098000592' .github/workflows/public-ci.yml
+          grep -Fn '2098000592' .github/workflows/android-pr-validation.yml
+          git status --short
 
           git add -A
           git config user.name 'github-actions[bot]'
