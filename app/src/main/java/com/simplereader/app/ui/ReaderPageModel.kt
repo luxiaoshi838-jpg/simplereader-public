@@ -231,6 +231,73 @@ class ReaderPageCache(private val maxChapters: Int = 3) {
     }
 }
 
+
+data class ReaderPageBoundaries(
+    val chapterOffsets: IntArray,
+    val sourceOffsets: LongArray
+) {
+    val pageCount: Int get() = chapterOffsets.size.coerceAtLeast(1)
+}
+
+/**
+ * Low-memory page-boundary calculation used by one-click background caching.
+ * It builds the same Android StaticLayout as the visible paginator but stores only
+ * page start anchors; no page text slices or view objects are retained.
+ */
+object ReaderPageBoundaryCalculator {
+    fun calculate(
+        text: CharSequence,
+        signature: ReaderLayoutSignature,
+        typeface: Typeface? = Typeface.DEFAULT,
+        lineSpacingMultiplier: Float = 1.75f,
+        sourceOffsetForCharacter: (Int) -> Long = { -1L }
+    ): ReaderPageBoundaries {
+        if (text.isEmpty()) {
+            return ReaderPageBoundaries(
+                chapterOffsets = intArrayOf(0),
+                sourceOffsets = longArrayOf(sourceOffsetForCharacter(0))
+            )
+        }
+        val contentWidth = (signature.viewportWidthPx - signature.horizontalPaddingPx * 2)
+            .coerceAtLeast(1)
+        val contentHeight = (
+            signature.viewportHeightPx - signature.topPaddingPx - signature.bottomPaddingPx
+        ).coerceAtLeast(1)
+        val paint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = signature.textSizePx.toFloat()
+            this.typeface = typeface
+        }
+        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .setLineSpacing(0f, lineSpacingMultiplier)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
+
+        val starts = ArrayList<Int>()
+        var firstLine = 0
+        while (firstLine < layout.lineCount) {
+            val startOffset = layout.getLineStart(firstLine).coerceIn(0, text.length)
+            starts += startOffset
+            val pageTop = layout.getLineTop(firstLine)
+            val pageBottom = pageTop + contentHeight
+            var lastLine = firstLine
+            while (
+                lastLine + 1 < layout.lineCount &&
+                layout.getLineBottom(lastLine + 1) <= pageBottom
+            ) {
+                lastLine += 1
+            }
+            firstLine = lastLine + 1
+        }
+        if (starts.isEmpty()) starts += 0
+        val local = starts.toIntArray()
+        val source = LongArray(local.size) { index -> sourceOffsetForCharacter(local[index]) }
+        return ReaderPageBoundaries(local, source)
+    }
+}
+
 /**
  * Real screen-layout pagination. It uses the same width, height, text size and
  * line spacing as the visible page instead of a fixed character count.

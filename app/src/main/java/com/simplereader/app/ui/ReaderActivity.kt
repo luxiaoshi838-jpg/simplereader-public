@@ -40,6 +40,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import androidx.work.WorkInfo
 import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.data.cache.CachedBook
@@ -49,6 +50,7 @@ import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.ReadProgress
 import com.simplereader.app.reader.page.ReaderPageWindow
+import com.simplereader.app.reader.cache.ReaderPageCacheManager
 import com.simplereader.app.reader.page.TxtPageEngine
 import com.simplereader.app.parser.ChmParser
 import com.simplereader.app.parser.EpubChapter
@@ -146,6 +148,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pagedPageIndexPersistJob: Job? = null
     private var pagedPageIndexLoadedKey: String? = null
     private val pagedPageIndexStore by lazy { ReaderPageIndexStore(this, bookId) }
+    private var pageCacheWorkInfo: WorkInfo? = null
+    private var pageCacheLastTerminalId: java.util.UUID? = null
     private var readerTopInsetPx: Int = 0
     private var readerBottomInsetPx: Int = 0
     private var txtPagedWindowBasePage: Long? = null
@@ -258,6 +262,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         bookId = intent.getLongExtra("bookId", 0L)
+        observeOneClickPageCache()
         setupUI()
         val diagnosticText = intent.getStringExtra("readerDiagnosticText")
         if (diagnosticText != null) {
@@ -298,6 +303,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             setOnClickListener { addBookmark() }
         }
+        menu.add(Menu.NONE, MENU_CACHE_BOOK, Menu.NONE, pageCacheMenuTitle())
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         return true
     }
 
@@ -317,6 +324,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             MENU_SEARCH -> {
                 showContentSearch()
+                true
+            }
+            MENU_CACHE_BOOK -> {
+                startOneClickPageCache()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -1327,24 +1338,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun renderedPageCountLabel(): String? = pageCountLabel()
 
     private fun ensureWholeBookPageIndex(signature: ReaderLayoutSignature) {
-        if (!hasStableChapterPageAxis() || pagedPageIndexComplete || pagedPageIndexJob?.isActive == true) return
-        pagedPageIndexJob = lifecycleScope.launch {
-            delay(120L)
-            try {
-                for (chapter in 0 until pagedChapterCount()) {
-                    if (currentPagedSignature != signature && pagedPageIndexSignature != signature) return@launch
-                    if (!pagedChapterPageCounts.containsKey(chapter)) {
-                        pagedPagesForChapter(chapter, signature)
-                    }
-                }
-                pagedPageIndexComplete =
-                    (0 until pagedChapterCount()).all { pagedChapterPageCounts.containsKey(it) }
-                schedulePersistPageIndex(signature, immediate = true)
-                currentLayoutPage()?.let(::updatePagedProgressLabel)
-            } catch (_: Throwable) {
-                // The visible page remains valid; indexing can retry later.
-            }
-        }
+        // v592: opening a book must never launch a 767-chapter layout loop inside
+        // ReaderActivity. The current chapter is exact immediately; full-book page
+        // boundaries are produced only by the user-triggered foreground WorkManager.
+        preparePagedIndexSignature(signature)
     }
 
     private fun ensureVerticalPageIndex() {
@@ -1769,6 +1766,55 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun toggleReaderChrome() {
         setReaderChromeVisible(!readerChromeVisible)
+    }
+
+    private fun pageCacheMenuTitle(): String {
+        val info = pageCacheWorkInfo ?: return "一键缓存"
+        val done = info.progress.getInt(ReaderPageCacheManager.PROGRESS_DONE, 0)
+        val total = info.progress.getInt(ReaderPageCacheManager.PROGRESS_TOTAL, 0)
+        return when (info.state) {
+            WorkInfo.State.RUNNING -> if (total > 0) "一键缓存（$done/$total）" else "一键缓存（进行中）"
+            WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "一键缓存（等待中）"
+            WorkInfo.State.SUCCEEDED -> "一键缓存（已完成）"
+            WorkInfo.State.FAILED -> "一键缓存（上次失败）"
+            WorkInfo.State.CANCELLED -> "一键缓存（已取消）"
+        }
+    }
+
+    private fun observeOneClickPageCache() {
+        if (bookId <= 0L) return
+        ReaderPageCacheManager.observe(this, this, bookId) { info ->
+            pageCacheWorkInfo = info
+            invalidateOptionsMenu()
+            if (info?.state == WorkInfo.State.SUCCEEDED && pageCacheLastTerminalId != info.id) {
+                pageCacheLastTerminalId = info.id
+                currentPagedSignature?.let { signature ->
+                    pagedPageIndexLoadedKey = null
+                    preparePagedIndexSignature(signature)
+                    currentLayoutPage()?.let(::updatePagedProgressLabel)
+                }
+                Toast.makeText(this, "全书页数缓存完成", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun startOneClickPageCache() {
+        if (bookId <= 0L || book == null || !openSucceeded) {
+            Toast.makeText(this, "书籍尚未打开完成", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val signature = pagedLayoutSignature().copy(contentKey = 0L)
+        ReaderPageCacheManager.enqueue(
+            context = applicationContext,
+            bookId = bookId,
+            signature = signature
+        )
+        Toast.makeText(
+            this,
+            "已开始后台缓存；离开阅读页后仍会继续",
+            Toast.LENGTH_LONG
+        ).show()
+        invalidateOptionsMenu()
     }
 
     private fun showContentSearch() {
@@ -4159,7 +4205,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
     }
 
-    private fun txtChapterCacheFile() = cacheDir.resolve("txt_chapters").resolve("$bookId.json")
+    private fun txtChapterCacheFile() = TxtChapterIndexStore.file(this, bookId)
 
     private fun readTxtChapterCache(
         totalBytes: Long,
@@ -4612,6 +4658,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val MENU_TOC = 3
         private const val MENU_PANEL = 4
         private const val MENU_SEARCH = 5
+        private const val MENU_CACHE_BOOK = 6
     }
 
     private data class ReaderSearchSession(
