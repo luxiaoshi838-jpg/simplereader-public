@@ -50,10 +50,12 @@ jobs:
 
             patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
             echo "v593 corrected patch sha256=$patch_sha"
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/MainActivity.kt" /tmp/v593-source.patch
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt" /tmp/v593-source.patch
-            grep -Fq "diff --git a/app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt" /tmp/v593-source.patch
-            git apply --check /tmp/v593-source.patch
+            if ! git apply --check /tmp/v593-source.patch; then
+              echo "--- malformed patch head ---"
+              nl -ba /tmp/v593-source.patch | sed -n "1,80p"
+              echo "--- end malformed patch head ---"
+              exit 1
+            fi
             git apply /tmp/v593-source.patch
 
             files=(
