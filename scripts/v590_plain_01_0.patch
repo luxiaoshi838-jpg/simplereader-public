@@ -1,0 +1,180 @@
+diff --git a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+index 7591c42..3657265 100644
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+@@ -36,6 +36,8 @@ import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.appcompat.app.AlertDialog
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.documentfile.provider.DocumentFile
++import androidx.core.view.ViewCompat
++import androidx.core.view.WindowInsetsCompat
+ import androidx.core.widget.NestedScrollView
+ import androidx.lifecycle.lifecycleScope
+ import androidx.room.withTransaction
+@@ -136,9 +138,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+     private var currentPagedSignature: ReaderLayoutSignature? = null
+     private val pagedChapterPageCounts = linkedMapOf<Int, Int>()
+     private val pagedChapterPageStarts = linkedMapOf<Int, IntArray>()
++    private val pagedChapterSourceStarts = linkedMapOf<Int, LongArray>()
+     private var pagedPageIndexSignature: ReaderLayoutSignature? = null
+     private var pagedPageIndexComplete: Boolean = false
+     private var pagedPageIndexJob: Job? = null
++    private var pagedPageIndexPersistJob: Job? = null
++    private var pagedPageIndexLoadedKey: String? = null
++    private val pagedPageIndexStore by lazy { ReaderPageIndexStore(this, bookId) }
++    private var readerTopInsetPx: Int = 0
++    private var readerBottomInsetPx: Int = 0
+     private var txtPagedWindowBasePage: Long? = null
+ 
+     private data class TxtForwardAppendAnchor(
+@@ -147,6 +155,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         val oldEndByte: Long
+     )
+ 
++    private data class PagedChapterSource(
++        val text: String,
++        val startSourceOffset: Long = -1L,
++        val endSourceOffset: Long = -1L
++    )
++
+     private val recoverSourceFolderLauncher = registerForActivityResult(
+         ActivityResultContracts.OpenDocumentTree()
+     ) { uri ->
+@@ -182,6 +196,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         readerProgressLabel = findViewById(R.id.readerProgressLabel)
+         readerControls = findViewById(R.id.readerControls)
+         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
++        val readerRoot = findViewById<View>(android.R.id.content)
++        ViewCompat.setOnApplyWindowInsetsListener(readerRoot) { _, insets ->
++            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
++            val changed = readerTopInsetPx != systemBars.top || readerBottomInsetPx != systemBars.bottom
++            readerTopInsetPx = systemBars.top
++            readerBottomInsetPx = systemBars.bottom
++            if (changed && openSucceeded) {
++                readerRoot.post {
++                    readerPageCache.clear()
++                    resetPagedPageIndex()
++                    displayContent()
++                }
++            }
++            insets
++        }
++        ViewCompat.requestApplyInsets(readerRoot)
+         loadReaderPrefs()
+         applyActiveReaderMode(ReaderAppearance.palette(this))
+         gestureDetector = GestureDetector(this, this)
+@@ -539,6 +569,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+         return !txtStreamingMode && format == "EPUB" && epubChapters.isNotEmpty()
+     }
+ 
++    private fun hasStableTxtChapterIndex(): Boolean =
++        txtStreamingMode &&
++            epubChapters.isNotEmpty() &&
++            epubChapterStartPositions.size == epubChapters.size &&
++            epubChapterStartPositions.zipWithNext().all { (a, b) -> b > a }
++
++    private fun hasStableChapterPageAxis(): Boolean =
++        isStructuredChapterDocument() || hasStableTxtChapterIndex()
++
+     private fun loadStructuredChapter(
+         chapterIndex: Int,
+         offset: Int = 0,
+@@ -931,6 +970,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+             }
+         }
+         displayContent()
++        if (txtStreamingMode && epubChapters.isEmpty() && documentFile != null) {
++            scanStreamingTxtChapters(documentFile)
++        }
+     }
+ 
+     private fun readChmTextIsolated(input: java.io.InputStream): String {
+@@ -1069,20 +1111,87 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
+     private fun resetPagedPageIndex() {
+         pagedChapterPageCounts.clear()
+         pagedChapterPageStarts.clear()
++        pagedChapterSourceStarts.clear()
+         pagedPageIndexSignature = null
+         pagedPageIndexComplete = false
++        pagedPageIndexLoadedKey = null
+         pagedPageIndexJob?.cancel()
+         pagedPageIndexJob = null
++        pagedPageIndexPersistJob?.cancel()
++        pagedPageIndexPersistJob = null
++    }
++
++    private fun paginationSourceRevision(): String {
++        var startsHash = 1_125_899_906_842_597L
++        epubChapterStartPositions.forEach { value ->
++            startsHash = startsHash * 31L + value.toLong()
++        }
++        val selectedBook = book
++        return listOf(
++            PAGINATION_INDEX_SCHEMA_VERSION,
++            selectedBook?.fileSize ?: txtTotalBytes,
++            selectedBook?.lastModified ?: 0L,
++            txtTotalBytes,
++            pagedChapterCount(),
++            when {
++                hasStableTxtChapterIndex() -> txtTotalBytes
++                structuredWholeText != null -> structuredWholeText.orEmpty().length.toLong()
++                else -> currentContent.length.toLong()
++            },
++            startsHash
++        ).joinToString(":")
+     }
+ 
+     private fun preparePagedIndexSignature(signature: ReaderLayoutSignature) {
+-        if (pagedPageIndexSignature == signature) return
++        val loadKey = "${signature.stableKey()}|${paginationSourceRevision()}"
++        if (pagedPageIndexSignature == signature && pagedPageIndexLoadedKey == loadKey) return
+         pagedChapterPageCounts.clear()
+         pagedChapterPageStarts.clear()
++        pagedChapterSourceStarts.clear()
+         pagedPageIndexSignature = signature
+         pagedPageIndexComplete = false
++        pagedPageIndexLoadedKey = loadKey
+         pagedPageIndexJob?.cancel()
+         pagedPageIndexJob = null
++        pagedPageIndexPersistJob?.cancel()
++        pagedPageIndexPersistJob = null
++
++        val chapterCount = pagedChapterCount()
++        val loaded = pagedPageIndexStore.load(
++            signature = signature,
++            sourceRevision = paginationSourceRevision(),
++            chapterCount = chapterCount
++        )
++        loaded?.pageStartsByChapter?.forEach { (chapter, starts) ->
++            pagedChapterPageStarts[chapter] = starts
++            pagedChapterPageCounts[chapter] = starts.size.coerceAtLeast(1)
++        }
++        loaded?.sourceStartsByChapter?.forEach { (chapter, starts) ->
++            pagedChapterSourceStarts[chapter] = starts
++        }
++        pagedPageIndexComplete = loaded?.complete == true &&
++            (0 until chapterCount).all { pagedChapterPageCounts.containsKey(it) }
++    }
++
++    private fun schedulePersistPageIndex(signature: ReaderLayoutSignature, immediate: Boolean = false) {
++        if (bookId <= 0L || pagedPageIndexSignature != signature) return
++        pagedPageIndexPersistJob?.cancel()
++        val startsSnapshot = pagedChapterPageStarts.mapValues { (_, value) -> value.copyOf() }
++        val sourceSnapshot = pagedChapterSourceStarts.mapValues { (_, value) -> value.copyOf() }
++        val chapterCount = pagedChapterCount()
++        val revision = paginationSourceRevision()
++        pagedPageIndexPersistJob = lifecycleScope.launch {
++            if (!immediate) delay(450L)
++            withContext(Dispatchers.IO) {
++                pagedPageIndexStore.save(
++                    signature = signature,
++                    sourceRevision = revision,
++                    chapterCount = chapterCount,
++                    pageStartsByChapter = startsSnapshot,
++                    sourceStartsByChapter = sourceSnapshot
++                )
++            }
++        }
+     }
+ 
+     private fun registerChapterPageCount(

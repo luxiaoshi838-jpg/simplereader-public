@@ -16,85 +16,99 @@ concurrency:
 
 jobs:
   validate:
-    name: Five-minute staged Android validation
+    name: v593 Duokan anchor/cache validation
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000593'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-anchor-cache.593'
 
     steps:
-      - name: Checkout current revision
+      - name: Checkout current branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Verify v593 Duokan page-anchor contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          index=app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
+          vertical=app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+          parser=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          layout=app/src/main/res/layout/activity_reader.xml
+          test -s "$vertical"
+          grep -Fq 'android:id="@+id/verticalPageFlowView"' "$layout"
+          grep -Fq 'verticalPageFlowView.bind(pages, current, preserveOffset)' "$activity"
+          grep -Fq 'verticalPageFlowView.prepend(pages)' "$activity"
+          grep -Fq 'verticalPageFlowView.append(pages)' "$activity"
+          grep -Fq 'TxtParser.readRangeMapped' "$activity"
+          grep -Fq 'fun readRangeMapped(' "$parser"
+          grep -Fq 'Each adapter cell is exactly one *content-page* high' "$vertical"
+          grep -Fq 'edgeGradient' "$vertical"
+          grep -Fq 'ReaderPageIndexStore' "$activity"
+          ! grep -Fq 'MENU_CACHE_BOOK' "$activity"
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' "$main"
+          grep -Fq 'ReaderPageCacheManager.enqueue' "$main"
+          grep -Fq 'completeChapterCount' "$worker"
+          grep -Fq 'completeChapterCount' "$index"
+          grep -Fq 'TXT_INITIAL_WINDOW_BYTES = 32 * 1024' "$activity"
+          grep -Fq 'txtCatalogChapters' "$activity"
+          grep -Fq 'ReaderPageBoundaryCalculator' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
+          grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' app/src/main/AndroidManifest.xml
+          ! grep -A12 -F 'private fun ensureWholeBookPageIndex' "$activity" | grep -Fq 'for (chapter in'
+          ! grep -Fq 'val unitsPerPage = pageSize' "$activity"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare validation version
+      - name: Test and assemble v593 release
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
 
-      - name: Debug unit tests
+      - name: Verify v593 package and resources
         shell: bash
         run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
-          code=$?
-          tail -n 180 /tmp/debug-unit.log
-          exit $code
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v593-unsigned.apk
+          test -s /tmp/SimpleReader-v593-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/aapt2-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/aapt2-badging.log
+          grep -Fq "versionCode='2098000593'" /tmp/aapt2-badging.log
+          grep -Fq "versionName='2026.08.01.duokan-anchor-cache.593'" /tmp/aapt2-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/aapt2-resources.log
+          grep -Fq 'id/pagedReaderView' /tmp/aapt2-resources.log
+          grep -Fq 'id/verticalPageFlowView' /tmp/aapt2-resources.log
+          unzip -t /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/unzip.log
+          sha256sum /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/SimpleReader-v593-unsigned.sha256
 
-      - name: Release unit tests
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
-          code=$?
-          tail -n 180 /tmp/release-unit.log
-          exit $code
-
-      - name: Assemble debug
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
-          code=$?
-          tail -n 180 /tmp/assemble-debug.log
-          exit $code
-
-      - name: Assemble release
-        shell: bash
-        run: |
-          set +e
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
-          code=$?
-          tail -n 180 /tmp/assemble-release.log
-          exit $code
-
-      - name: Upload validation logs
-        if: always()
+      - name: Upload v593 release and logs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-validation-logs-${{ github.run_number }}
+          name: SimpleReader-v593-pr-unsigned-${{ github.run_number }}
           path: |
-            /tmp/*-unit.log
-            /tmp/assemble-*.log
-            app/build/reports/tests
-          if-no-files-found: warn
-          retention-days: 2
-
-      - name: Upload verified APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-validation-${{ github.run_number }}
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/*.apk
+            /tmp/SimpleReader-v593-unsigned.apk
+            /tmp/test-release.log
+            /tmp/assemble-release.log
+            /tmp/aapt2-badging.log
+            /tmp/aapt2-resources.log
+            /tmp/unzip.log
+            /tmp/SimpleReader-v593-unsigned.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3

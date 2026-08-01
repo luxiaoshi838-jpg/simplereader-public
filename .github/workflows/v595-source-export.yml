@@ -1,0 +1,33 @@
+name: v595 source export
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    if: github.head_ref == 'agent/v595-duokan-chapter-pages'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v595-duokan-chapter-pages
+          fetch-depth: 0
+      - name: Package source
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m tar -czf /tmp/simplereader-v595-source.tar.gz \
+            app gradle gradlew gradlew.bat settings.gradle.kts build.gradle.kts gradle.properties
+          sha256sum /tmp/simplereader-v595-source.tar.gz > /tmp/simplereader-v595-source.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v595-source
+          path: |
+            /tmp/simplereader-v595-source.tar.gz
+            /tmp/simplereader-v595-source.sha256
+          if-no-files-found: error
+          retention-days: 2

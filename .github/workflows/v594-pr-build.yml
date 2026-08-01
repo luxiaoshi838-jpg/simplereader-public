@@ -1,0 +1,97 @@
+name: v594 PR build
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v594-pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-v594:
+    if: github.head_ref == 'agent/v594-open-crash-guard'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000594'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.open-crash-guard.594'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v594-open-crash-guard
+          fetch-depth: 0
+
+      - name: Verify v594 crash guard contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          manifest=app/src/main/AndroidManifest.xml
+          test_file=app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
+          test -s app/src/main/java/com/simplereader/app/SimpleReaderApplication.kt
+          grep -Fq 'android:name=".SimpleReaderApplication"' "$manifest"
+          grep -Fq 'txtCatalogChapters = cachedCatalog' "$activity"
+          grep -Fq 'epubChapters = emptyList()' "$activity"
+          grep -Fq 'epubChapterStartPositions = emptyList()' "$activity"
+          ! grep -A18 -F 'val cachedCatalog = cachedChapters.map' "$activity" | grep -Fq 'epubChapters = cachedCatalog'
+          grep -Fq '上次崩溃日志' "$main"
+          grep -Fq 'cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis' "$test_file"
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' "$main"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Test release with five-minute limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v594-test.log
+
+      - name: Build release with five-minute limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v594-build.log
+
+      - name: Verify v594 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v594-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v594-unsigned.apk | tee /tmp/v594-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v594-badging.log
+          grep -Fq "versionCode='2098000594'" /tmp/v594-badging.log
+          grep -Fq "versionName='2026.08.01.open-crash-guard.594'" /tmp/v594-badging.log
+          "$build_tools/aapt2" dump xmltree /tmp/SimpleReader-v594-unsigned.apk --file AndroidManifest.xml | tee /tmp/v594-manifest.log
+          grep -Fq 'com.simplereader.app.SimpleReaderApplication' /tmp/v594-manifest.log
+          unzip -t /tmp/SimpleReader-v594-unsigned.apk | tee /tmp/v594-unzip.log
+          sha256sum /tmp/SimpleReader-v594-unsigned.apk | tee /tmp/SimpleReader-v594-unsigned.sha256
+
+      - name: Upload v594 APK and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v594-pr-unsigned-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v594-unsigned.apk
+            /tmp/v594-test.log
+            /tmp/v594-build.log
+            /tmp/v594-badging.log
+            /tmp/v594-manifest.log
+            /tmp/v594-unzip.log
+            /tmp/SimpleReader-v594-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 3
