@@ -30,10 +30,10 @@ jobs:
       - name: Checkout current v591 source
         uses: actions/checkout@v4
         with:
+          ref: agent/v591-duokan-fixed-page-flow
           fetch-depth: 0
 
       - name: Materialize missing application R imports
-        if: github.event_name == 'push' && github.ref_name == 'agent/v591-duokan-fixed-page-flow'
         shell: bash
         run: |
           set -euo pipefail
