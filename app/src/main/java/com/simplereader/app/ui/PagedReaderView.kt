@@ -376,7 +376,6 @@ class PagedReaderView @JvmOverloads constructor(
                 incoming.translationY = 0f
             }
 
-
             TurnMode.FADE -> {
                 incoming.translationX = 0f
                 incoming.translationY = 0f
@@ -474,7 +473,7 @@ class PagedReaderView @JvmOverloads constructor(
         setTextIsSelectable(false)
         isLongClickable = false
         isClickable = false
-        includeFontPadding = true
+        includeFontPadding = false
         breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
         hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         setTextColor(Color.rgb(59, 52, 40))
