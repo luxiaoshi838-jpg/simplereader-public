@@ -1,0 +1,44 @@
+package com.simplereader.app.ui
+
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+@RunWith(RobolectricTestRunner::class)
+class ReaderPageIndexStoreTest {
+    @Test
+    fun `persists exact chapter page starts for one layout signature`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = ReaderPageIndexStore(context, 998877L)
+        val signature = ReaderLayoutSignature(
+            widthPx = 1080,
+            heightPx = 2400,
+            textSizePx = 54,
+            lineSpacingMultiplierX100 = 175,
+            horizontalPaddingPx = 84,
+            topPaddingPx = 150,
+            bottomPaddingPx = 170,
+            chapterTitleScaleX100 = 130
+        )
+        val starts = mapOf(
+            0 to intArrayOf(0, 420, 860),
+            1 to intArrayOf(0, 510)
+        )
+        val sourceStarts = mapOf(
+            0 to longArrayOf(0L, 1_260L, 2_580L),
+            1 to longArrayOf(3_100L, 4_630L)
+        )
+
+        store.save(signature, "book-revision", 2, starts, sourceStarts)
+        val loaded = store.load(signature, "book-revision", 2)
+
+        assertNotNull(loaded)
+        assertEquals(true, loaded!!.complete)
+        assertArrayEquals(starts.getValue(0), loaded.pageStartsByChapter.getValue(0))
+        assertArrayEquals(sourceStarts.getValue(1), loaded.sourceStartsByChapter.getValue(1))
+    }
+}
