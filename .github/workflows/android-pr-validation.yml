@@ -63,8 +63,8 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          timeout --signal=INT 6m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
-          timeout --signal=INT 6m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
 
       - name: Verify v591 package and resources
         shell: bash
