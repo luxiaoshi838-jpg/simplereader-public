@@ -3155,6 +3155,34 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private suspend fun pagedChapterSource(chapterIndex: Int): PagedChapterSource {
         if (!hasStableTxtChapterIndex()) {
+            if (txtStreamingMode) {
+                val sourceUri = currentReadableDocument?.uri
+                    ?: book?.filePath?.let { path -> runCatching { Uri.parse(path) }.getOrNull() }
+                val charsetName = txtCharsetName ?: book?.txtCharset ?: Charsets.UTF_8.name()
+                val startByte = txtCurrentPageStartByte.coerceAtLeast(0L)
+                val endByte = txtCurrentPageEndByte.coerceAtLeast(startByte)
+                val mapped = sourceUri?.let { uri ->
+                    withContext(Dispatchers.IO) {
+                        contentResolver.openInputStream(uri)?.use { stream ->
+                            TxtParser.readRangeMapped(
+                                inputStream = stream,
+                                charsetName = charsetName,
+                                startByte = startByte,
+                                endByte = endByte
+                            )
+                        }
+                    }
+                }
+                if (mapped != null) {
+                    val text = mapped.text.trimEnd()
+                    return PagedChapterSource(
+                        text = text,
+                        startSourceOffset = startByte,
+                        endSourceOffset = endByte,
+                        sourceOffsets = mapped.sourceOffsets.copyOf(text.length + 1)
+                    )
+                }
+            }
             return PagedChapterSource(pagedChapterRawText(chapterIndex))
         }
         val safeIndex = chapterIndex.coerceIn(0, epubChapters.lastIndex)
@@ -3225,11 +3253,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 if (characterOffset <= 0) source.startSourceOffset else source.endSourceOffset
             })
         } else if (txtStreamingMode) {
-            val startByte = txtCurrentPageStartByte
-            val byteSpan = (txtCurrentPageEndByte - txtCurrentPageStartByte).coerceAtLeast(0L)
-            val charCount = raw.length.coerceAtLeast(1)
+            // A stream window should normally have exact mapped offsets above. If its
+            // source cannot be reopened, never invent intermediate byte anchors.
             ({ characterOffset: Int ->
-                startByte + (byteSpan * characterOffset.coerceIn(0, charCount).toLong() / charCount.toLong())
+                if (characterOffset <= 0) txtCurrentPageStartByte else txtCurrentPageEndByte
             })
         } else {
             ({ _: Int -> -1L })
