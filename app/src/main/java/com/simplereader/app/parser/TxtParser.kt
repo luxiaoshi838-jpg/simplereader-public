@@ -7,6 +7,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.io.SequenceInputStream
 import java.nio.ByteBuffer
+import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
@@ -22,6 +23,14 @@ data class TxtWindowResult(
     val text: String,
     val startByte: Long,
     val nextByte: Long
+)
+
+/** Decoded range plus an exact source-byte anchor for every UTF-16 text offset. */
+data class TxtMappedRange(
+    val text: String,
+    val startByte: Long,
+    val nextByte: Long,
+    val sourceOffsets: LongArray
 )
 
 data class TxtChapterHit(
@@ -183,10 +192,28 @@ object TxtParser {
         )
     }
 
-    fun decodeBestEffort(bytes: ByteArray, preferredCharsetName: String? = null): String {
-        if (bytes.isEmpty()) return ""
+    fun decodeBestEffort(bytes: ByteArray, preferredCharsetName: String? = null): String =
+        decodeBestEffortWithCharset(bytes, preferredCharsetName).text
+
+    private data class DecodedChunk(
+        val text: String,
+        val charset: Charset,
+        val bomBytes: Int = 0
+    )
+
+    private fun decodeBestEffortWithCharset(
+        bytes: ByteArray,
+        preferredCharsetName: String? = null
+    ): DecodedChunk {
+        val preferred = preferredCharsetName
+            ?.let { runCatching { Charset.forName(normalizeCharsetName(it)) }.getOrNull() }
+        if (bytes.isEmpty()) return DecodedChunk("", preferred ?: Charsets.UTF_8)
         detectBomCharset(bytes)?.let { charset ->
-            return String(bytes, charset).removePrefix("\uFEFF")
+            return DecodedChunk(
+                text = String(bytes, charset).removePrefix("\uFEFF"),
+                charset = charset,
+                bomBytes = bomLength(bytes)
+            )
         }
 
         // Valid UTF-8 must win before trying permissive Chinese legacy encodings.
@@ -194,14 +221,12 @@ object TxtParser {
         // characters, which previously caused correct UTF-8 paragraphs to become
         // mojibake in the middle of a mixed or incorrectly labelled TXT file.
         decodeStrict(bytes, Charsets.UTF_8)?.let { utf8 ->
-            if (!looksMojibake(utf8)) return utf8
+            if (!looksMojibake(utf8)) return DecodedChunk(utf8, Charsets.UTF_8)
         }
 
-        val preferred = preferredCharsetName
-            ?.let { runCatching { Charset.forName(normalizeCharsetName(it)) }.getOrNull() }
         preferred?.let { charset ->
             decodeStrict(bytes, charset)?.let { decoded ->
-                if (!looksMojibake(decoded)) return decoded
+                if (!looksMojibake(decoded)) return DecodedChunk(decoded, charset)
             }
         }
         val locallyDetected = runCatching { CharsetDetector.detectCharset(bytes) }.getOrNull()
@@ -218,9 +243,10 @@ object TxtParser {
                 if (preferred?.name().equals(charset.name(), ignoreCase = true)) score += 10_000L
                 Triple(score, charset, text)
             }
-        }
-        return decoded.maxByOrNull { it.first }?.third
-            ?: String(bytes, preferred ?: Charset.forName("GB18030"))
+        }.maxByOrNull { it.first }
+        if (decoded != null) return DecodedChunk(decoded.third, decoded.second)
+        val fallback = preferred ?: Charset.forName("GB18030")
+        return DecodedChunk(String(bytes, fallback), fallback)
     }
 
     /**
@@ -307,6 +333,129 @@ object TxtParser {
         }
     }
 
+
+    /**
+     * Reads one chapter byte range and preserves the precise source byte for every
+     * decoded UTF-16 offset. Page anchors therefore never use character-ratio
+     * estimates for UTF-8, GB18030, Big5 or CRLF text.
+     */
+    fun readRangeMapped(
+        inputStream: InputStream,
+        charsetName: String,
+        startByte: Long,
+        endByte: Long
+    ): TxtMappedRange {
+        val safeStart = startByte.coerceAtLeast(0L)
+        val safeEnd = endByte.coerceAtLeast(safeStart)
+        val length = (safeEnd - safeStart)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        if (length <= 0) {
+            return TxtMappedRange("", safeStart, safeStart, longArrayOf(safeStart))
+        }
+        val preferred = Charset.forName(normalizeCharsetName(charsetName))
+        inputStream.use { stream ->
+            stream.skipFully(safeStart)
+            val bytes = stream.readUpTo(length)
+            val output = StringBuilder(bytes.size)
+            val offsets = ArrayList<Long>(bytes.size + 1)
+
+            fun appendChunk(rawStart: Int, rawEnd: Int) {
+                if (rawEnd <= rawStart) return
+                val raw = bytes.copyOfRange(rawStart, rawEnd)
+                val decoded = decodeBestEffortWithCharset(raw, preferred.name())
+                val contentStart = rawStart + decoded.bomBytes.coerceIn(0, raw.size)
+                val contentLength = (raw.size - decoded.bomBytes).coerceAtLeast(0)
+                val boundaries = encodedBoundaries(
+                    text = decoded.text,
+                    charset = decoded.charset,
+                    absoluteStart = safeStart + contentStart,
+                    rawLength = contentLength
+                )
+                if (offsets.isEmpty()) offsets.add(boundaries.firstOrNull() ?: (safeStart + contentStart))
+                output.append(decoded.text)
+                for (index in 1 until boundaries.size) offsets.add(boundaries[index])
+            }
+
+            if (preferred.name().startsWith("UTF-16", ignoreCase = true)) {
+                appendChunk(0, bytes.size)
+            } else {
+                var lineStart = 0
+                bytes.forEachIndexed { index, value ->
+                    if (value == '\n'.code.toByte()) {
+                        val contentEnd = if (index > lineStart && bytes[index - 1] == '\r'.code.toByte()) {
+                            index - 1
+                        } else {
+                            index
+                        }
+                        appendChunk(lineStart, contentEnd)
+                        val newlineStart = safeStart + contentEnd
+                        if (offsets.isEmpty()) offsets.add(newlineStart)
+                        output.append('\n')
+                        offsets.add(safeStart + index + 1L)
+                        lineStart = index + 1
+                    }
+                }
+                if (lineStart < bytes.size) appendChunk(lineStart, bytes.size)
+            }
+
+            if (offsets.isEmpty()) offsets.add(safeStart)
+            while (offsets.size < output.length + 1) offsets.add(safeStart + bytes.size)
+            if (offsets.size > output.length + 1) {
+                offsets.subList(output.length + 1, offsets.size).clear()
+            }
+            return TxtMappedRange(
+                text = output.toString(),
+                startByte = safeStart,
+                nextByte = safeStart + bytes.size,
+                sourceOffsets = LongArray(offsets.size) { offsets[it] }
+            )
+        }
+    }
+
+    private fun encodedBoundaries(
+        text: String,
+        charset: Charset,
+        absoluteStart: Long,
+        rawLength: Int
+    ): LongArray {
+        if (text.isEmpty()) return longArrayOf(absoluteStart)
+        val encoder = charset.newEncoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        val output = ByteBuffer.allocate(16)
+        val encodedCumulative = IntArray(text.length + 1)
+        var textIndex = 0
+        var encodedBytes = 0
+        while (textIndex < text.length) {
+            val codePoint = text.codePointAt(textIndex)
+            val nextIndex = textIndex + Character.charCount(codePoint)
+            encoder.reset()
+            output.clear()
+            val input = CharBuffer.wrap(text, textIndex, nextIndex)
+            val result = encoder.encode(input, output, true)
+            val flushed = if (!result.isError) encoder.flush(output) else result
+            val byteCount = if (!result.isError && !flushed.isError) output.position() else 0
+            for (index in textIndex until nextIndex) encodedCumulative[index] = encodedBytes
+            encodedBytes += byteCount
+            encodedCumulative[nextIndex] = encodedBytes
+            textIndex = nextIndex
+        }
+
+        val safeRawLength = rawLength.coerceAtLeast(0)
+        val boundaries = LongArray(text.length + 1)
+        for (index in boundaries.indices) {
+            val relative = if (encodedBytes > 0) {
+                (safeRawLength.toLong() * encodedCumulative[index].toLong() / encodedBytes.toLong())
+            } else {
+                0L
+            }
+            boundaries[index] = absoluteStart + relative.coerceIn(0L, safeRawLength.toLong())
+        }
+        boundaries[boundaries.lastIndex] = absoluteStart + safeRawLength
+        return boundaries
+    }
+
     /** Reads the complete-line window immediately before [endByte]. */
     fun readWindowBefore(
         inputStream: InputStream,
@@ -386,6 +535,12 @@ object TxtParser {
             while (start < bytes.size && isUtf8Continuation(bytes[start])) start++
         }
         return start
+    }
+
+    private fun bomLength(bytes: ByteArray): Int = when {
+        hasUtf8Bom(bytes) -> 3
+        hasUtf16Bom(bytes) -> 2
+        else -> 0
     }
 
     private fun decodeLineWise(bytes: ByteArray, preferredCharsetName: String): String {

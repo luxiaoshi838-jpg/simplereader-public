@@ -7,9 +7,11 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
+import android.text.Layout
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.VelocityTracker
@@ -34,7 +36,7 @@ class PagedReaderView @JvmOverloads constructor(
     enum class TurnMode { OVERLAP, SIMULATE, SLIDE, FADE }
 
     data class Style(
-        val textSizeSp: Float,
+        val textSizePx: Float,
         val textColor: Int,
         val horizontalPaddingPx: Int,
         val topPaddingPx: Int,
@@ -115,7 +117,7 @@ class PagedReaderView @JvmOverloads constructor(
     fun configure(style: Style) {
         this.style = style
         listOf(previousView, currentView, nextView).forEach { page ->
-            page.textSize = style.textSizeSp
+            page.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.textSizePx)
             page.setTextColor(style.textColor)
             page.typeface = style.typeface
             page.setLineSpacing(0f, style.lineSpacingMultiplier)
@@ -446,6 +448,8 @@ class PagedReaderView @JvmOverloads constructor(
         isLongClickable = false
         isClickable = false
         includeFontPadding = true
+        breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
+        hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         setTextColor(Color.rgb(59, 52, 40))
         textSize = 20f
     }

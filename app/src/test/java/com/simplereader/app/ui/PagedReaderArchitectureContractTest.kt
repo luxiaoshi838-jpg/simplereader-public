@@ -9,6 +9,8 @@ class PagedReaderArchitectureContractTest {
     private val activity = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
     private val model = File("src/main/java/com/simplereader/app/ui/ReaderPageModel.kt").readText()
     private val view = File("src/main/java/com/simplereader/app/ui/PagedReaderView.kt").readText()
+    private val vertical = File("src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt").readText()
+    private val parser = File("src/main/java/com/simplereader/app/parser/TxtParser.kt").readText()
     private val layout = File("src/main/res/layout/activity_reader.xml").readText()
 
     @Test
@@ -21,14 +23,19 @@ class PagedReaderArchitectureContractTest {
     }
 
     @Test
-    fun verticalIsContinuousFlowNotFixedPageAnimation() {
-        assertTrue(layout.contains("android:id=\"@+id/readerScrollView\""))
-        assertTrue(activity.contains("private fun isPagedReaderMode(): Boolean = pageTurnMode != TURN_MODE_VERTICAL"))
-        assertTrue(activity.contains("readerScrollView.isSmoothScrollingEnabled = true"))
-        assertTrue(activity.contains("maybeExtendTxtContinuousBuffer(scrollY)"))
-        assertTrue(activity.contains("maybeExtendStructuredContinuousBuffer(scrollY)"))
-        assertFalse(view.contains("TurnMode.VERTICAL"))
-        assertFalse(view.contains("outgoing.translationY = if (direction > 0) -height"))
+    fun verticalScrollUsesTheSameFixedChapterPages() {
+        assertTrue(layout.contains("android:id=\"@+id/verticalPageFlowView\""))
+        assertTrue(activity.contains("refreshVerticalReader(pagedAnchorFromCurrentPosition())"))
+        assertTrue(activity.contains("val pages = pagedPagesForChapter(safeChapter, signature)"))
+        assertTrue(activity.contains("verticalPageFlowView.bind(pages, current, preserveOffset)"))
+        assertTrue(activity.contains("verticalPageFlowView.prepend(pages)"))
+        assertTrue(activity.contains("verticalPageFlowView.append(pages)"))
+        assertTrue(vertical.contains("Each adapter cell is exactly one *content-page* high"))
+        assertTrue(vertical.contains("pageHeightPx"))
+        assertTrue(vertical.contains("RecyclerView"))
+        assertTrue(vertical.contains("topViewportPaddingPx"))
+        assertTrue(vertical.contains("bottomViewportPaddingPx"))
+        assertFalse(vertical.contains("TxtContinuousBuffer"))
     }
 
     @Test
@@ -37,6 +44,7 @@ class PagedReaderArchitectureContractTest {
             .substringBefore("private fun updateThemeControls()")
         assertTrue(method.contains("val anchor ="))
         assertTrue(method.contains("pagedReaderView.cancelNavigation()"))
+        assertTrue(method.contains("verticalPageFlowView.cancelNavigation()"))
         assertTrue(method.contains("applyPagedAnchor(anchor)"))
         assertTrue(method.contains("refreshPagedReader(anchor = anchor"))
         assertFalse(method.contains("readerPageCache.clear()"))
@@ -99,7 +107,7 @@ class PagedReaderArchitectureContractTest {
             .substringBefore("private fun pagedAnchorFromCurrentPosition")
         assertTrue(chapterSource.contains("startByte"))
         assertTrue(chapterSource.contains("endByte"))
-        assertTrue(chapterSource.contains("TxtParser.readRange"))
+        assertTrue(chapterSource.contains("TxtParser.readRangeMapped"))
 
         val chapterPages = activity.substringAfter("private suspend fun pagedPagesForChapter")
             .substringBefore("private fun pageContaining")
@@ -111,6 +119,27 @@ class PagedReaderArchitectureContractTest {
             .substringBefore("private fun refreshPagedReader")
         assertTrue(crossChapter.contains("pagedPagesForChapter(safeChapter - 1, signature).lastOrNull()"))
         assertTrue(crossChapter.contains("pagedPagesForChapter(safeChapter + 1, signature).firstOrNull()"))
+    }
+
+    @Test
+    fun visiblePagesAndPageCounterUseTheSameExactMetrics() {
+        assertTrue(view.contains("TypedValue.COMPLEX_UNIT_PX"))
+        assertTrue(vertical.contains("TypedValue.COMPLEX_UNIT_PX"))
+        assertTrue(view.contains("Layout.BREAK_STRATEGY_HIGH_QUALITY"))
+        assertTrue(vertical.contains("Layout.BREAK_STRATEGY_HIGH_QUALITY"))
+        assertTrue(model.contains("signature.textSizePx.toFloat()"))
+        assertTrue(activity.contains("textSizePx = readerTextSizePx()"))
+    }
+
+    @Test
+    fun txtPageAnchorsUseExactSourceBytesInsteadOfCharacterRatios() {
+        assertTrue(parser.contains("fun readRangeMapped("))
+        assertTrue(parser.contains("val sourceOffsets: LongArray"))
+        assertTrue(activity.contains("sourceOffsets = mapped.sourceOffsets.copyOf(text.length + 1)"))
+        val mapper = activity.substringAfter("val sourceMapper: (Int) -> Long")
+            .substringBefore("val pages = withContext")
+        assertTrue(mapper.contains("val exact = requireNotNull(source.sourceOffsets)"))
+        assertFalse(mapper.contains("byteSpan * characterOffset"))
     }
 
 }

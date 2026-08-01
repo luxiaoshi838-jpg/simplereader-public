@@ -50,4 +50,41 @@ class TxtChapterAndEncodingRegressionTest {
         )
         assertEquals("2 最后一章", chapters.last().title)
     }
+    @Test
+    fun mappedRangeUsesExactGb18030AndCrLfByteAnchors() {
+        val source = "第1章 标题\r\n甲A乙\r\n第2章 标题"
+        val charset = Charset.forName("GB18030")
+        val bytes = source.toByteArray(charset)
+        val mapped = TxtParser.readRangeMapped(
+            inputStream = ByteArrayInputStream(bytes),
+            charsetName = charset.name(),
+            startByte = 0L,
+            endByte = bytes.size.toLong()
+        )
+
+        assertEquals(source.replace("\r\n", "\n"), mapped.text)
+        assertEquals(mapped.text.length + 1, mapped.sourceOffsets.size)
+        val secondChapter = mapped.text.indexOf("第2章")
+        val expectedSecondChapterByte = source.indexOf("第2章")
+            .let { source.substring(0, it).toByteArray(charset).size.toLong() }
+        assertEquals(expectedSecondChapterByte, mapped.sourceOffsets[secondChapter])
+        assertEquals(bytes.size.toLong(), mapped.sourceOffsets.last())
+        assertTrue(mapped.sourceOffsets.zipWithNext().all { (a, b) -> b >= a })
+    }
+
+    @Test
+    fun mappedRangePreservesUtf8FourByteCharacterBoundary() {
+        val source = "第1章 𠀀测试\n正文"
+        val bytes = source.toByteArray(Charsets.UTF_8)
+        val mapped = TxtParser.readRangeMapped(
+            inputStream = ByteArrayInputStream(bytes),
+            charsetName = Charsets.UTF_8.name(),
+            startByte = 0L,
+            endByte = bytes.size.toLong()
+        )
+        val afterRareCharacter = source.indexOf("𠀀") + "𠀀".length
+        val expected = source.substring(0, afterRareCharacter).toByteArray(Charsets.UTF_8).size.toLong()
+        assertEquals(expected, mapped.sourceOffsets[afterRareCharacter])
+    }
+
 }

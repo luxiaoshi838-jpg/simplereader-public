@@ -71,6 +71,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private lateinit var contentView: TextView
     private lateinit var readerScrollView: NestedScrollView
     private lateinit var pagedReaderView: PagedReaderView
+    private lateinit var verticalPageFlowView: VerticalPageFlowView
     private lateinit var fontSizeSeekBar: SeekBar
     private lateinit var readerProgressLabel: TextView
     private lateinit var readerControls: LinearLayout
@@ -148,6 +149,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerTopInsetPx: Int = 0
     private var readerBottomInsetPx: Int = 0
     private var txtPagedWindowBasePage: Long? = null
+    private var verticalReaderRefreshJob: Job? = null
+    private var verticalReaderGeneration: Long = 0L
+    private var verticalCurrentPage: ReaderPageSnapshot? = null
+    private var verticalCurrentOffsetPx: Int = 0
+    private var verticalLoadingPrevious: Boolean = false
+    private var verticalLoadingNext: Boolean = false
 
     private data class TxtForwardAppendAnchor(
         val oldMaxScroll: Int,
@@ -158,7 +165,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private data class PagedChapterSource(
         val text: String,
         val startSourceOffset: Long = -1L,
-        val endSourceOffset: Long = -1L
+        val endSourceOffset: Long = -1L,
+        val sourceOffsets: LongArray? = null
     )
 
     private val recoverSourceFolderLauncher = registerForActivityResult(
@@ -184,12 +192,33 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         contentView.isFocusableInTouchMode = false
         readerScrollView = findViewById(R.id.readerScrollView)
         pagedReaderView = findViewById(R.id.pagedReaderView)
+        verticalPageFlowView = findViewById(R.id.verticalPageFlowView)
         pagedReaderView.onTurnCommitted = ::commitPagedTurn
         pagedReaderView.onBoundaryTurn = ::handlePagedBoundaryTurn
         pagedReaderView.onCenterTap = {
             if (readerChromeActivationMode == CHROME_ACTIVATION_CENTER) toggleReaderChrome()
         }
         pagedReaderView.onLongPress = {
+            if (readerChromeActivationMode == CHROME_ACTIVATION_LONG_PRESS) toggleReaderChrome()
+        }
+        verticalPageFlowView.onCurrentPageChanged = { page, offsetPx ->
+            if (pageTurnMode == TURN_MODE_VERTICAL) {
+                verticalCurrentPage = page
+                verticalCurrentOffsetPx = offsetPx
+                applyPagedAnchor(page.startAnchor)
+                updatePagedProgressLabel(page)
+            }
+        }
+        verticalPageFlowView.onNeedPreviousPages = { firstPage ->
+            loadVerticalAdjacentPages(direction = -1, boundaryPage = firstPage)
+        }
+        verticalPageFlowView.onNeedNextPages = { lastPage ->
+            loadVerticalAdjacentPages(direction = 1, boundaryPage = lastPage)
+        }
+        verticalPageFlowView.onCenterTap = {
+            if (readerChromeActivationMode == CHROME_ACTIVATION_CENTER) toggleReaderChrome()
+        }
+        verticalPageFlowView.onLongPress = {
             if (readerChromeActivationMode == CHROME_ACTIVATION_LONG_PRESS) toggleReaderChrome()
         }
         fontSizeSeekBar = findViewById(R.id.fontSizeSeekBar)
@@ -219,6 +248,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         // owns continuous kinetic scrolling; the paged renderer owns horizontal effects.
         readerScrollView.visibility = View.GONE
         pagedReaderView.visibility = View.GONE
+        verticalPageFlowView.visibility = View.GONE
         readerScrollView.setOnTouchListener { _, _ -> false }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             clearReaderSearchHighlightOnUserScroll()
@@ -1033,14 +1063,24 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun displayContent() {
         activeReaderSearchHighlight = false
         updateStructuredLocationFromCurrentPosition()
+        if (pageTurnMode == TURN_MODE_VERTICAL && (!txtStreamingMode || hasStableTxtChapterIndex())) {
+            readerScrollView.visibility = View.GONE
+            pagedReaderView.visibility = View.GONE
+            verticalPageFlowView.visibility = View.VISIBLE
+            refreshVerticalReader(pagedAnchorFromCurrentPosition())
+            return
+        }
         if (isPagedReaderMode()) {
             readerScrollView.visibility = View.GONE
+            verticalPageFlowView.visibility = View.GONE
             pagedReaderView.visibility = View.VISIBLE
             refreshPagedReader(pagedAnchorFromCurrentPosition())
             return
         }
         pagedReaderView.cancelNavigation()
         pagedReaderView.visibility = View.GONE
+        verticalPageFlowView.cancelNavigation()
+        verticalPageFlowView.visibility = View.GONE
         readerScrollView.visibility = View.VISIBLE
         val continuous = true
         if (txtStreamingMode) {
@@ -1271,8 +1311,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         )
     }
 
-    private fun currentLayoutPage(): ReaderPageSnapshot? =
-        if (isPagedReaderMode()) currentPagedPage else null
+    private fun currentLayoutPage(): ReaderPageSnapshot? = when {
+        pageTurnMode == TURN_MODE_VERTICAL -> verticalCurrentPage
+        isPagedReaderMode() -> currentPagedPage
+        else -> null
+    }
 
     private fun pageCountLabel(): String {
         currentLayoutPage()?.let { return actualPageLabel(it) }
@@ -1661,6 +1704,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         readerScrollView.setBackgroundColor(currentBackgroundColor)
         window.decorView.setBackgroundColor(currentBackgroundColor)
         if (::pagedReaderView.isInitialized) configurePagedReaderStyle()
+        if (::verticalPageFlowView.isInitialized) configureVerticalReaderStyle()
         updateThemeControls()
     }
 
@@ -3019,13 +3063,16 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         else -> PagedReaderView.TurnMode.OVERLAP
     }
 
+    private fun readerTextSizePx(): Int =
+        (readerTextSize * resources.displayMetrics.scaledDensity).toInt().coerceAtLeast(1)
+
     private fun configurePagedReaderStyle() {
         if (!::pagedReaderView.isInitialized) return
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         pagedReaderView.setTurnMode(pagedTurnMode())
         pagedReaderView.configure(
             PagedReaderView.Style(
-                textSizeSp = readerTextSize,
+                textSizePx = readerTextSizePx().toFloat(),
                 textColor = currentTextColor,
                 horizontalPaddingPx = dp(28),
                 topPaddingPx = readerTopInsetPx + dp(26),
@@ -3043,10 +3090,42 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         )
     }
 
+    private fun configureVerticalReaderStyle() {
+        if (!::verticalPageFlowView.isInitialized) return
+        val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
+        verticalPageFlowView.configure(
+            VerticalPageFlowView.Style(
+                textSizePx = readerTextSizePx().toFloat(),
+                textColor = currentTextColor,
+                horizontalPaddingPx = dp(28),
+                topViewportPaddingPx = readerTopInsetPx + dp(26),
+                bottomViewportPaddingPx = readerBottomInsetPx + dp(42),
+                lineSpacingMultiplier = 1.75f,
+                typeface = Typeface.DEFAULT,
+                edgeFadeColor = currentBackgroundColor,
+                backgroundFactory = {
+                    if (night) {
+                        ReaderBackgrounds.nightDrawable(this)
+                    } else {
+                        ReaderBackgrounds.drawable(this, currentReaderBackgroundSelection())
+                    }
+                }
+            )
+        )
+    }
+
     private fun pagedLayoutSignature(): ReaderLayoutSignature = ReaderLayoutSignature(
-        widthPx = pagedReaderView.width.coerceAtLeast(resources.displayMetrics.widthPixels),
-        heightPx = pagedReaderView.height.coerceAtLeast(resources.displayMetrics.heightPixels),
-        textSizePx = (readerTextSize * resources.displayMetrics.scaledDensity).toInt().coerceAtLeast(1),
+        widthPx = maxOf(
+            pagedReaderView.width,
+            verticalPageFlowView.width,
+            resources.displayMetrics.widthPixels
+        ),
+        heightPx = maxOf(
+            pagedReaderView.height,
+            verticalPageFlowView.height,
+            resources.displayMetrics.heightPixels
+        ),
+        textSizePx = readerTextSizePx(),
         lineSpacingMultiplierX100 = 175,
         horizontalPaddingPx = dp(28),
         topPaddingPx = readerTopInsetPx + dp(26),
@@ -3086,20 +3165,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             ?: txtTotalBytes.coerceAtLeast(startByte)
         val selectedBook = book ?: return PagedChapterSource(currentContent, txtCurrentPageStartByte, txtCurrentPageEndByte)
         val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
-        val text = withContext(Dispatchers.IO) {
+        val mapped = withContext(Dispatchers.IO) {
             contentResolver.openInputStream(Uri.parse(selectedBook.filePath))?.let { stream ->
-                TxtParser.readRange(
+                TxtParser.readRangeMapped(
                     inputStream = stream,
                     charsetName = charsetName,
                     startByte = startByte,
                     endByte = endByte
-                ).text
+                )
             } ?: error("Cannot open TXT chapter source")
-        }.trimEnd()
+        }
+        val text = mapped.text.trimEnd()
         return PagedChapterSource(
             text = text,
             startSourceOffset = startByte,
-            endSourceOffset = endByte
+            endSourceOffset = endByte,
+            sourceOffsets = mapped.sourceOffsets.copyOf(text.length + 1)
         )
     }
 
@@ -3134,12 +3215,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val source = pagedChapterSource(chapterIndex)
         val raw = source.text
         val styled = styledReadingText(raw)
-        val sourceMapper: (Int) -> Long = if (source.startSourceOffset >= 0L) {
-            val byteSpan = (source.endSourceOffset - source.startSourceOffset).coerceAtLeast(0L)
-            val charCount = raw.length.coerceAtLeast(1)
+        val sourceMapper: (Int) -> Long = if (source.sourceOffsets?.size == raw.length + 1) {
+            val exact = requireNotNull(source.sourceOffsets)
             ({ characterOffset: Int ->
-                source.startSourceOffset +
-                    (byteSpan * characterOffset.coerceIn(0, charCount).toLong() / charCount.toLong())
+                exact[characterOffset.coerceIn(0, exact.lastIndex)]
+            })
+        } else if (source.startSourceOffset >= 0L) {
+            ({ characterOffset: Int ->
+                if (characterOffset <= 0) source.startSourceOffset else source.endSourceOffset
             })
         } else if (txtStreamingMode) {
             val startByte = txtCurrentPageStartByte
@@ -3210,6 +3293,105 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         return Triple(previous, current, next)
     }
 
+    private fun refreshVerticalReader(
+        anchor: ReaderPageAnchor = pagedAnchorFromCurrentPosition(),
+        clearCache: Boolean = false,
+        revealWhenReady: Boolean = true
+    ) {
+        if (
+            pageTurnMode != TURN_MODE_VERTICAL ||
+            !openSucceeded ||
+            currentContent.isBlank() ||
+            (txtStreamingMode && !hasStableTxtChapterIndex())
+        ) return
+        if (clearCache) {
+            readerPageCache.clear()
+            resetPagedPageIndex()
+        }
+        configureVerticalReaderStyle()
+        val generation = ++verticalReaderGeneration
+        verticalReaderRefreshJob?.cancel()
+        verticalPageFlowView.cancelNavigation()
+        verticalLoadingPrevious = false
+        verticalLoadingNext = false
+        verticalPageFlowView.post {
+            if (generation != verticalReaderGeneration || pageTurnMode != TURN_MODE_VERTICAL) return@post
+            val signature = pagedLayoutSignature()
+            preparePagedIndexSignature(signature)
+            currentPagedSignature = signature
+            verticalReaderRefreshJob = lifecycleScope.launch {
+                try {
+                    val safeChapter = anchor.chapterIndex.coerceIn(0, pagedChapterCount() - 1)
+                    val pages = pagedPagesForChapter(safeChapter, signature)
+                    val current = pageContaining(pages, anchor.copy(chapterIndex = safeChapter))
+                    if (generation != verticalReaderGeneration || pageTurnMode != TURN_MODE_VERTICAL) return@launch
+
+                    val preserveOffset = if (verticalCurrentPage?.startAnchor == current.startAnchor) {
+                        verticalCurrentOffsetPx
+                    } else {
+                        0
+                    }
+                    verticalCurrentPage = current
+                    verticalCurrentOffsetPx = preserveOffset
+                    applyPagedAnchor(current.startAnchor)
+                    verticalPageFlowView.bind(pages, current, preserveOffset)
+                    if (revealWhenReady) {
+                        readerScrollView.visibility = View.GONE
+                        pagedReaderView.visibility = View.GONE
+                        verticalPageFlowView.visibility = View.VISIBLE
+                    }
+                    updatePagedProgressLabel(current)
+                    ensureWholeBookPageIndex(signature)
+
+                    pages.firstOrNull()?.let { loadVerticalAdjacentPages(-1, it) }
+                    pages.lastOrNull()?.let { loadVerticalAdjacentPages(1, it) }
+                } catch (error: Throwable) {
+                    verticalPageFlowView.cancelNavigation()
+                    showError("上下排版失败：${error.message ?: error.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
+    private fun loadVerticalAdjacentPages(
+        direction: Int,
+        boundaryPage: ReaderPageSnapshot
+    ) {
+        if (
+            direction == 0 ||
+            pageTurnMode != TURN_MODE_VERTICAL ||
+            !hasStableChapterPageAxis()
+        ) return
+        if (direction < 0 && verticalLoadingPrevious) return
+        if (direction > 0 && verticalLoadingNext) return
+
+        val targetChapter = boundaryPage.startAnchor.chapterIndex + direction
+        if (targetChapter !in 0 until pagedChapterCount()) return
+        val signature = currentPagedSignature ?: return
+        val generation = verticalReaderGeneration
+        if (direction < 0) verticalLoadingPrevious = true else verticalLoadingNext = true
+        lifecycleScope.launch {
+            try {
+                val pages = pagedPagesForChapter(targetChapter, signature)
+                if (
+                    generation != verticalReaderGeneration ||
+                    pageTurnMode != TURN_MODE_VERTICAL ||
+                    currentPagedSignature != signature
+                ) return@launch
+                if (direction < 0) {
+                    verticalPageFlowView.prepend(pages)
+                } else {
+                    verticalPageFlowView.append(pages)
+                }
+                ensureWholeBookPageIndex(signature)
+            } catch (_: Throwable) {
+                // Keep the already visible fixed pages stable; edge loading can retry.
+            } finally {
+                if (direction < 0) verticalLoadingPrevious = false else verticalLoadingNext = false
+            }
+        }
+    }
+
     private fun refreshPagedReader(
         anchor: ReaderPageAnchor = pagedAnchorFromCurrentPosition(),
         clearCache: Boolean = false,
@@ -3247,6 +3429,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     pagedReaderView.bind(previous, current, next)
                     if (revealWhenReady) {
                         readerScrollView.visibility = View.GONE
+                        verticalPageFlowView.visibility = View.GONE
                         pagedReaderView.visibility = View.VISIBLE
                     }
                     updatePagedProgressLabel(current)
@@ -3458,7 +3641,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
-            scrollContinuousPage(1)
+            if (!txtStreamingMode || hasStableTxtChapterIndex()) {
+                verticalPageFlowView.scrollByPage(1)
+            } else {
+                scrollContinuousPage(1)
+            }
             return
         }
         if (txtStreamingMode) {
@@ -3498,7 +3685,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             return
         }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
-            scrollContinuousPage(-1)
+            if (!txtStreamingMode || hasStableTxtChapterIndex()) {
+                verticalPageFlowView.scrollByPage(-1)
+            } else {
+                scrollContinuousPage(-1)
+            }
             return
         }
         if (txtStreamingMode) {
@@ -3676,6 +3867,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         pagedReaderGeneration += 1L
         pagedReaderRefreshJob?.cancel()
         pagedReaderView.cancelNavigation()
+        verticalReaderGeneration += 1L
+        verticalReaderRefreshJob?.cancel()
+        verticalPageFlowView.cancelNavigation()
         pendingBoundaryTurnDirection = 0
 
         pageTurnMode = mode
@@ -3684,18 +3878,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
         if (mode == TURN_MODE_VERTICAL) {
             applyPagedAnchor(anchor)
-            // Prepare continuous content first; only then replace the visible renderer.
-            if (isStructuredChapterDocument()) {
-                loadStructuredChapter(
-                    chapterIndex = anchor.chapterIndex,
-                    offset = anchor.chapterOffset,
-                    saveImmediately = false,
-                    direction = 0
-                )
-            } else {
-                displayContent()
-            }
+            displayContent()
         } else {
+            verticalPageFlowView.visibility = View.GONE
             configurePagedReaderStyle()
             refreshPagedReader(anchor = anchor, revealWhenReady = true)
         }
@@ -4210,7 +4395,9 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (!isPagedReaderMode()) handleReaderChromeTap(event)
+        if (!isPagedReaderMode() && verticalPageFlowView.visibility != View.VISIBLE) {
+            handleReaderChromeTap(event)
+        }
         return super.dispatchTouchEvent(event)
     }
 

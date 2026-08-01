@@ -10,6 +10,12 @@
         android:layout_height="match_parent"
         android:visibility="visible" />
 
+    <com.simplereader.app.ui.VerticalPageFlowView
+        android:id="@+id/verticalPageFlowView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <androidx.core.widget.NestedScrollView
         android:id="@+id/readerScrollView"
         android:layout_width="match_parent"
