@@ -4,14 +4,14 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: public-v593-source-${{ github.event.pull_request.number }}
+  group: public-v593-patch-export-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  materialize-v593-source:
+  export-v593-patch:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -20,22 +20,11 @@ jobs:
           ref: agent/v593-duokan-page-anchor
           fetch-depth: 0
 
-      - name: Commit seven verified source files once
+      - name: Rebuild corrected patch
         shell: bash
         run: |
           set -euo pipefail
           timeout --signal=INT 5m bash -c '
-            set -euo pipefail
-            main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-            worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
-            activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-            if grep -Fq "arrayOf(\"批量管理分组\", \"同步书架\", \"一键缓存\")" "$main" \
-              && grep -Fq "completeChapterCount" "$worker" \
-              && grep -Fq "TXT_INITIAL_WINDOW_BYTES = 32 * 1024" "$activity"; then
-              echo "v593 source already materialized; nothing to commit"
-              exit 0
-            fi
-
             source_commit=7010a5cac46a1e465837f0f1541ae466a8dad4da
             {
               cat scripts/v593-correct00-0 scripts/v593-correct00-1 scripts/v593-correct00-2 scripts/v593-correct00-3
@@ -46,47 +35,20 @@ jobs:
               for part in 05 06a 06b 06c 06d 07a 07b; do
                 git show "$source_commit:scripts/v593-source.part$part"
               done
-            } | base64 -d > /tmp/v593-source.patch
-
-            sed -i "/^com\/simplereader\/app\/reader\/cache\/ReaderPageCacheManager.kt$/d" /tmp/v593-source.patch
-            patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
-            echo "v593 corrected patch sha256=$patch_sha"
-            if ! git apply --check /tmp/v593-source.patch; then
-              echo "--- malformed patch lines 490-550 ---"
-              nl -ba /tmp/v593-source.patch | sed -n "490,550p"
-              echo "--- end malformed patch lines ---"
-              exit 1
-            fi
-            git apply /tmp/v593-source.patch
-
-            files=(
-              app/src/main/java/com/simplereader/app/parser/TxtParser.kt
-              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
-              app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
-              app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-              app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
-              app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
-            )
-            git add -- "${files[@]}"
-            git diff --cached --check
-            staged=$(git diff --cached --name-only)
-            printf "%s\n" "$staged"
-            test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 7
-            for file in "${files[@]}"; do
-              printf "%s\n" "$staged" | grep -Fxq "$file"
-            done
-
-            grep -Fq "arrayOf(\"批量管理分组\", \"同步书架\", \"一键缓存\")" "$main"
-            grep -Fq "ReaderPageCacheManager.enqueue" "$main"
-            grep -Fq "completeChapterCount" "$worker"
-            grep -Fq "completeChapterCount" app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
-            grep -Fq "TXT_INITIAL_WINDOW_BYTES = 32 * 1024" "$activity"
-            grep -Fq "txtCatalogChapters" "$activity"
-            ! grep -Fq "MENU_CACHE_BOOK" "$activity"
-
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "v593: commit Duokan anchors and shelf cache source"
-            git push origin HEAD:agent/v593-duokan-page-anchor
+            } | base64 -d > /tmp/v593-source.raw.patch
+            sed "/^com\/simplereader\/app\/reader\/cache\/ReaderPageCacheManager.kt$/d" \
+              /tmp/v593-source.raw.patch > /tmp/v593-source.cleaned.patch
+            sha256sum /tmp/v593-source.raw.patch /tmp/v593-source.cleaned.patch > /tmp/v593-patch.sha256
+            wc -l /tmp/v593-source.raw.patch /tmp/v593-source.cleaned.patch
           '
+
+      - name: Upload reconstructed patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: v593-reconstructed-patch-${{ github.run_number }}
+          path: |
+            /tmp/v593-source.raw.patch
+            /tmp/v593-source.cleaned.patch
+            /tmp/v593-patch.sha256
+          if-no-files-found: error
+          retention-days: 2
