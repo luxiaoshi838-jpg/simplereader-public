@@ -317,7 +317,7 @@ class VerticalPageFlowView @JvmOverloads constructor(
                 setTextIsSelectable(false)
                 isLongClickable = false
                 isClickable = false
-                includeFontPadding = true
+                includeFontPadding = false
                 breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
                 setBackgroundColor(Color.TRANSPARENT)
