@@ -1,3 +1,4 @@
+# Registered on v592; this follow-up commit triggers the materialization run.
 name: Materialize v592 source
 
 on:
@@ -38,9 +39,6 @@ jobs:
               scripts/v592_materialize.part03 \
             | base64 --decode | gzip --decompress > /tmp/v592.patch
 
-          # The patch was generated from the last verified v591 source. Restore this
-          # workflow to that exact source before applying; the patch installs the final
-          # read-only v592 CI workflow itself.
           git show 6159c37699e9aca7d15ee20035ca0d2163f3822a:.github/workflows/public-ci.yml \
             > .github/workflows/public-ci.yml
           git apply --check /tmp/v592.patch
