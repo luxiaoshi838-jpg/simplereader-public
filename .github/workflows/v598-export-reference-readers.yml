@@ -1,0 +1,40 @@
+name: v598 export reference reader sources
+
+on:
+  pull_request:
+    branches:
+      - baseline/v575
+
+permissions:
+  contents: read
+
+jobs:
+  export-reference-readers:
+    if: github.head_ref == 'agent/v598-reader-only-duokan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone Android reader references
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/refs
+          timeout --signal=INT 5m git clone --depth 1 https://github.com/gedoor/MyBookshelf.git /tmp/refs/MyBookshelf
+          find /tmp/refs/MyBookshelf/app/src/main -type f \( -iname '*Page*.java' -o -iname '*Page*.kt' -o -iname '*Read*.java' -o -iname '*Read*.kt' \) > /tmp/refs/files.txt
+          grep -RIl --include='*.java' --include='*.kt' -E 'getPageCount|pageCount|nextPage|previousPage|chapter.*page|page.*chapter|breakText|StaticLayout' /tmp/refs/MyBookshelf/app/src/main | sort > /tmp/refs/pagination-files.txt || true
+          mkdir -p /tmp/export
+          cp /tmp/refs/files.txt /tmp/export/
+          cp /tmp/refs/pagination-files.txt /tmp/export/
+          while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            rel=${file#/tmp/refs/MyBookshelf/}
+            mkdir -p "/tmp/export/MyBookshelf/$(dirname "$rel")"
+            cp "$file" "/tmp/export/MyBookshelf/$rel"
+          done < /tmp/refs/pagination-files.txt
+          (cd /tmp/export && zip -qr /tmp/v598-reference-readers.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v598-reference-reader-sources
+          path: /tmp/v598-reference-readers.zip
+          if-no-files-found: error
+          retention-days: 2
