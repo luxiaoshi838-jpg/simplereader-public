@@ -48,12 +48,13 @@ jobs:
               done
             } | base64 -d > /tmp/v593-source.patch
 
+            sed -i "/^com\/simplereader\/app\/reader\/cache\/ReaderPageCacheManager.kt$/d" /tmp/v593-source.patch
             patch_sha=$(sha256sum /tmp/v593-source.patch | awk "{print \$1}")
             echo "v593 corrected patch sha256=$patch_sha"
             if ! git apply --check /tmp/v593-source.patch; then
-              echo "--- malformed patch head ---"
-              nl -ba /tmp/v593-source.patch | sed -n "1,80p"
-              echo "--- end malformed patch head ---"
+              echo "--- malformed patch context ---"
+              nl -ba /tmp/v593-source.patch | sed -n "1,180p"
+              echo "--- end malformed patch context ---"
               exit 1
             fi
             git apply /tmp/v593-source.patch
