@@ -51,7 +51,8 @@ jobs:
             app/src/test/java/com/simplereader/app/ui/ReaderOnlyDuokanPaginationContractTest.kt | sort)
           test "$actual" = "$expected" || { echo 'Reader-only whitelist failed'; echo 'Actual:'; printf '%s\n' "$actual"; exit 1; }
           grep -Fq 'ReaderTextPaginator.paginate' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'openFixedTxtChapter(targetChapter, targetPage = 0' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'loadFixedTxtChapter(' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'requestedPageIndex = 0' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'android:fitsSystemWindows="true"' app/src/main/res/layout/activity_reader.xml
           grep -Fq 'android:scrollbars="none"' app/src/main/res/layout/activity_reader.xml
           ! grep -Fq 'readerScrollView.isScrollbarFadingEnabled = false' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
