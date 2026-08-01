@@ -1,160 +1,69 @@
-name: Public Android CI
+name: Materialize v592 source
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - main
-      - agent/v14-real-epub-chm-continuous
-      - agent/v582-duokan-backgrounds
-      - agent/v591-duokan-fixed-page-flow
-  pull_request:
+      - agent/v592-demand-page-controller
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: public-android-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: materialize-v592-source
+  cancel-in-progress: false
 
 jobs:
-  build-debug:
-    name: Build public APK
+  materialize:
     runs-on: ubuntu-latest
-    timeout-minutes: 24
-    env:
-      SIMPLE_READER_VERSION_CODE: '2098000591'
-      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-fixed-page-flow.591'
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout current v591 source
+      - name: Checkout v592 staging branch
         uses: actions/checkout@v4
         with:
+          ref: agent/v592-demand-page-controller
           fetch-depth: 0
 
-      - name: Pack exact source
-        run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
-
-      - name: Upload exact source
-        uses: actions/upload-artifact@v4
-        with:
-          name: simplereader-current-source-${{ github.run_number }}
-          path: /tmp/simplereader-current-source.tar.gz
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Export official Android signing tools
+      - name: Apply complete v592 source and remove staging files
         shell: bash
         run: |
           set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -x "$build_tools/apksigner"
-          test -x "$build_tools/zipalign"
-          test -x "$build_tools/aapt2"
-          tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools.tar.gz "$(basename "$build_tools")"
+          test -s scripts/v592_materialize.part00
+          test -s scripts/v592_materialize.part01
+          test -s scripts/v592_materialize.part02
+          test -s scripts/v592_materialize.part03
 
-      - name: Upload Android signing tools
-        uses: actions/upload-artifact@v4
-        with:
-          name: Android-build-tools-${{ github.run_number }}
-          path: /tmp/android-build-tools.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          cat scripts/v592_materialize.part00 \
+              scripts/v592_materialize.part01 \
+              scripts/v592_materialize.part02 \
+              scripts/v592_materialize.part03 \
+            | base64 --decode | gzip --decompress > /tmp/v592.patch
 
-      - name: Verify v591 Duokan page-axis contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          paged=app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          vertical=app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
-          model=app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
-          parser=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
-          layout=app/src/main/res/layout/activity_reader.xml
+          # The patch was generated from the last verified v591 source. Restore this
+          # workflow to that exact source before applying; the patch installs the final
+          # read-only v592 CI workflow itself.
+          git show 6159c37699e9aca7d15ee20035ca0d2163f3822a:.github/workflows/public-ci.yml \
+            > .github/workflows/public-ci.yml
+          git apply --check /tmp/v592.patch
+          git apply /tmp/v592.patch
 
-          grep -Fq 'android:id="@+id/verticalPageFlowView"' "$layout"
-          grep -Fq 'refreshVerticalReader(pagedAnchorFromCurrentPosition())' "$activity"
-          grep -Fq 'val pages = pagedPagesForChapter(safeChapter, signature)' "$activity"
-          grep -Fq 'verticalPageFlowView.bind(pages, current, preserveOffset)' "$activity"
-          grep -Fq 'verticalPageFlowView.prepend(pages)' "$activity"
-          grep -Fq 'verticalPageFlowView.append(pages)' "$activity"
-          grep -Fq 'TxtParser.readRangeMapped' "$activity"
-          grep -Fq 'sourceOffsets = mapped.sourceOffsets.copyOf(text.length + 1)' "$activity"
-          grep -Fq 'fun readRangeMapped(' "$parser"
-          grep -Fq 'Page anchors therefore never use character-ratio' "$parser"
-          grep -Fq 'Each adapter cell is exactly one *content-page* high' "$vertical"
-          grep -Fq 'topViewportPaddingPx' "$vertical"
-          grep -Fq 'bottomViewportPaddingPx' "$vertical"
-          grep -Fq 'edgeGradient' "$vertical"
-          grep -Fq 'BREAK_STRATEGY_HIGH_QUALITY' "$vertical"
-          grep -Fq 'BREAK_STRATEGY_HIGH_QUALITY' "$paged"
-          grep -Fq 'import com.simplereader.app.R' "$vertical"
-          grep -Fq 'import com.simplereader.app.R' "$paged"
-          grep -Fq 'includeFontPadding = false' "$vertical"
-          grep -Fq 'includeFontPadding = false' "$paged"
-          grep -Fq '.setIncludePad(false)' "$model"
-          grep -Fq 'val layout = StaticLayout.Builder.obtain' "$model"
-          grep -Fq 'ReaderPageIndexStore' "$activity"
-          grep -Fq 'return "本章 ${pageIndex + 1}/$safeChapterPages"' "$activity"
-          grep -Fq 'readerTextSizePx()' "$activity"
-          ! grep -Fq 'val unitsPerPage = pageSize' "$activity"
-          ! test -e scripts/v591_import_app_r.patch
-          ! test -e .github/workflows/v591-apply-r-imports.yml
+          rm -f scripts/v592_materialize.part00 \
+                scripts/v592_materialize.part01 \
+                scripts/v592_materialize.part02 \
+                scripts/v592_materialize.part03
 
-      - name: Run release unit tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/v591-tests.log
+          grep -Fq 'class ReaderPageCacheWorker' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          grep -Fq 'ExistingWorkPolicy.KEEP' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+          grep -Fq 'ReaderPageBoundaryCalculator' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
+          grep -Fq 'MENU_CACHE_BOOK' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'work-runtime-ktx' app/build.gradle.kts
+          grep -Fq 'foregroundServiceType="dataSync"' app/src/main/AndroidManifest.xml
+          test ! -e scripts/v592_materialize.part00
+          test ! -e scripts/v592_materialize.part01
+          test ! -e scripts/v592_materialize.part02
+          test ! -e scripts/v592_materialize.part03
 
-      - name: Build release APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v591-build.log
-          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v591-unsigned.apk
-
-      - name: Verify v591 APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v591-unsigned.apk | tee /tmp/v591-badging.log
-          grep -Fq "package: name='com.simplereader.app'" /tmp/v591-badging.log
-          grep -Fq "versionCode='2098000591'" /tmp/v591-badging.log
-          grep -Fq "versionName='2026.08.01.duokan-fixed-page-flow.591'" /tmp/v591-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v591-unsigned.apk | tee /tmp/v591-resources.log
-          grep -Fq 'id/pagedReaderView' /tmp/v591-resources.log
-          grep -Fq 'id/verticalPageFlowView' /tmp/v591-resources.log
-          grep -Fq 'drawable/reader_texture_paper_grain' /tmp/v591-resources.log
-          grep -Fq 'drawable/reader_texture_paper_fiber' /tmp/v591-resources.log
-          ! grep -Fq 'drawable/reader_material_patina' /tmp/v591-resources.log
-          unzip -t /tmp/SimpleReader-v591-unsigned.apk | tee /tmp/v591-unzip.log
-          sha256sum /tmp/SimpleReader-v591-unsigned.apk | tee /tmp/v591-unsigned.sha256
-
-      - name: Upload unsigned v591 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v591-unsigned-${{ github.run_number }}
-          path: |
-            /tmp/SimpleReader-v591-unsigned.apk
-            /tmp/v591-tests.log
-            /tmp/v591-build.log
-            /tmp/v591-badging.log
-            /tmp/v591-resources.log
-            /tmp/v591-unzip.log
-            /tmp/v591-unsigned.sha256
-          if-no-files-found: error
-          retention-days: 3
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'v592: materialize demand paging and background page cache'
+          git push origin HEAD:agent/v592-demand-page-controller
