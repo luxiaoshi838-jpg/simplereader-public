@@ -1,0 +1,175 @@
+name: Apply v591 reader stability fixes
+
+on:
+  push:
+    branches:
+      - agent/v591-duokan-fixed-page-flow
+    paths:
+      - .github/workflows/v591-apply-reader-stability.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-v591-reader-stability
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v591-duokan-fixed-page-flow
+          fetch-depth: 0
+
+      - name: Apply measured viewport and cache isolation fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          activity_path = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          activity = activity_path.read_text()
+
+          old_signature = '''    private fun pagedLayoutSignature(): ReaderLayoutSignature = ReaderLayoutSignature(
+              widthPx = maxOf(
+                  pagedReaderView.width,
+                  verticalPageFlowView.width,
+                  resources.displayMetrics.widthPixels
+              ),
+              heightPx = maxOf(
+                  pagedReaderView.height,
+                  verticalPageFlowView.height,
+                  resources.displayMetrics.heightPixels
+              ),
+              textSizePx = readerTextSizePx(),
+              lineSpacingMultiplierX100 = 175,
+              horizontalPaddingPx = dp(28),
+              topPaddingPx = readerTopInsetPx + dp(26),
+              bottomPaddingPx = readerBottomInsetPx + dp(42),
+              chapterTitleScaleX100 = 130,
+              contentKey = if (txtStreamingMode && !hasStableTxtChapterIndex()) {
+                  txtCurrentPageStartByte * 31L + txtCurrentPageEndByte
+              } else {
+                  0L
+              }
+          )
+          '''
+          new_signature = '''    private fun pagedLayoutSignature(): ReaderLayoutSignature {
+              val readerRoot = findViewById<View>(android.R.id.content)
+              val measuredWidth = maxOf(
+                  pagedReaderView.width,
+                  verticalPageFlowView.width,
+                  readerRoot.width
+              ).takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+              val measuredHeight = maxOf(
+                  pagedReaderView.height,
+                  verticalPageFlowView.height,
+                  readerRoot.height
+              ).takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+              return ReaderLayoutSignature(
+                  widthPx = measuredWidth,
+                  heightPx = measuredHeight,
+                  textSizePx = readerTextSizePx(),
+                  lineSpacingMultiplierX100 = 175,
+                  horizontalPaddingPx = dp(28),
+                  topPaddingPx = readerTopInsetPx + dp(26),
+                  bottomPaddingPx = readerBottomInsetPx + dp(42),
+                  chapterTitleScaleX100 = 130,
+                  contentKey = if (txtStreamingMode && !hasStableTxtChapterIndex()) {
+                      txtCurrentPageStartByte * 31L + txtCurrentPageEndByte
+                  } else {
+                      0L
+                  }
+              )
+          }
+          '''
+          if activity.count(old_signature) != 1:
+              raise SystemExit('pagedLayoutSignature source did not match exactly once')
+          activity = activity.replace(old_signature, new_signature)
+
+          old_loader = '''    private suspend fun pagedPagesForChapter(
+              chapterIndex: Int,
+              signature: ReaderLayoutSignature
+          ): List<ReaderPageSnapshot> {
+          '''
+          new_loader = '''    private suspend fun pagedPagesForChapter(
+              chapterIndex: Int,
+              signature: ReaderLayoutSignature,
+              cacheResult: Boolean = true
+          ): List<ReaderPageSnapshot> {
+          '''
+          if activity.count(old_loader) != 1:
+              raise SystemExit('pagedPagesForChapter signature did not match exactly once')
+          activity = activity.replace(old_loader, new_loader)
+
+          old_put = '''        readerPageCache.put(chapterIndex, signature, pages)
+              registerChapterPageCount(chapterIndex, pages.size, signature)
+          '''
+          new_put = '''        if (cacheResult) readerPageCache.put(chapterIndex, signature, pages)
+              registerChapterPageCount(chapterIndex, pages.size, signature)
+          '''
+          if activity.count(old_put) != 1:
+              raise SystemExit('reader cache write did not match exactly once')
+          activity = activity.replace(old_put, new_put)
+
+          old_index_call = '                        pagedPagesForChapter(chapter, signature)\n'
+          new_index_call = '                        pagedPagesForChapter(chapter, signature, cacheResult = false)\n'
+          if activity.count(old_index_call) != 1:
+              raise SystemExit('whole-book page-index call did not match exactly once')
+          activity = activity.replace(old_index_call, new_index_call)
+          activity_path.write_text(activity)
+
+          test_path = Path('app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt')
+          test = test_path.read_text()
+          marker = '\n}\n'
+          if not test.endswith(marker):
+              raise SystemExit('architecture test class ending not found')
+          if 'layoutSignatureUsesMeasuredReaderViewportBeforeDisplayFallback' in test:
+              raise SystemExit('stability tests already exist')
+          additions = '''
+
+              @Test
+              fun layoutSignatureUsesMeasuredReaderViewportBeforeDisplayFallback() {
+                  val signature = activity.substringAfter("private fun pagedLayoutSignature()")
+                      .substringBefore("private fun pagedChapterCount()")
+                  assertTrue(signature.contains("val readerRoot = findViewById<View>(android.R.id.content)"))
+                  assertTrue(signature.contains("pagedReaderView.width"))
+                  assertTrue(signature.contains("verticalPageFlowView.width"))
+                  assertTrue(signature.contains("readerRoot.width"))
+                  assertTrue(signature.contains("readerRoot.height"))
+                  assertTrue(signature.contains("takeIf { it > 0 } ?: resources.displayMetrics.widthPixels"))
+                  assertTrue(signature.contains("takeIf { it > 0 } ?: resources.displayMetrics.heightPixels"))
+                  assertTrue(signature.contains("widthPx = measuredWidth"))
+                  assertTrue(signature.contains("heightPx = measuredHeight"))
+              }
+
+              @Test
+              fun wholeBookIndexDoesNotEvictTheVisibleThreeChapterCache() {
+                  val indexer = activity.substringAfter("private fun ensureWholeBookPageIndex")
+                      .substringBefore("private fun ensureVerticalPageIndex")
+                  assertTrue(indexer.contains("pagedPagesForChapter(chapter, signature, cacheResult = false)"))
+                  val loader = activity.substringAfter("private suspend fun pagedPagesForChapter")
+                      .substringBefore("private fun pageContaining")
+                  assertTrue(loader.contains("cacheResult: Boolean = true"))
+                  assertTrue(loader.contains("if (cacheResult) readerPageCache.put"))
+              }
+          '''
+          test = test[:-len(marker)] + additions + marker
+          test_path.write_text(test)
+          PY
+
+          grep -Fq 'widthPx = measuredWidth' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'pagedPagesForChapter(chapter, signature, cacheResult = false)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'layoutSignatureUsesMeasuredReaderViewportBeforeDisplayFallback' app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt
+          grep -Fq 'wholeBookIndexDoesNotEvictTheVisibleThreeChapterCache' app/src/test/java/com/simplereader/app/ui/PagedReaderArchitectureContractTest.kt
+
+          rm .github/workflows/v591-apply-reader-stability.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'v591: use measured viewport and isolate page-index cache'
+          git push origin HEAD:agent/v591-duokan-fixed-page-flow
