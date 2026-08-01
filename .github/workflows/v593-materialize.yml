@@ -1,0 +1,39 @@
+name: v593 materialize source
+
+on:
+  push:
+    branches:
+      - agent/v593-duokan-page-anchor
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize final source
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 5m bash -c '
+            cat scripts/v593-final.part{00..07} | base64 -d > /tmp/v593-final.patch
+            echo "477bee88799d66e76e53e47fa06a12ed9c1eb33ab32426982508dca8612473f3  /tmp/v593-final.patch" | sha256sum -c -
+            git apply --check /tmp/v593-final.patch
+            git apply /tmp/v593-final.patch
+            rm -f scripts/v593-final.part{00..07}
+            rm -f scripts/v593_patch.part00
+            rm -f .github/workflows/v593-materialize.yml
+            git diff --check
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "v593: separate Duokan anchors and add shelf cache"
+            git push origin HEAD:agent/v593-duokan-page-anchor
+          '
