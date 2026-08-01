@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Bitmap
@@ -30,6 +33,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
+import com.simplereader.app.SimpleReaderApplication
 import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.reader.cache.ReaderPageCacheManager
 import com.simplereader.app.data.backup.LocalLibraryScanner
@@ -220,6 +224,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadBooks()
+        mainRoot.post { showPendingCrashReport() }
+    }
+
+    private fun showPendingCrashReport() {
+        val app = application as? SimpleReaderApplication ?: return
+        val report = SimpleReaderApplication.pendingCrashLog(app) ?: return
+        val visibleReport = report.takeLast(12_000)
+        AlertDialog.Builder(this)
+            .setTitle("上次崩溃日志")
+            .setMessage(visibleReport)
+            .setNeutralButton("复制日志") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("SimpleReader crash", report))
+                Toast.makeText(this, "崩溃日志已复制", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("暂时保留", null)
+            .setPositiveButton("已记录并清除") { _, _ ->
+                SimpleReaderApplication.clearPendingCrashLog(app)
+            }
+            .show()
     }
 
     private fun statusBarHeight(): Int {

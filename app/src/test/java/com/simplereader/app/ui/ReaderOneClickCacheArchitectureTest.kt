@@ -74,6 +74,18 @@ class ReaderOneClickCacheArchitectureTest {
     }
 
     @Test
+    fun cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis() {
+        val loadBlock = activity.substringAfter("val cachedCatalog = cachedChapters.map")
+            .substringBefore("isStreamingTxt = true")
+        assertTrue(loadBlock.contains("txtCatalogChapters = cachedCatalog"))
+        assertTrue(loadBlock.contains("txtCatalogStartPositions = cachedStarts"))
+        assertTrue(loadBlock.contains("epubChapters = emptyList()"))
+        assertTrue(loadBlock.contains("epubChapterStartPositions = emptyList()"))
+        assertFalse(loadBlock.contains("epubChapters = cachedCatalog"))
+        assertFalse(loadBlock.contains("epubChapterStartPositions = cachedStarts"))
+    }
+
+    @Test
     fun target35ForegroundServiceTypeIsDeclared() {
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE"))
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE_DATA_SYNC"))

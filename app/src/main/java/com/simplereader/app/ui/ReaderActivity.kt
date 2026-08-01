@@ -854,9 +854,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                             }
                             LoadedContent(
                                 text = window.text,
-                                // A directory cached before first paint is safe to activate.
-                                epubChapters = cachedCatalog,
-                                epubChapterStartPositions = cachedStarts,
+                                // Whole-book byte anchors belong only to the catalog axis.
+                                // The visible page axis must stay local to the first 32 KB window;
+                                // otherwise global byte offsets can be interpreted as positions
+                                // inside the small window and crash during the first layout.
+                                epubChapters = emptyList(),
+                                epubChapterStartPositions = emptyList(),
                                 txtCatalogChapters = cachedCatalog,
                                 txtCatalogStartPositions = cachedStarts,
                                 isStreamingTxt = true,
