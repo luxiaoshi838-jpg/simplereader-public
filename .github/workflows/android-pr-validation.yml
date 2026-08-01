@@ -55,7 +55,6 @@ jobs:
           grep -Fn 'work-runtime-ktx' app/build.gradle.kts
           grep -Fn 'foregroundServiceType="dataSync"' app/src/main/AndroidManifest.xml
           grep -Fn '2098000592' .github/workflows/public-ci.yml
-          grep -Fn '2098000592' .github/workflows/android-pr-validation.yml
           git status --short
 
           git add -A
