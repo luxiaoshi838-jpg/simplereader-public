@@ -22,42 +22,54 @@ jobs:
           ref: agent/v594-open-crash-guard
           fetch-depth: 0
 
-      - name: Materialize v594 source
+      - name: Verify or materialize v594 source
         shell: bash
         run: |
           set -euo pipefail
           timeout --signal=INT 5m bash -c '
-            base64 -d scripts/v594-open-crash-guard.patch.b64 > /tmp/v594.patch
-            echo "ad88216d2b803faabab32095ec8b16d396cd4fced06d921a421d45d6c8aff5b7  /tmp/v594.patch" | sha256sum -c -
-            git apply --check /tmp/v594.patch
-            git apply /tmp/v594.patch
+            activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            manifest=app/src/main/AndroidManifest.xml
+            crash_app=app/src/main/java/com/simplereader/app/SimpleReaderApplication.kt
+            test_file=app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
 
-            files=(
-              app/src/main/AndroidManifest.xml
-              app/src/main/java/com/simplereader/app/SimpleReaderApplication.kt
-              app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-              app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
-            )
-            git add -- "${files[@]}"
-            git diff --cached --check
-            staged=$(git diff --cached --name-only)
-            test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 5
-            for file in "${files[@]}"; do
-              printf "%s\n" "$staged" | grep -Fxq "$file"
-            done
+            if grep -Fq "android:name=\".SimpleReaderApplication\"" "$manifest" \
+              && grep -Fq "cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis" "$test_file" \
+              && grep -Fq "epubChapters = emptyList()" "$activity"; then
+              echo "v594 source already materialized"
+            else
+              base64 -d scripts/v594-open-crash-guard.patch.b64 > /tmp/v594.patch
+              echo "ad88216d2b803faabab32095ec8b16d396cd4fced06d921a421d45d6c8aff5b7  /tmp/v594.patch" | sha256sum -c -
+              git apply --check /tmp/v594.patch
+              git apply /tmp/v594.patch
 
-            grep -Fq "android:name=\".SimpleReaderApplication\"" app/src/main/AndroidManifest.xml
-            grep -Fq "epubChapters = emptyList()" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-            grep -Fq "txtCatalogChapters = cachedCatalog" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-            ! grep -A18 -F "val cachedCatalog = cachedChapters.map" app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt | grep -Fq "epubChapters = cachedCatalog"
+              files=(
+                app/src/main/AndroidManifest.xml
+                app/src/main/java/com/simplereader/app/SimpleReaderApplication.kt
+                app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+                app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+                app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
+              )
+              git add -- "${files[@]}"
+              git diff --cached --check
+              staged=$(git diff --cached --name-only)
+              test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 5
+              for file in "${files[@]}"; do
+                printf "%s\n" "$staged" | grep -Fxq "$file"
+              done
+
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git commit -m "v594: isolate TXT catalog axis and add crash report"
+              git push origin HEAD:agent/v594-open-crash-guard
+            fi
+
+            test -s "$crash_app"
+            grep -Fq "android:name=\".SimpleReaderApplication\"" "$manifest"
+            grep -Fq "epubChapters = emptyList()" "$activity"
+            grep -Fq "txtCatalogChapters = cachedCatalog" "$activity"
+            ! grep -A18 -F "val cachedCatalog = cachedChapters.map" "$activity" | grep -Fq "epubChapters = cachedCatalog"
             grep -Fq "上次崩溃日志" app/src/main/java/com/simplereader/app/ui/MainActivity.kt
-            grep -Fq "cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis" app/src/test/java/com/simplereader/app/ui/ReaderOneClickCacheArchitectureTest.kt
-
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "v594: isolate TXT catalog axis and add crash report"
-            git push origin HEAD:agent/v594-open-crash-guard
+            grep -Fq "cachedTxtCatalogNeverBecomesTheVisibleSmallWindowPageAxis" "$test_file"
           '
 
       - name: Set up JDK 17
