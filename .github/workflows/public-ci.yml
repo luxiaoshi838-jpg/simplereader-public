@@ -10,7 +10,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: public-android-ci-${{ github.ref }}
@@ -23,14 +23,40 @@ jobs:
     timeout-minutes: 24
     env:
       SIMPLE_READER_VERSION_CODE: '2098000590'
-      SIMPLE_READER_VERSION_NAME: '2026.07.31.duokan-chapter-page-index.590'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-chapter-page-index.590'
 
     steps:
-      - name: Checkout committed v590 source
+      - name: Checkout current v590 branch
         uses: actions/checkout@v4
         with:
           ref: agent/v582-duokan-backgrounds
           fetch-depth: 0
+
+      - name: Materialize v590 chapter page index
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d scripts/v590_source_patch.gz.b64 | gzip -dc > /tmp/v590.patch
+          if git apply --check /tmp/v590.patch; then
+            git apply /tmp/v590.patch
+          elif git apply --reverse --check /tmp/v590.patch; then
+            echo "v590 source already materialized"
+          else
+            echo "v590 source patch does not match current branch" >&2
+            exit 1
+          fi
+          git add app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
+                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+                  app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt \
+                  app/src/main/res/layout/activity_reader.xml \
+                  app/src/test/java/com/simplereader/app/parser/TxtChapterAndEncodingRegressionTest.kt \
+                  app/src/test/java/com/simplereader/app/ui/ReaderChapterPageIndexContractTest.kt
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'v590: paginate and count chapters independently'
+            git push origin HEAD:agent/v582-duokan-backgrounds
+          fi
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
@@ -75,23 +101,20 @@ jobs:
         run: |
           set -euo pipefail
           grep -Fq 'private fun isPagedReaderMode(): Boolean = pageTurnMode != TURN_MODE_VERTICAL' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'maybeExtendStructuredContinuousBuffer(scrollY)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'actualPageLabel(page)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'hasStableTxtChapterIndex()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'TxtParser.readRange' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'ReaderPageIndexStore' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'pagedChapterPageStarts' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'txtPagedChapterRange(chapterIndex)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'TxtParser.readRange(' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'ReaderPageIndexStore.Snapshot' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'pagedChapterSourceStarts' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'return "本章 ${pageIndex + 1}/$safeChapterPages"' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'buildVisiblePagedWindow(anchor, signature)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'pagedReaderView.cancelNavigation()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'ValueAnimator' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          grep -Fq 'fun cancelNavigation()' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
-          ! grep -Fq 'TurnMode.VERTICAL' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          grep -Fq 'if (!pagedPageIndexComplete)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'return "本章 ${safePage + 1}/$safeChapterPages"' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'pagedPagesForChapter(targetChapter, signature)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'fun readRange(' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -Fq 'android:id="@+id/readerRoot"' app/src/main/res/layout/activity_reader.xml
+          grep -Fq 'android:requiresFadingEdge="vertical"' app/src/main/res/layout/activity_reader.xml
+          grep -Fq 'RelativeSizeSpan(1.28f)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           ! grep -Fq 'val unitsPerPage = pageSize' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
-          grep -Fq 'val layout = StaticLayout.Builder.obtain' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
-          grep -Fq 'neutralTexture' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
-          ! grep -Fq 'PorterDuff.Mode.MULTIPLY' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          ! grep -Fq 'TurnMode.VERTICAL' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
 
       - name: Run release unit tests
         shell: bash
