@@ -101,6 +101,7 @@ class PagedReaderArchitectureContractTest {
         assertTrue(activity.contains("saveImmediately = saveImmediately"))
         assertTrue(activity.contains("pendingBoundaryTurnDirection = 0"))
     }
+
     @Test
     fun everyChapterOwnsASeparateFixedPageList() {
         val chapterSource = activity.substringAfter("private suspend fun pagedChapterSource")
@@ -157,4 +158,13 @@ class PagedReaderArchitectureContractTest {
         assertTrue(vertical.contains("if (e.x in width * 0.33f..width * 0.67f) onCenterTap?.invoke()"))
     }
 
+    @Test
+    fun pageCounterAndVisiblePagesUseIdenticalFontPaddingPolicy() {
+        assertTrue(model.contains(".setIncludePad(false)"))
+        assertTrue(view.contains("includeFontPadding = false"))
+        assertTrue(vertical.contains("includeFontPadding = false"))
+        assertFalse(model.contains(".setIncludePad(true)"))
+        assertFalse(view.contains("includeFontPadding = true"))
+        assertFalse(vertical.contains("includeFontPadding = true"))
+    }
 }
