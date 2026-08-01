@@ -4,12 +4,16 @@ on:
   push:
     branches:
       - agent/v598-reader-only-duokan
+  pull_request:
+    branches:
+      - baseline/v575
 
 permissions:
   contents: read
 
 jobs:
   export-source:
+    if: github.head_ref == 'agent/v598-reader-only-duokan' || github.ref_name == 'agent/v598-reader-only-duokan'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
