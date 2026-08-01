@@ -40,7 +40,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
-import androidx.work.WorkInfo
 import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.data.cache.CachedBook
@@ -50,7 +49,6 @@ import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.ReadProgress
 import com.simplereader.app.reader.page.ReaderPageWindow
-import com.simplereader.app.reader.cache.ReaderPageCacheManager
 import com.simplereader.app.reader.page.TxtPageEngine
 import com.simplereader.app.parser.ChmParser
 import com.simplereader.app.parser.EpubChapter
@@ -97,6 +95,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var suppressNextScrollProgress: Boolean = false
     private var epubChapters: List<EpubChapter> = emptyList()
     private var epubChapterStartPositions: List<Int> = emptyList()
+    private var txtCatalogChapters: List<EpubChapter> = emptyList()
+    private var txtCatalogStartPositions: List<Int> = emptyList()
     private var structuredCatalogEntries: List<StructuredCatalogEntry> = emptyList()
     private var structuredChapterIndex: Int = 0
     private var structuredWholeBookMode: Boolean = false
@@ -148,8 +148,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var pagedPageIndexPersistJob: Job? = null
     private var pagedPageIndexLoadedKey: String? = null
     private val pagedPageIndexStore by lazy { ReaderPageIndexStore(this, bookId) }
-    private var pageCacheWorkInfo: WorkInfo? = null
-    private var pageCacheLastTerminalId: java.util.UUID? = null
     private var readerTopInsetPx: Int = 0
     private var readerBottomInsetPx: Int = 0
     private var txtPagedWindowBasePage: Long? = null
@@ -262,7 +260,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         bookId = intent.getLongExtra("bookId", 0L)
-        observeOneClickPageCache()
         setupUI()
         val diagnosticText = intent.getStringExtra("readerDiagnosticText")
         if (diagnosticText != null) {
@@ -303,8 +300,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             setOnClickListener { addBookmark() }
         }
-        menu.add(Menu.NONE, MENU_CACHE_BOOK, Menu.NONE, pageCacheMenuTitle())
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         return true
     }
 
@@ -324,10 +319,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
             MENU_SEARCH -> {
                 showContentSearch()
-                true
-            }
-            MENU_CACHE_BOOK -> {
-                startOneClickPageCache()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -605,6 +596,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         return (targetByte - TXT_STREAM_WINDOW_BYTES / 3L).coerceAtLeast(0L)
     }
 
+    private fun initialWindowStartForTarget(targetByte: Long): Long {
+        return (targetByte - TXT_INITIAL_WINDOW_BYTES / 4L).coerceAtLeast(0L)
+    }
+
     private fun isStructuredChapterDocument(): Boolean {
         val format = book?.format?.uppercase().orEmpty()
         return !txtStreamingMode && format == "EPUB" && epubChapters.isNotEmpty()
@@ -835,12 +830,15 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 ?: savedProgress?.txtCharOffset?.toLong()
                                 ?: 0L
                             val targetOffset = savedOffset.coerceIn(0L, fileSize.coerceAtLeast(0L))
-                            val window = contentResolver.openInputStream(documentFile.uri)?.let { stream ->
+                            // Paint a small reading window first. Directory recognition runs
+                            // afterwards and only publishes chapter byte anchors; it never forces
+                            // the visible page to be destroyed and laid out again.
+                            val window = contentResolver.openInputStream(documentFile.uri)?.use { stream ->
                                 TxtParser.readWindow(
                                     inputStream = stream,
                                     charsetName = charsetName,
-                                    startByte = streamingWindowStartForTarget(targetOffset),
-                                    maxBytes = TXT_STREAM_WINDOW_BYTES
+                                    startByte = initialWindowStartForTarget(targetOffset),
+                                    maxBytes = TXT_INITIAL_WINDOW_BYTES
                                 )
                             } ?: error("Cannot open TXT stream")
                             val cachedChapters = readTxtChapterCache(
@@ -848,14 +846,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 documentFile.lastModified(),
                                 charsetName
                             )
+                            val cachedCatalog = cachedChapters.map { chapter ->
+                                EpubChapter(name = chapter.title, text = "")
+                            }
+                            val cachedStarts = cachedChapters.map {
+                                it.start.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                            }
                             LoadedContent(
                                 text = window.text,
-                                epubChapters = cachedChapters.map { chapter ->
-                                    EpubChapter(name = chapter.title, text = "")
-                                },
-                                epubChapterStartPositions = cachedChapters.map {
-                                    it.start.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                                },
+                                // A directory cached before first paint is safe to activate.
+                                epubChapters = cachedCatalog,
+                                epubChapterStartPositions = cachedStarts,
+                                txtCatalogChapters = cachedCatalog,
+                                txtCatalogStartPositions = cachedStarts,
                                 isStreamingTxt = true,
                                 txtCharsetName = charsetName,
                                 txtTotalBytes = fileSize,
@@ -970,6 +973,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
         epubChapters = loadedContent.epubChapters
         epubChapterStartPositions = loadedContent.epubChapterStartPositions
+        txtCatalogChapters = loadedContent.txtCatalogChapters
+        txtCatalogStartPositions = loadedContent.txtCatalogStartPositions
         structuredCatalogEntries = loadedContent.structuredCatalogEntries
         structuredChapterIndex = loadedContent.structuredChapterIndex
         structuredWholeBookMode = loadedContent.structuredWholeBookMode
@@ -1011,7 +1016,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
         }
         displayContent()
-        if (txtStreamingMode && epubChapters.isEmpty() && documentFile != null) {
+        if (txtStreamingMode && txtCatalogChapters.isEmpty() && documentFile != null) {
             scanStreamingTxtChapters(documentFile)
         }
     }
@@ -1768,55 +1773,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         setReaderChromeVisible(!readerChromeVisible)
     }
 
-    private fun pageCacheMenuTitle(): String {
-        val info = pageCacheWorkInfo ?: return "一键缓存"
-        val done = info.progress.getInt(ReaderPageCacheManager.PROGRESS_DONE, 0)
-        val total = info.progress.getInt(ReaderPageCacheManager.PROGRESS_TOTAL, 0)
-        return when (info.state) {
-            WorkInfo.State.RUNNING -> if (total > 0) "一键缓存（$done/$total）" else "一键缓存（进行中）"
-            WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "一键缓存（等待中）"
-            WorkInfo.State.SUCCEEDED -> "一键缓存（已完成）"
-            WorkInfo.State.FAILED -> "一键缓存（上次失败）"
-            WorkInfo.State.CANCELLED -> "一键缓存（已取消）"
-        }
-    }
-
-    private fun observeOneClickPageCache() {
-        if (bookId <= 0L) return
-        ReaderPageCacheManager.observe(this, this, bookId) { info ->
-            pageCacheWorkInfo = info
-            invalidateOptionsMenu()
-            if (info?.state == WorkInfo.State.SUCCEEDED && pageCacheLastTerminalId != info.id) {
-                pageCacheLastTerminalId = info.id
-                currentPagedSignature?.let { signature ->
-                    pagedPageIndexLoadedKey = null
-                    preparePagedIndexSignature(signature)
-                    currentLayoutPage()?.let(::updatePagedProgressLabel)
-                }
-                Toast.makeText(this, "全书页数缓存完成", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun startOneClickPageCache() {
-        if (bookId <= 0L || book == null || !openSucceeded) {
-            Toast.makeText(this, "书籍尚未打开完成", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val signature = pagedLayoutSignature().copy(contentKey = 0L)
-        ReaderPageCacheManager.enqueue(
-            context = applicationContext,
-            bookId = bookId,
-            signature = signature
-        )
-        Toast.makeText(
-            this,
-            "已开始后台缓存；离开阅读页后仍会继续",
-            Toast.LENGTH_LONG
-        ).show()
-        invalidateOptionsMenu()
-    }
-
     private fun showContentSearch() {
         if (currentContent.isBlank()) {
             Toast.makeText(this, "当前没有可搜索的内容", Toast.LENGTH_SHORT).show()
@@ -2531,16 +2487,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun jumpChapter(direction: Int) {
-        if (epubChapterStartPositions.isEmpty()) {
+        val starts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+        if (starts.isEmpty()) {
             Toast.makeText(this, "当前书籍没有章节目录", Toast.LENGTH_SHORT).show()
             return
         }
         val currentIndex = if (isStructuredChapterDocument()) {
             currentStructuredLocation().chapterIndex
         } else {
-            epubChapterStartPositions.indexOfLast { it <= currentPosition }.coerceAtLeast(0)
+            starts.indexOfLast { it <= currentPosition }.coerceAtLeast(0)
         }
-        val targetIndex = (currentIndex + direction).coerceIn(0, epubChapterStartPositions.lastIndex)
+        val targetIndex = (currentIndex + direction).coerceIn(0, starts.lastIndex)
         if (targetIndex == currentIndex) {
             Toast.makeText(this, if (direction < 0) "已经是第一章" else "已经是最后一章", Toast.LENGTH_SHORT).show()
             return
@@ -2554,7 +2511,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             )
             return
         }
-        currentPosition = epubChapterStartPositions[targetIndex]
+        currentPosition = starts[targetIndex]
         if (txtStreamingMode) {
             beginProgrammaticScrollGuard()
             showStreamingTxtPage(
@@ -2605,13 +2562,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
             fun requestTxtCatalogScan(onChanged: () -> Unit) {
                 val document = currentReadableDocument ?: return
-                if (!txtStreamingMode || epubChapters.isNotEmpty()) return
+                if (!txtStreamingMode || txtCatalogChapters.isNotEmpty()) return
                 if (chapterScanJob?.isActive == true) return
                 chapterScanJob = lifecycleScope.launch {
                     val chapters = try {
                         val charsetName = txtCharsetName ?: book?.txtCharset ?: Charsets.UTF_8.name()
                         withContext(Dispatchers.IO) {
-                            contentResolver.openInputStream(document.uri)?.let { stream ->
+                            contentResolver.openInputStream(document.uri)?.use { stream ->
                                 TxtParser.scanChapters(stream, charsetName)
                             }.orEmpty()
                         }
@@ -2619,10 +2576,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         emptyList()
                     }
                     if (chapters.isNotEmpty()) {
-                        epubChapters = chapters.map { chapter ->
+                        txtCatalogChapters = chapters.map { chapter ->
                             EpubChapter(name = chapter.title, text = "")
                         }
-                        epubChapterStartPositions = chapters.map {
+                        txtCatalogStartPositions = chapters.map {
                             it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                         }
                         withContext(Dispatchers.IO) {
@@ -2633,9 +2590,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
                             )
                         }
-                        readerPageCache.clear()
-                        resetPagedPageIndex()
-                        if (openSucceeded) displayContent()
                     }
                     onChanged()
                 }
@@ -2720,10 +2674,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
 
             fun currentChapterIndex(): Int {
-                if (epubChapterStartPositions.isEmpty()) return -1
-                if (isStructuredChapterDocument()) return structuredChapterIndex.coerceIn(0, epubChapterStartPositions.lastIndex)
+                val starts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+                if (starts.isEmpty()) return -1
+                if (isStructuredChapterDocument()) return structuredChapterIndex.coerceIn(0, starts.lastIndex)
                 val current = currentPosition.coerceAtLeast(0)
-                return epubChapterStartPositions.indexOfLast { it <= current }
+                return starts.indexOfLast { it <= current }
                     .coerceAtLeast(0)
             }
 
@@ -2731,6 +2686,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 catalogButton.isEnabled = !showingCatalog
                 bookmarkButton.isEnabled = showingCatalog
                 if (showingCatalog) {
+                    val catalogChapters = if (txtStreamingMode) txtCatalogChapters else epubChapters
+                    val catalogStarts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
                     val currentChapter = currentChapterIndex()
                     val useStructuredCatalog = false
                     val highlightedCatalogIndex = if (useStructuredCatalog) {
@@ -2740,12 +2697,12 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     } else {
                         currentChapter
                     }
-                    val labels = if (epubChapters.isEmpty()) {
+                    val labels = if (catalogChapters.isEmpty()) {
                         requestTxtCatalogScan { render() }
                         if (txtStreamingMode) listOf("正在识别目录...") else listOf("暂无目录")
                     } else if (useStructuredCatalog) {
                         structuredCatalogEntries.map { entry ->
-                            val position = epubChapterStartPositions.getOrElse(entry.targetChapterIndex) { 0 }
+                            val position = catalogStarts.getOrElse(entry.targetChapterIndex) { 0 }
                             structuredCatalogLabel(
                                 entry = entry,
                                 position = position,
@@ -2753,11 +2710,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                             )
                         }
                     } else {
-                        epubChapters.mapIndexed { index, chapter ->
+                        catalogChapters.mapIndexed { index, chapter ->
                             val title = chapter.text.ifBlank {
                                 chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" }
                             }
-                            val position = epubChapterStartPositions.getOrElse(index) { 0 }
+                            val position = catalogStarts.getOrElse(index) { 0 }
                             catalogLabel(index, title, position, index == currentChapter)
                         }
                     }
@@ -2767,7 +2724,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         listView.post { listView.setSelection(highlightedCatalogIndex) }
                     }
                     listView.setOnItemClickListener { _, _, which, _ ->
-                        if (epubChapters.isNotEmpty()) {
+                        if (catalogChapters.isNotEmpty()) {
                             if (isStructuredChapterDocument()) {
                                 val targetChapter = if (useStructuredCatalog) {
                                     structuredCatalogEntries.getOrNull(which)?.targetChapterIndex
@@ -2779,7 +2736,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                                 }
                             } else {
                                 beginProgrammaticScrollGuard()
-                                currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
+                                currentPosition = catalogStarts.getOrElse(which) { 0 }
                                 if (txtStreamingMode) {
                                     showStreamingTxtPage(
                                         currentPosition.toLong(),
@@ -2915,21 +2872,32 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun showTableOfContents() {
-        if (epubChapters.isEmpty()) {
+        val chapters = if (txtStreamingMode) txtCatalogChapters else epubChapters
+        val starts = if (txtStreamingMode) txtCatalogStartPositions else epubChapterStartPositions
+        if (chapters.isEmpty()) {
             Toast.makeText(this, "未识别到目录", Toast.LENGTH_SHORT).show()
             return
         }
-        val items = epubChapters.mapIndexed { index, chapter ->
+        val items = chapters.mapIndexed { index, chapter ->
             val title = chapter.text.ifBlank { chapter.name.substringAfterLast('/').ifBlank { "章节 ${index + 1}" } }
             "${index + 1}. $title"
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("目录")
             .setItems(items) { _, which ->
-                currentPosition = epubChapterStartPositions.getOrElse(which) { 0 }
-                displayContent()
-                markProgressDirty()
-                scheduleProgressSave()
+                currentPosition = starts.getOrElse(which) { 0 }
+                if (txtStreamingMode) {
+                    showStreamingTxtPage(
+                        currentPosition.toLong(),
+                        saveImmediately = true,
+                        keepContextBeforeTarget = false,
+                        preloadAdjacentWindows = true
+                    )
+                } else {
+                    displayContent()
+                    markProgressDirty()
+                    scheduleProgressSave()
+                }
             }
             .setNegativeButton("关闭", null)
             .show()
@@ -3239,8 +3207,11 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             ?: txtTotalBytes.coerceAtLeast(startByte)
         val selectedBook = book ?: return PagedChapterSource(currentContent, txtCurrentPageStartByte, txtCurrentPageEndByte)
         val charsetName = txtCharsetName ?: selectedBook.txtCharset ?: Charsets.UTF_8.name()
+        val sourceUri = currentReadableDocument?.uri
+            ?: runCatching { Uri.parse(selectedBook.filePath) }.getOrNull()
+            ?: error("Cannot resolve TXT chapter source")
         val mapped = withContext(Dispatchers.IO) {
-            contentResolver.openInputStream(Uri.parse(selectedBook.filePath))?.let { stream ->
+            contentResolver.openInputStream(sourceUri)?.use { stream ->
                 TxtParser.readRangeMapped(
                     inputStream = stream,
                     charsetName = charsetName,
@@ -4185,10 +4156,10 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 emptyList()
             }
             if (chapters.isEmpty()) return@launch
-            epubChapters = chapters.map { chapter ->
+            txtCatalogChapters = chapters.map { chapter ->
                 EpubChapter(name = chapter.title, text = "")
             }
-            epubChapterStartPositions = chapters.map {
+            txtCatalogStartPositions = chapters.map {
                 it.byteOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
             withContext(Dispatchers.IO) {
@@ -4199,9 +4170,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     chapters = chapters.map { TxtChapterIndexLong(it.title, it.byteOffset) }
                 )
             }
-            readerPageCache.clear()
-            resetPagedPageIndex()
-            if (openSucceeded) displayContent()
+            // Directory recognition only publishes byte anchors. The page currently
+            // on screen keeps its existing layout until normal navigation requests a new page.
         }
     }
 
@@ -4618,6 +4588,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     companion object {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
+        private const val TXT_INITIAL_WINDOW_BYTES = 32 * 1024
         private const val TXT_STREAM_WINDOW_BYTES = 192 * 1024
         private const val TXT_PREFETCH_FORWARD_FRACTION = 0.90f
         private const val TXT_PREFETCH_BACKWARD_FRACTION = 0.12f
@@ -4658,7 +4629,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val MENU_TOC = 3
         private const val MENU_PANEL = 4
         private const val MENU_SEARCH = 5
-        private const val MENU_CACHE_BOOK = 6
     }
 
     private data class ReaderSearchSession(
@@ -4681,6 +4651,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val text: String,
         val epubChapters: List<EpubChapter> = emptyList(),
         val epubChapterStartPositions: List<Int> = emptyList(),
+        val txtCatalogChapters: List<EpubChapter> = emptyList(),
+        val txtCatalogStartPositions: List<Int> = emptyList(),
         val structuredCatalogEntries: List<StructuredCatalogEntry> = emptyList(),
         val isStreamingTxt: Boolean = false,
         val txtCharsetName: String? = null,

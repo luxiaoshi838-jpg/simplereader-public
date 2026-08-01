@@ -25,6 +25,30 @@ class ReaderPageIndexStore(
     private val directory = File(context.filesDir, "reader_page_indexes").apply { mkdirs() }
     private val target = File(directory, "$bookId.json")
 
+
+    /**
+     * Fast path used by bookshelf one-click cache.
+     *
+     * It checks only the saved header: layout signature, source size/modified revision,
+     * and the complete flag. It deliberately does not rescan the source file, recount
+     * chapters, or parse page anchors before deciding that an unchanged book can skip.
+     */
+    @Synchronized
+    fun completeChapterCount(
+        signature: ReaderLayoutSignature,
+        sourceRevision: String
+    ): Int? {
+        if (!target.isFile) return null
+        return runCatching {
+            val root = JSONObject(target.readText())
+            if (root.optInt("version") != VERSION) return null
+            if (root.optString("signature") != signature.stableKey()) return null
+            if (root.optString("sourceRevision") != sourceRevision) return null
+            if (!root.optBoolean("complete", false)) return null
+            root.optInt("chapterCount", 0).takeIf { it > 0 }
+        }.getOrNull()
+    }
+
     @Synchronized
     fun load(
         signature: ReaderLayoutSignature,

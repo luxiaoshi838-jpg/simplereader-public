@@ -33,6 +33,33 @@ object ReaderPageCacheManager {
     private fun uniqueName(bookId: Long, signature: ReaderLayoutSignature): String =
         "${bookTag(bookId)}-${signature.stableKey().hashCode()}"
 
+
+    fun currentLayoutSignature(context: Context): ReaderLayoutSignature {
+        val resources = context.resources
+        val metrics = resources.displayMetrics
+        val density = metrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
+        fun systemDimension(name: String): Int {
+            val id = resources.getIdentifier(name, "dimen", "android")
+            return if (id > 0) resources.getDimensionPixelSize(id) else 0
+        }
+        val textSizeSp = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+            .getFloat("text_size", 18f)
+        return ReaderLayoutSignature(
+            widthPx = metrics.widthPixels.coerceAtLeast(1),
+            heightPx = metrics.heightPixels.coerceAtLeast(1),
+            textSizePx = (textSizeSp * metrics.scaledDensity).toInt().coerceAtLeast(1),
+            lineSpacingMultiplierX100 = 175,
+            horizontalPaddingPx = dp(28),
+            topPaddingPx = systemDimension("status_bar_height") + dp(26),
+            bottomPaddingPx = systemDimension("navigation_bar_height") + dp(42),
+            chapterTitleScaleX100 = 130,
+            contentKey = 0L,
+            viewportWidthPx = metrics.widthPixels.coerceAtLeast(1),
+            viewportHeightPx = metrics.heightPixels.coerceAtLeast(1)
+        )
+    }
+
     fun enqueue(
         context: Context,
         bookId: Long,

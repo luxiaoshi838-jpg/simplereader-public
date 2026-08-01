@@ -32,6 +32,8 @@ import com.simplereader.app.ui.ReaderPageIndexStore
 import com.simplereader.app.ui.TxtChapterIndexStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
@@ -51,7 +53,8 @@ class ReaderPageCacheWorker(
     parameters: WorkerParameters
 ) : CoroutineWorker(appContext, parameters) {
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.Default) {
+    override suspend fun doWork(): Result = CACHE_MUTEX.withLock {
+        withContext(Dispatchers.Default) {
         val bookId = ReaderPageCacheManager.bookId(inputData)
         if (bookId <= 0L) return@withContext failure("书籍编号无效")
         val signature = ReaderPageCacheManager.signature(inputData)
@@ -69,6 +72,7 @@ class ReaderPageCacheWorker(
         } catch (error: Throwable) {
             if (isStopped) Result.retry()
             else failure(error.message ?: error.javaClass.simpleName)
+        }
         }
     }
 
@@ -90,6 +94,15 @@ class ReaderPageCacheWorker(
             ?: sourceFile?.lastModified()?.takeIf { it > 0L }
             ?: book.lastModified
             ?: 0L
+        val revision = sourceRevision(totalBytes, chapterCacheModified)
+        val store = ReaderPageIndexStore(applicationContext, book.id)
+        store.completeChapterCount(signature, revision)?.let { cachedChapters ->
+            notifyComplete(book, cachedChapters)
+            return Result.success(
+                workDataOf(ReaderPageCacheManager.OUTPUT_MESSAGE to "原文件未变化，已跳过")
+            )
+        }
+
         val charset = book.txtCharset?.takeIf(String::isNotBlank) ?: withContext(Dispatchers.IO) {
             openSource(book)?.let { TxtParser.detectCharset(it) }
         } ?: Charsets.UTF_8.name()
@@ -127,13 +140,6 @@ class ReaderPageCacheWorker(
             .distinct()
             .sorted()
             .ifEmpty { listOf(0L) }
-        val revision = sourceRevision(
-            book = book,
-            totalBytes = totalBytes,
-            chapterStarts = starts,
-            contentLength = totalBytes
-        )
-        val store = ReaderPageIndexStore(applicationContext, book.id)
         val loaded = store.load(signature, revision, starts.size)
         val localStarts = loaded?.pageStartsByChapter?.toMutableMap() ?: linkedMapOf()
         val sourceStarts = loaded?.sourceStartsByChapter?.toMutableMap() ?: linkedMapOf()
@@ -185,18 +191,32 @@ class ReaderPageCacheWorker(
         book: Book,
         signature: ReaderLayoutSignature
     ): Result {
+        val uri = Uri.parse(book.filePath)
+        val document = if (uri.scheme == "content") {
+            DocumentFile.fromSingleUri(applicationContext, uri)
+        } else null
+        val sourceFile = localFile(book)
+        val sourceSize = (document?.length()?.takeIf { it > 0L }
+            ?: sourceFile?.length()?.takeIf { it > 0L }
+            ?: book.fileSize
+            ?: 0L).coerceAtLeast(0L)
+        val sourceModified = document?.lastModified()?.takeIf { it > 0L }
+            ?: sourceFile?.lastModified()?.takeIf { it > 0L }
+            ?: book.lastModified
+            ?: 0L
+        val revision = sourceRevision(sourceSize, sourceModified)
+        val store = ReaderPageIndexStore(applicationContext, book.id)
+        store.completeChapterCount(signature, revision)?.let { cachedChapters ->
+            notifyComplete(book, cachedChapters)
+            return Result.success(
+                workDataOf(ReaderPageCacheManager.OUTPUT_MESSAGE to "原文件未变化，已跳过")
+            )
+        }
+
         val cached = withContext(Dispatchers.IO) {
             StructuredBookCache.loadAny(applicationContext, book.id)
         } ?: return failure("请先打开一次本书以建立正文缓存")
         val wholeText = withContext(Dispatchers.IO) { cached.textFile.readText(Charsets.UTF_8) }
-        val starts = cached.chapters.map { it.startChar.toLong() }
-        val revision = sourceRevision(
-            book = book,
-            totalBytes = 0L,
-            chapterStarts = starts,
-            contentLength = wholeText.length.toLong()
-        )
-        val store = ReaderPageIndexStore(applicationContext, book.id)
         val loaded = store.load(signature, revision, cached.chapters.size)
         val localStarts = loaded?.pageStartsByChapter?.toMutableMap() ?: linkedMapOf()
         val sourceStarts = loaded?.sourceStartsByChapter?.toMutableMap() ?: linkedMapOf()
@@ -251,26 +271,12 @@ class ReaderPageCacheWorker(
         setForeground(foreground(book, done, total, chapter.ifBlank { "计算页数" }))
     }
 
-    private fun sourceRevision(
-        book: Book,
-        totalBytes: Long,
-        chapterStarts: List<Long>,
-        contentLength: Long
-    ): String {
-        var startsHash = 1_125_899_906_842_597L
-        chapterStarts.forEach { value ->
-            startsHash = startsHash * 31L + value.coerceAtMost(Int.MAX_VALUE.toLong())
-        }
-        return listOf(
+    private fun sourceRevision(totalBytes: Long, lastModified: Long): String =
+        listOf(
             PAGINATION_INDEX_SCHEMA_VERSION,
-            book.fileSize ?: totalBytes,
-            book.lastModified ?: 0L,
-            totalBytes,
-            chapterStarts.size.coerceAtLeast(1),
-            contentLength,
-            startsHash
+            totalBytes.coerceAtLeast(0L),
+            lastModified.coerceAtLeast(0L)
         ).joinToString(":")
-    }
 
     private fun styleChapter(
         text: String,
@@ -453,10 +459,11 @@ class ReaderPageCacheWorker(
         Result.failure(workDataOf(ReaderPageCacheManager.OUTPUT_MESSAGE to message))
 
     companion object {
+        private val CACHE_MUTEX = Mutex()
         private const val CHANNEL_ID = "reader_page_cache"
         private const val NOTIFICATION_BASE = 59_200
         private const val CHECKPOINT_CHAPTERS = 8
-        private const val PAGINATION_INDEX_SCHEMA_VERSION = 2
+        private const val PAGINATION_INDEX_SCHEMA_VERSION = 3
         private val EPUB_IMAGE_MARKER = Regex("\\[\\[SR_IMAGE:([^\\]]+)]]")
     }
 }

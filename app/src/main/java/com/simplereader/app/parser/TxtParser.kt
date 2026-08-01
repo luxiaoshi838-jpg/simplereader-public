@@ -59,6 +59,7 @@ object TxtParser {
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
     private const val WINDOW_LINE_CONTEXT_BYTES = 16 * 1024
+    private const val CHAPTER_SCAN_BUFFER_BYTES = 64 * 1024
     private val standaloneChapterPatterns by lazy {
         listOf(
             Regex("^[\\p{L}\\p{N}]{2,39}篇$"),
@@ -573,7 +574,7 @@ object TxtParser {
     ): List<TxtChapterHit> {
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val chapters = mutableListOf<TxtChapterHit>()
-        inputStream.use { stream ->
+        inputStream.buffered(CHAPTER_SCAN_BUFFER_BYTES).use { stream ->
             val lineBytes = ByteArrayOutputStream()
             var absoluteOffset = 0L
             var lineStartOffset = 0L

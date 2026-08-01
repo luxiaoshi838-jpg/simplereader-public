@@ -31,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.parser.EpubParser
+import com.simplereader.app.reader.cache.ReaderPageCacheManager
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
@@ -988,11 +989,47 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreShelfActions() {
         AlertDialog.Builder(this)
             .setTitle("书架管理")
-            .setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->
+            .setItems(arrayOf("批量管理分组", "同步书架", "一键缓存")) { _, which ->
                 when (which) {
                     0 -> showBatchGroupManagement()
                     1 -> confirmSyncBookshelf()
+                    2 -> confirmCacheBookshelf()
                 }
+            }
+            .show()
+    }
+
+
+    private fun confirmCacheBookshelf() {
+        val cacheable = books
+            .filter { it.format.uppercase() in setOf("TXT", "EPUB", "CHM") }
+            .distinctBy { it.id }
+        if (cacheable.isEmpty()) {
+            Toast.makeText(this, "书架中没有可缓存的书籍", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("一键缓存")
+            .setMessage(
+                "将在后台依次缓存书架中的 ${cacheable.size} 本书。\n\n" +
+                    "原文件大小和修改时间未变化、且当前排版设置一致的完整缓存会直接跳过；" +
+                    "未完成的书籍从检查点继续。离开书架或切到后台后任务仍会继续。"
+            )
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始缓存") { _, _ ->
+                val signature = ReaderPageCacheManager.currentLayoutSignature(this)
+                cacheable.forEach { book ->
+                    ReaderPageCacheManager.enqueue(
+                        context = applicationContext,
+                        bookId = book.id,
+                        signature = signature
+                    )
+                }
+                Toast.makeText(
+                    this,
+                    "已加入后台缓存：${cacheable.size} 本；完整且未变化的书会自动跳过",
+                    Toast.LENGTH_LONG
+                ).show()
             }
             .show()
     }
