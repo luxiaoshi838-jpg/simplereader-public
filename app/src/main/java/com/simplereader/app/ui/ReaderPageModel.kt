@@ -7,6 +7,33 @@ import android.text.TextPaint
 import java.util.LinkedHashMap
 import kotlin.math.abs
 
+/** Last measured reader viewport. Display metrics are only a pre-layout fallback. */
+internal object ReaderViewportMetrics {
+    @Volatile
+    private var measuredWidthPx: Int = 0
+
+    @Volatile
+    private var measuredHeightPx: Int = 0
+
+    @Synchronized
+    fun record(widthPx: Int, heightPx: Int) {
+        if (widthPx > 0) measuredWidthPx = widthPx
+        if (heightPx > 0) measuredHeightPx = heightPx
+    }
+
+    fun resolveWidth(fallbackPx: Int): Int =
+        measuredWidthPx.takeIf { it > 0 } ?: fallbackPx.coerceAtLeast(1)
+
+    fun resolveHeight(fallbackPx: Int): Int =
+        measuredHeightPx.takeIf { it > 0 } ?: fallbackPx.coerceAtLeast(1)
+
+    @Synchronized
+    internal fun resetForTests() {
+        measuredWidthPx = 0
+        measuredHeightPx = 0
+    }
+}
+
 /** Stable logical position used by every paged turn mode. */
 data class ReaderPageAnchor(
     val chapterIndex: Int,
@@ -32,11 +59,14 @@ data class ReaderLayoutSignature(
     val bottomPaddingPx: Int,
     val chapterTitleScaleX100: Int = 130,
     /** Distinguishes streaming TXT windows without coupling cache identity to turn mode. */
-    val contentKey: Long = 0L
+    val contentKey: Long = 0L,
+    /** Actual reader container size captured when the signature is created. */
+    val viewportWidthPx: Int = ReaderViewportMetrics.resolveWidth(widthPx),
+    val viewportHeightPx: Int = ReaderViewportMetrics.resolveHeight(heightPx)
 ) {
     fun stableKey(): String = listOf(
-        widthPx,
-        heightPx,
+        viewportWidthPx,
+        viewportHeightPx,
         textSizePx,
         lineSpacingMultiplierX100,
         horizontalPaddingPx,
@@ -224,10 +254,11 @@ object ReaderTextPaginator {
             return listOf(ReaderPageSnapshot(anchor, anchor, "", 0, 1))
         }
 
-        val contentWidth = (signature.widthPx - signature.horizontalPaddingPx * 2)
+        val contentWidth = (signature.viewportWidthPx - signature.horizontalPaddingPx * 2)
             .coerceAtLeast(1)
-        val contentHeight = (signature.heightPx - signature.topPaddingPx - signature.bottomPaddingPx)
-            .coerceAtLeast(1)
+        val contentHeight = (
+            signature.viewportHeightPx - signature.topPaddingPx - signature.bottomPaddingPx
+        ).coerceAtLeast(1)
         val paint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = signature.textSizePx.toFloat()
             this.typeface = typeface
