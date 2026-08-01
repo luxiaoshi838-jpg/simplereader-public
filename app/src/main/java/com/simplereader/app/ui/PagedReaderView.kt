@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.simplereader.app.R
 import kotlin.math.abs
 
 /**
