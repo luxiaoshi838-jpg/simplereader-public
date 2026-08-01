@@ -16,12 +16,12 @@ concurrency:
 
 jobs:
   validate:
-    name: v592 fixed-page reader validation
+    name: v593 Duokan anchor/cache validation
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
-      SIMPLE_READER_VERSION_CODE: '2098000592'
-      SIMPLE_READER_VERSION_NAME: '2026.08.01.demand-page-cache.592'
+      SIMPLE_READER_VERSION_CODE: '2098000593'
+      SIMPLE_READER_VERSION_NAME: '2026.08.01.duokan-anchor-cache.593'
 
     steps:
       - name: Checkout current branch
@@ -29,11 +29,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify v592 page-axis contract
+      - name: Verify v593 Duokan page-anchor contract
         shell: bash
         run: |
           set -euo pipefail
           activity=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          main=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          worker=app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          index=app/src/main/java/com/simplereader/app/ui/ReaderPageIndexStore.kt
           vertical=app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
           parser=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
           layout=app/src/main/res/layout/activity_reader.xml
@@ -47,8 +50,13 @@ jobs:
           grep -Fq 'Each adapter cell is exactly one *content-page* high' "$vertical"
           grep -Fq 'edgeGradient' "$vertical"
           grep -Fq 'ReaderPageIndexStore' "$activity"
-          grep -Fq 'MENU_CACHE_BOOK' "$activity"
-          grep -Fq 'ReaderPageCacheManager.enqueue' "$activity"
+          ! grep -Fq 'MENU_CACHE_BOOK' "$activity"
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' "$main"
+          grep -Fq 'ReaderPageCacheManager.enqueue' "$main"
+          grep -Fq 'completeChapterCount' "$worker"
+          grep -Fq 'completeChapterCount' "$index"
+          grep -Fq 'TXT_INITIAL_WINDOW_BYTES = 32 * 1024' "$activity"
+          grep -Fq 'txtCatalogChapters' "$activity"
           grep -Fq 'ReaderPageBoundaryCalculator' app/src/main/java/com/simplereader/app/ui/ReaderPageModel.kt
           grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' app/src/main/AndroidManifest.xml
           ! grep -A12 -F 'private fun ensureWholeBookPageIndex' "$activity" | grep -Fq 'for (chapter in'
@@ -63,7 +71,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Test and assemble v592 release
+      - name: Test and assemble v593 release
         shell: bash
         run: |
           set -euo pipefail
@@ -71,36 +79,36 @@ jobs:
           timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain | tee /tmp/test-release.log
           timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/assemble-release.log
 
-      - name: Verify v592 package and resources
+      - name: Verify v593 package and resources
         shell: bash
         run: |
           set -euo pipefail
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
           test -n "$apk"
-          cp "$apk" /tmp/SimpleReader-v592-unsigned.apk
-          test -s /tmp/SimpleReader-v592-unsigned.apk
-          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/aapt2-badging.log
+          cp "$apk" /tmp/SimpleReader-v593-unsigned.apk
+          test -s /tmp/SimpleReader-v593-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/aapt2-badging.log
           grep -Fq "package: name='com.simplereader.app'" /tmp/aapt2-badging.log
-          grep -Fq "versionCode='2098000592'" /tmp/aapt2-badging.log
-          grep -Fq "versionName='2026.08.01.demand-page-cache.592'" /tmp/aapt2-badging.log
-          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/aapt2-resources.log
+          grep -Fq "versionCode='2098000593'" /tmp/aapt2-badging.log
+          grep -Fq "versionName='2026.08.01.duokan-anchor-cache.593'" /tmp/aapt2-badging.log
+          "$build_tools/aapt2" dump resources /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/aapt2-resources.log
           grep -Fq 'id/pagedReaderView' /tmp/aapt2-resources.log
           grep -Fq 'id/verticalPageFlowView' /tmp/aapt2-resources.log
-          unzip -t /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/unzip.log
-          sha256sum /tmp/SimpleReader-v592-unsigned.apk | tee /tmp/SimpleReader-v592-unsigned.sha256
+          unzip -t /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/unzip.log
+          sha256sum /tmp/SimpleReader-v593-unsigned.apk | tee /tmp/SimpleReader-v593-unsigned.sha256
 
-      - name: Upload v592 release and logs
+      - name: Upload v593 release and logs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v592-pr-unsigned-${{ github.run_number }}
+          name: SimpleReader-v593-pr-unsigned-${{ github.run_number }}
           path: |
-            /tmp/SimpleReader-v592-unsigned.apk
+            /tmp/SimpleReader-v593-unsigned.apk
             /tmp/test-release.log
             /tmp/assemble-release.log
             /tmp/aapt2-badging.log
             /tmp/aapt2-resources.log
             /tmp/unzip.log
-            /tmp/SimpleReader-v592-unsigned.sha256
+            /tmp/SimpleReader-v593-unsigned.sha256
           if-no-files-found: error
           retention-days: 3
