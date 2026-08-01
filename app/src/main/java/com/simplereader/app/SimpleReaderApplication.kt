@@ -1,7 +1,12 @@
 package com.simplereader.app
 
+import android.app.Activity
 import android.app.Application
 import android.os.Build
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -12,10 +17,49 @@ import java.util.Locale
 class SimpleReaderApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        installRecyclerViewScrollbarGuard()
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching { writeCrashLog(thread, error) }
             previous?.uncaughtException(thread, error)
+        }
+    }
+
+    private fun installRecyclerViewScrollbarGuard() {
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                guardActivity(activity)
+            }
+
+            override fun onActivityResumed(activity: Activity) {
+                guardActivity(activity)
+            }
+
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
+    }
+
+    private fun guardActivity(activity: Activity) {
+        val root = activity.window?.decorView ?: return
+        disableRecyclerViewSystemScrollbars(root)
+        root.post { disableRecyclerViewSystemScrollbars(root) }
+        root.postDelayed({ disableRecyclerViewSystemScrollbars(root) }, SCROLLBAR_GUARD_DELAY_MS)
+    }
+
+    private fun disableRecyclerViewSystemScrollbars(view: View) {
+        if (view is RecyclerView) {
+            view.isVerticalScrollBarEnabled = false
+            view.isHorizontalScrollBarEnabled = false
+            view.isScrollbarFadingEnabled = false
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                disableRecyclerViewSystemScrollbars(view.getChildAt(index))
+            }
         }
     }
 
@@ -52,6 +96,7 @@ class SimpleReaderApplication : Application() {
     companion object {
         private const val CRASH_DIRECTORY = "crash_logs"
         private const val CRASH_FILE = "latest_crash.txt"
+        private const val SCROLLBAR_GUARD_DELAY_MS = 500L
 
         fun pendingCrashLog(application: Application): String? {
             val file = File(File(application.filesDir, CRASH_DIRECTORY), CRASH_FILE)
