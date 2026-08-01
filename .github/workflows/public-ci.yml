@@ -1,25 +1,23 @@
 name: Public Android CI
 
 on:
-  push:
-    branches:
-      - agent/v593-duokan-page-anchor
+  pull_request:
 
 permissions:
   contents: write
 
 concurrency:
-  group: public-android-ci-${{ github.ref }}
+  group: public-v593-source-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   materialize-v593-source:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: agent/v593-duokan-page-anchor
           fetch-depth: 0
 
       - name: Commit seven verified source files
@@ -47,6 +45,7 @@ jobs:
             git add -- "${files[@]}"
             git diff --cached --check
             staged=$(git diff --cached --name-only)
+            printf "%s\n" "$staged"
             test "$(printf "%s\n" "$staged" | sed "/^$/d" | wc -l)" -eq 7
             for file in "${files[@]}"; do
               printf "%s\n" "$staged" | grep -Fxq "$file"
