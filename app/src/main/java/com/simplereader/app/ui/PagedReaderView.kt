@@ -162,6 +162,10 @@ class PagedReaderView @JvmOverloads constructor(
     fun currentSnapshot(): ReaderPageSnapshot? = currentPage
 
     fun turn(direction: Int): Boolean {
+        if (isReaderChromeVisible()) {
+            cancelNavigation()
+            return false
+        }
         if (animating || dragging || direction == 0) return false
         val incoming = if (direction > 0) nextPage else previousPage
         if (incoming == null) {
@@ -173,6 +177,29 @@ class PagedReaderView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (isReaderChromeVisible()) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancelNavigation()
+                    downX = event.x
+                    downY = event.y
+                }
+                MotionEvent.ACTION_UP -> {
+                    val tapSlop = dp(16).toFloat()
+                    val movedX = kotlin.math.abs(event.x - downX)
+                    val movedY = kotlin.math.abs(event.y - downY)
+                    if (
+                        movedX <= tapSlop &&
+                        movedY <= tapSlop &&
+                        event.x in width * 0.33f..width * 0.67f &&
+                        event.y in height * 0.18f..height * 0.82f
+                    ) {
+                        onCenterTap?.invoke()
+                    }
+                }
+            }
+            return true
+        }
         if (animating) return true
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -458,6 +485,9 @@ class PagedReaderView @JvmOverloads constructor(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
     )
+
+    private fun isReaderChromeVisible(): Boolean =
+        rootView.findViewById<View>(R.id.readerControls)?.visibility == View.VISIBLE
 
     private fun dp(value: Int): Float = value * resources.displayMetrics.density
 }
