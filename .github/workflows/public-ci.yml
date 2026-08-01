@@ -107,7 +107,7 @@ jobs:
           grep -Fq 'MENU_CACHE_BOOK' "$activity"
           grep -Fq 'ReaderPageCacheManager.enqueue' "$activity"
           grep -Fq 'ReaderPageBoundaryCalculator' "$model"
-          grep -Fq 'androidx.work:work-runtime-ktx:2.11.2' app/build.gradle.kts
+          grep -Fq 'androidx.work:work-runtime-ktx:2.9.1' app/build.gradle.kts
           grep -Fq 'FOREGROUND_SERVICE_DATA_SYNC' app/src/main/AndroidManifest.xml
           ! grep -A12 -F 'private fun ensureWholeBookPageIndex' "$activity" | grep -Fq 'for (chapter in'
           grep -Fq 'return "本章 ${pageIndex + 1}/$safeChapterPages"' "$activity"
