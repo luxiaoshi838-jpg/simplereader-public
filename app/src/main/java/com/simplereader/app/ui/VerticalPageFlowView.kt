@@ -70,6 +70,10 @@ class VerticalPageFlowView @JvmOverloads constructor(
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             if (e.y in height * 0.18f..height * 0.82f) {
+                if (isReaderChromeVisible()) {
+                    if (e.x in width * 0.33f..width * 0.67f) onCenterTap?.invoke()
+                    return true
+                }
                 when {
                     e.x < width * 0.33f -> scrollByPage(-1)
                     e.x > width * 0.67f -> scrollByPage(1)
@@ -99,8 +103,14 @@ class VerticalPageFlowView @JvmOverloads constructor(
 
         recyclerView.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
             override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+                val chromeVisible = isReaderChromeVisible()
+                if (chromeVisible && e.actionMasked == MotionEvent.ACTION_DOWN) rv.stopScroll()
                 gestureDetector.onTouchEvent(e)
-                return false
+                return chromeVisible
+            }
+
+            override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
+                if (isReaderChromeVisible()) gestureDetector.onTouchEvent(e)
             }
         })
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -216,7 +226,7 @@ class VerticalPageFlowView @JvmOverloads constructor(
     fun currentOffsetPx(): Int = currentVisiblePosition()?.second ?: 0
 
     fun scrollByPage(direction: Int) {
-        if (direction == 0) return
+        if (isReaderChromeVisible() || direction == 0) return
         val distance = (height * 0.78f).toInt().coerceAtLeast(1)
         recyclerView.smoothScrollBy(0, direction * distance)
     }
@@ -392,6 +402,9 @@ class VerticalPageFlowView @JvmOverloads constructor(
     }
 
     private class PageHolder(val textView: TextView) : RecyclerView.ViewHolder(textView)
+
+    private fun isReaderChromeVisible(): Boolean =
+        rootView.findViewById<View>(R.id.readerControls)?.visibility == View.VISIBLE
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
