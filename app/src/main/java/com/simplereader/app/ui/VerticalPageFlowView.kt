@@ -163,16 +163,51 @@ class VerticalPageFlowView @JvmOverloads constructor(
         if (incoming.isEmpty()) return
         val first = layoutManager.findFirstVisibleItemPosition().coerceAtLeast(0)
         val firstView = layoutManager.findViewByPosition(first)
-        val top = firstView?.top ?: recyclerView.paddingTop
+        val anchorPage = pageAdapter.getOrNull(first)
+        val anchorTop = firstView?.top ?: recyclerView.paddingTop
         pageAdapter.prepend(incoming)
-        layoutManager.scrollToPositionWithOffset(first + incoming.size, top)
+        if (anchorPage != null) {
+            retainThreeChapterWindow(anchorPage, anchorTop)
+        } else {
+            layoutManager.scrollToPositionWithOffset(first + incoming.size, anchorTop)
+        }
         previousRequestKey = null
     }
 
     fun append(pages: List<ReaderPageSnapshot>) {
         val incoming = deduplicate(pages).filterNot(pageAdapter::contains)
         if (incoming.isEmpty()) return
+        val first = layoutManager.findFirstVisibleItemPosition().coerceAtLeast(0)
+        val firstView = layoutManager.findViewByPosition(first)
+        val anchorPage = pageAdapter.getOrNull(first)
+        val anchorTop = firstView?.top ?: recyclerView.paddingTop
         pageAdapter.append(incoming)
+        if (anchorPage != null) retainThreeChapterWindow(anchorPage, anchorTop)
+        nextRequestKey = null
+    }
+
+    /**
+     * Duokan-style bounded page window. RecyclerView recycles visible cells, but the
+     * adapter would otherwise retain every chapter visited in a long novel. Keep only
+     * previous/current/next chapter snapshots and restore the exact visible page/top.
+     */
+    private fun retainThreeChapterWindow(anchorPage: ReaderPageSnapshot, anchorTop: Int) {
+        val currentChapter = anchorPage.startAnchor.chapterIndex
+        val minChapter = currentChapter - 1
+        val maxChapter = currentChapter + 1
+        val removeFromStart = pageAdapter.countFromStartWhile { page ->
+            page.startAnchor.chapterIndex < minChapter
+        }
+        val removeFromEnd = pageAdapter.countFromEndWhile { page ->
+            page.startAnchor.chapterIndex > maxChapter
+        }
+        if (removeFromEnd > 0) pageAdapter.removeEnd(removeFromEnd)
+        if (removeFromStart > 0) pageAdapter.removeStart(removeFromStart)
+        val restored = pageAdapter.indexOf(anchorPage)
+        if (restored >= 0) {
+            layoutManager.scrollToPositionWithOffset(restored, anchorTop)
+        }
+        previousRequestKey = null
         nextRequestKey = null
     }
 
@@ -318,6 +353,37 @@ class VerticalPageFlowView @JvmOverloads constructor(
             val start = pages.size
             pages.addAll(value)
             notifyItemRangeInserted(start, value.size)
+        }
+
+        fun removeStart(count: Int) {
+            val safeCount = count.coerceIn(0, pages.size)
+            if (safeCount == 0) return
+            pages.subList(0, safeCount).clear()
+            notifyItemRangeRemoved(0, safeCount)
+        }
+
+        fun removeEnd(count: Int) {
+            val safeCount = count.coerceIn(0, pages.size)
+            if (safeCount == 0) return
+            val start = pages.size - safeCount
+            pages.subList(start, pages.size).clear()
+            notifyItemRangeRemoved(start, safeCount)
+        }
+
+        fun countFromStartWhile(predicate: (ReaderPageSnapshot) -> Boolean): Int {
+            var count = 0
+            while (count < pages.size && predicate(pages[count])) count += 1
+            return count
+        }
+
+        fun countFromEndWhile(predicate: (ReaderPageSnapshot) -> Boolean): Int {
+            var count = 0
+            var index = pages.lastIndex
+            while (index >= 0 && predicate(pages[index])) {
+                count += 1
+                index -= 1
+            }
+            return count
         }
 
         fun indexOf(page: ReaderPageSnapshot): Int = pages.indexOfFirst { pageKey(it) == pageKey(page) }
