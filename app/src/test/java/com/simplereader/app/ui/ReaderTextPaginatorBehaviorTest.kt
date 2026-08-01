@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -26,9 +27,13 @@ class ReaderTextPaginatorBehaviorTest {
         contentKey = 0L
     )
 
+    @Before
+    fun initializeAndroidLayoutRuntime() {
+        ApplicationProvider.getApplicationContext<android.content.Context>()
+    }
+
     @Test
     fun identicalLayoutProducesStablePageCountAndPageStarts() {
-        ApplicationProvider.getApplicationContext<android.content.Context>()
         val text = buildString {
             append("第695章 文始真人\n")
             repeat(320) { index ->
