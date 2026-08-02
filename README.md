@@ -4,14 +4,24 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 
 ## 当前开发基线
 
-本公开仓库是后续唯一开发仓库，保留当前有效代码，不复制原私有仓库的 Git 历史，也不提交任何签名私钥。
+本公开仓库是后续开发仓库，保留当前有效代码，不提交任何签名私钥。
+
+当前最新正式产出：
+
+- 版本：v600
+- versionCode：`2098000600`
+- versionName：`2026.08.02.reader-startup-fix.600`
+- APK SHA-256：`688476688a7c5e3b0d71744381e37b341d86791e9fc1a70d7ed13c01fe9607df`
+- 包名：`com.simplereader.app`
+- 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
+- 本地 APK：`E:\脚本\小说阅读\apk-output\SimpleReader_v600_public_signed.apk`
 
 当前任务包括：
 
-- 书架与分组封面不再显示 TXT、EPUB、CHM 格式标识；
+- 本地书架与分组管理；
 - 兼容旧版 `SimpleReaderBackup` schemaVersion 1；
 - 恢复书籍、分组、书签和阅读进度；
-- 换签重装后重新选择原书总文件夹，并安全重新关联文件；
+- 换签或重装后重新选择原书总文件夹，并安全重新关联文件；
 - 无法唯一匹配的同名文件会跳过，不会猜测绑定。
 
 ## 构建要求
@@ -34,40 +44,28 @@ Pull Request 和普通开发分支只运行无永久签名的编译、单元测�
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Debug APK 只用于功能预览，不能覆盖正式 v2 版本。
+Debug APK 只用于功能预览，不能覆盖正式版本。
 
-## 正式 v2 APK
+## 正式 APK
 
-正式发布工作流只允许可信 `main` 分支或手动触发，并从 GitHub Actions Secrets 读取永久签名：
+当前正式 APK 使用本地固定 keystore 签名：
 
 ```text
-SIMPLEREADER_SIGNING_KEY_BASE64
-SIMPLEREADER_SIGNING_PASSWORD
+E:\脚本\小说阅读\签名文件\simplereader-public-v1.keystore
+alias: simplereader-public-v1
 ```
 
-仓库不保存 keystore、密码或 Base64 私钥。工作流在上传 APK 前强制验证：
+仓库不保存 keystore、密码或 Base64 私钥。正式交付前必须验证：
 
 - 包名 `com.simplereader.app`
-- minSdk 26
-- V1 和 V2 签名
-- 证书 SHA-256 `6c2baa3cc6f51a3d7ec608d9350fe8f6610b66f54dc46bd6da8e1af959b8cbe5`
-- zipalign
-- Release 单元测试
+- versionCode 高于上一正式版
+- 证书 SHA-256 `315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
+- APK 文件 SHA-256
+- 签名方案
 
 ## 一次性恢复旧数据与原书
 
 选择“导入备份并自动关联”后，应用会先恢复书架、分组、书签和阅读进度；如果备份中的原 URI 仍可读取，会直接恢复阅读。签名更换或重装导致 Android 授权失效时，只需紧接着选择一次原书总文件夹，应用会扫描并自动关联所有匹配书籍，不会进入普通导入流程，也不会逐本重新选择。
-
-## 从旧签名迁移
-
-v2 签名与旧版签名不同，第一次不能覆盖安装。固定迁移流程：
-
-1. 在旧版执行“数据导出”，保存 JSON；
-2. 确认备份文件可读取；
-3. 卸载旧版；
-4. 安装正式 v2 APK；
-5. 选择“导入过往数据”；
-6. 按提示重新选择原书总文件夹。
 
 旧版备份没有包含字号、背景色、翻页方式等 SharedPreferences，这些设置需要重新选择。
 
