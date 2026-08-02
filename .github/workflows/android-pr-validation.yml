@@ -35,11 +35,10 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare validation version
+      - name: Confirm source version
         shell: bash
         run: |
-          echo "SIMPLE_READER_VERSION_CODE=$((2026073200 + 10#$GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=2026.07.24.validation.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          grep -n "generatedVersionCode\|generatedVersionName" app/build.gradle.kts
 
       - name: Debug unit tests
         shell: bash
