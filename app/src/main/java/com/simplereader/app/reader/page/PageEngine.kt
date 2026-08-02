@@ -75,7 +75,7 @@ data class ReaderLayoutSettings(
     }
 
     companion object {
-        const val CACHE_MODEL_VERSION = 2
+        const val CACHE_MODEL_VERSION = 3
     }
 }
 
