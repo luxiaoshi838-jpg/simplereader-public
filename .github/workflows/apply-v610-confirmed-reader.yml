@@ -23,6 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           payload=.automation/v610-confirmed-reader.patch.gz.b64
+          wc -c "$payload"
+          sha256sum "$payload"
           echo 'd89b3e75e581577959eee57dc74d57ed5f115046d8b0055d952c3f72b004b72b  '"$payload" | sha256sum -c -
           base64 -d "$payload" | gzip -d > /tmp/v610.patch
           echo '84a637e1909e252ba9f4a5f97591d692040d8b220f5bbe8149ef81f78415e9a7  /tmp/v610.patch' | sha256sum -c -
