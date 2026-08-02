@@ -18,15 +18,16 @@ class ReaderCatalogAndProgressUiContractTest {
     }
 
     @Test
-    fun bottomReaderProgressUsesTheGlobalReaderPageLabel() {
+    fun bottomReaderProgressUsesTheGlobalReaderPageSequence() {
         val source = readerSource()
         val layout = readerLayout()
         assertFalse(source.contains("readerProgressBar"))
         assertFalse(layout.contains("@+id/readerProgressBar"))
         assertTrue(layout.contains("android:text=\"1/1\""))
-        assertTrue(source.contains("private fun pageCountLabel()"))
+        assertTrue(source.contains("private fun updateProgressUi()"))
+        assertTrue(source.contains("currentPageIndex = currentPageIndex.coerceIn(0, pages.lastIndex)"))
+        assertTrue(source.contains("progressLabel.text = \"\${currentPageIndex + 1}/\${pages.size}\""))
         assertTrue(source.contains("page.globalPageIndex + 1"))
         assertTrue(source.contains("page.totalPageCount"))
-        assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
     }
 }
