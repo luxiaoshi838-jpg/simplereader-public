@@ -14,18 +14,19 @@ class ReaderCatalogAndProgressUiContractTest {
 
     @Test
     fun topSearchUsesMagnifyingGlassIcon() {
-        val text = readerSource()
-        assertTrue(text.contains("setIcon(android.R.drawable.ic_menu_search)"))
+        assertTrue(readerSource().contains("setIcon(android.R.drawable.ic_menu_search)"))
     }
 
     @Test
-    fun bottomReaderProgressIsPageLabelWithoutSeekbar() {
+    fun bottomReaderProgressUsesTheGlobalReaderPageLabel() {
         val source = readerSource()
         val layout = readerLayout()
         assertFalse(source.contains("readerProgressBar"))
         assertFalse(layout.contains("@+id/readerProgressBar"))
         assertTrue(layout.contains("android:text=\"1/1\""))
         assertTrue(source.contains("private fun pageCountLabel()"))
+        assertTrue(source.contains("page.globalPageIndex + 1"))
+        assertTrue(source.contains("page.totalPageCount"))
         assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
     }
 }

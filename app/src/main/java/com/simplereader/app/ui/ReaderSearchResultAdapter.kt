@@ -15,7 +15,13 @@ data class ReaderSearchHit(
     val stableKey: String,
     val position: Long,
     val positionLabel: String,
-    val preview: String
+    val preview: String,
+    val keyword: String = "",
+    val chapterIndex: Int = -1,
+    val globalPageIndex: Int = -1,
+    val startOffset: Int = -1,
+    val endOffset: Int = -1,
+    val previewText: String = preview
 )
 
 data class ReaderSearchPage(

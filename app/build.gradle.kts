@@ -19,10 +19,10 @@ android {
     namespace = "com.simplereader.app"
     compileSdk = 35
 
-    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2026202001")
+    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2026080208")
         .toIntOrNull()
-        ?: 2026202001
-    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "2026.07.21.1"
+        ?: 2026080208
+    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "608"
 
     defaultConfig {
         applicationId = "com.simplereader.app"
@@ -139,4 +139,3 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
-

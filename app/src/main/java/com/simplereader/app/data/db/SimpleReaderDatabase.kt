@@ -16,7 +16,7 @@ import com.simplereader.app.data.entity.*
         Bookmark::class,
         ReadProgress::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class SimpleReaderDatabase : RoomDatabase() {
@@ -36,7 +36,7 @@ abstract class SimpleReaderDatabase : RoomDatabase() {
                     SimpleReaderDatabase::class.java,
                     "simple_reader_db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance
@@ -232,6 +232,22 @@ abstract class SimpleReaderDatabase : RoomDatabase() {
                 db.execSQL("DROP TABLE bookmarks")
                 db.execSQL("ALTER TABLE bookmarks_new RENAME TO bookmarks")
                 db.execSQL("DROP TABLE book_id_map")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE bookmarks ADD COLUMN globalPageIndex INTEGER")
+                db.execSQL("ALTER TABLE bookmarks ADD COLUMN chapterIndex INTEGER")
+                db.execSQL("ALTER TABLE bookmarks ADD COLUMN pageIndexInChapter INTEGER")
+                db.execSQL("ALTER TABLE bookmarks ADD COLUMN startOffset INTEGER")
+                db.execSQL("UPDATE bookmarks SET startOffset = CAST(position AS INTEGER) WHERE position GLOB '[0-9]*'")
+
+                db.execSQL("ALTER TABLE read_progress ADD COLUMN globalPageIndex INTEGER")
+                db.execSQL("ALTER TABLE read_progress ADD COLUMN chapterIndex INTEGER")
+                db.execSQL("ALTER TABLE read_progress ADD COLUMN pageIndexInChapter INTEGER")
+                db.execSQL("ALTER TABLE read_progress ADD COLUMN startOffset INTEGER")
+                db.execSQL("UPDATE read_progress SET startOffset = CAST(position AS INTEGER) WHERE position GLOB '[0-9]*'")
             }
         }
     }

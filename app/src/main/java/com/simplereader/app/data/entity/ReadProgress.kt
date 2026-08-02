@@ -17,5 +17,9 @@ data class ReadProgress(
     val epubChapterHref: String? = null,
     val epubChapterOffset: Int? = null,
     val epubProgressFraction: Float? = null,
+    val globalPageIndex: Int? = null,
+    val chapterIndex: Int? = null,
+    val pageIndexInChapter: Int? = null,
+    val startOffset: Int? = position.toIntOrNull(),
     val updateTime: Long = System.currentTimeMillis()
 )

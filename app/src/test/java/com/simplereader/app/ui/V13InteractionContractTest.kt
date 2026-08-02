@@ -20,12 +20,14 @@ class V13InteractionContractTest {
     }
 
     @Test
-    fun `reader uses add bookmark action and immediate deletion refresh`() {
+    fun `reader keeps v600 add bookmark action and immediate deletion refresh`() {
         val text = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
+        val panels = source("src/main/java/com/simplereader/app/ui/ReaderPanels.kt")
         assertTrue(text.contains("text = \"添\""))
         assertTrue(text.contains("shape = GradientDrawable.OVAL"))
-        assertTrue(text.contains("confirmDeleteBookmark(bookmark)"))
-        assertTrue(text.contains("bookmarks = bookmarks.filterNot"))
+        assertTrue(text.contains("confirmDeleteBookmark(row.bookmark)"))
+        assertTrue(text.contains("showCatalogBookmarks(startWithBookmarks = true)"))
+        assertTrue(panels.contains("dialog.dismiss()"))
         assertFalse(text.contains("menu.add(Menu.NONE, MENU_PANEL"))
     }
 

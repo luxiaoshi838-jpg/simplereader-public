@@ -12,7 +12,7 @@ interface BookmarkDao {
     @Delete
     suspend fun delete(bookmark: Bookmark)
 
-    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY CAST(position AS INTEGER) ASC, createTime ASC")
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY COALESCE(globalPageIndex, CAST(position AS INTEGER)) ASC, createTime ASC")
     fun getBookmarks(bookId: Long): Flow<List<Bookmark>>
 
     @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
