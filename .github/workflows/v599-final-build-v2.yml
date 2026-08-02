@@ -1,0 +1,348 @@
+name: v599 final regression build v2
+
+on:
+  push:
+    branches: [agent/v599-page-axis-vertical-fix]
+  pull_request:
+    branches: [agent/v598-reader-only-duokan]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v599-final-regression-v2
+  cancel-in-progress: true
+
+jobs:
+  build-v599-v2:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v599-page-axis-vertical-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000599'
+      SIMPLE_READER_VERSION_NAME: '2026.08.02.page-axis-settings.599'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v599-page-axis-vertical-fix
+          fetch-depth: 0
+
+      - name: Restore confirmed reader shell and apply v599 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m bash <<'SCRIPT'
+          V595=origin/agent/v595-duokan-chapter-pages
+          files=(
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+            app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+            app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+            app/src/main/res/layout/activity_reader.xml
+            app/src/main/res/drawable-nodpi/reader_material_frosted.png
+            app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
+            app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
+          )
+          for path in "${files[@]}"; do
+            mkdir -p "$(dirname "$path")"
+            git show "$V595:$path" > "$path"
+          done
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          main_path = Path('app/src/main/java/com/simplereader/app/ui/MainActivity.kt')
+          main = main_path.read_text()
+          if 'import com.simplereader.app.reader.cache.ReaderPageCacheManager' not in main:
+              main = main.replace(
+                  'import com.simplereader.app.parser.EpubParser\n',
+                  'import com.simplereader.app.parser.EpubParser\nimport com.simplereader.app.reader.cache.ReaderPageCacheManager\n'
+              )
+          old_items = '.setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->'
+          if old_items not in main:
+              raise SystemExit('Bookshelf menu items not found')
+          main = main.replace(
+              old_items,
+              '.setItems(arrayOf("批量管理分组", "同步书架", "一键缓存")) { _, which ->',
+              1
+          )
+          old_when = '                    1 -> confirmSyncBookshelf()\n                }'
+          if old_when not in main:
+              raise SystemExit('Bookshelf menu action block not found')
+          main = main.replace(
+              old_when,
+              '                    1 -> confirmSyncBookshelf()\n                    2 -> confirmCacheBookshelf()\n                }',
+              1
+          )
+          cache_function = '''    private fun confirmCacheBookshelf() {
+              val cacheable = books
+                  .filter { it.format.uppercase() in setOf("TXT", "EPUB", "CHM") }
+                  .distinctBy { it.id }
+              if (cacheable.isEmpty()) {
+                  Toast.makeText(this, "书架中没有可缓存的书籍", Toast.LENGTH_SHORT).show()
+                  return
+              }
+              AlertDialog.Builder(this)
+                  .setTitle("一键缓存")
+                  .setMessage(
+                      "将在后台依次缓存书架中的 ${cacheable.size} 本书。\\n\\n" +
+                          "原文件和排版设置未变化的完整缓存会直接跳过；" +
+                          "未完成书籍从章节检查点继续。任务不启动前台服务。"
+                  )
+                  .setNegativeButton("取消", null)
+                  .setPositiveButton("开始缓存") { _, _ ->
+                      val signature = ReaderPageCacheManager.currentLayoutSignature(this)
+                      cacheable.forEach { book ->
+                          ReaderPageCacheManager.enqueue(
+                              context = applicationContext,
+                              bookId = book.id,
+                              signature = signature
+                          )
+                      }
+                      Toast.makeText(this, "已加入后台缓存：${cacheable.size} 本", Toast.LENGTH_LONG).show()
+                  }
+                  .show()
+          }
+
+          '''
+          marker = '    private fun showBookActionsV2(book: ShelfBookItem) {'
+          if marker not in main:
+              raise SystemExit('MainActivity insertion marker not found')
+          main_path.write_text(main.replace(marker, cache_function + marker, 1))
+
+          gradle_path = Path('app/build.gradle.kts')
+          gradle = gradle_path.read_text()
+          if 'androidx.work:work-runtime-ktx' not in gradle:
+              marker = '    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")\n'
+              if marker not in gradle:
+                  raise SystemExit('Gradle dependency marker not found')
+              gradle = gradle.replace(marker, marker + '    implementation("androidx.work:work-runtime-ktx:2.9.1")\n')
+          gradle_path.write_text(gradle)
+
+          worker_path = Path('app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt')
+          worker = worker_path.read_text()
+          for line in (
+              'import android.app.NotificationChannel\n',
+              'import android.app.NotificationManager\n',
+              'import android.content.pm.ServiceInfo\n',
+              'import android.os.Build\n',
+              'import androidx.core.app.NotificationCompat\n',
+              'import androidx.work.ForegroundInfo\n',
+              'import androidx.work.WorkManager\n',
+          ):
+              worker = worker.replace(line, '')
+          worker = re.sub(r'^\s*setForeground\(foreground\([^\n]+\)\)\s*$', '', worker, flags=re.M)
+          worker = worker.replace('        setForeground(foreground(book, done, total, chapter.ifBlank { "计算页数" }))\n', '')
+          start = worker.find('    private fun foreground(')
+          end = worker.find('    private fun failure(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('Foreground block not found')
+          worker = worker[:start] + '    private fun notifyComplete(book: Book, chapters: Int) = Unit\n\n' + worker[end:]
+          worker = worker.replace('        private const val CHANNEL_ID = "reader_page_cache"\n', '')
+          worker = worker.replace('        private const val NOTIFICATION_BASE = 59_200\n', '')
+          worker_path.write_text(worker)
+
+          vertical_path = Path('app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt')
+          vertical = vertical_path.read_text()
+          vertical = vertical.replace(
+              'import androidx.recyclerview.widget.LinearLayoutManager\n',
+              'import androidx.recyclerview.widget.LinearLayoutManager\nimport androidx.recyclerview.widget.PagerSnapHelper\n'
+          )
+          vertical = vertical.replace(' * Continuous vertical reader', ' * Whole-page vertical reader')
+          vertical = vertical.replace(
+              '        isVerticalScrollBarEnabled = true\n        isScrollbarFadingEnabled = false\n',
+              '        isVerticalScrollBarEnabled = false\n        isHorizontalScrollBarEnabled = false\n'
+          )
+          top_marker = '    private val topFade = View(context).apply { isClickable = false }\n'
+          vertical = vertical.replace(top_marker, '    private val pageSnapHelper = PagerSnapHelper()\n' + top_marker, 1)
+          init_marker = '    init {\n        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n'
+          vertical = vertical.replace(
+              init_marker,
+              '    init {\n        pageSnapHelper.attachToRecyclerView(recyclerView)\n        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n',
+              1
+          )
+          old_page = '''    fun scrollByPage(direction: Int) {
+              if (isReaderChromeVisible() || direction == 0) return
+              val distance = (height * 0.78f).toInt().coerceAtLeast(1)
+              recyclerView.smoothScrollBy(0, direction * distance)
+          }
+          '''
+          new_page = '''    fun scrollByPage(direction: Int) {
+              if (isReaderChromeVisible() || direction == 0 || pageAdapter.itemCount == 0) return
+              val current = layoutManager.findFirstVisibleItemPosition().coerceAtLeast(0)
+              val target = (current + if (direction > 0) 1 else -1)
+                  .coerceIn(0, pageAdapter.itemCount - 1)
+              recyclerView.smoothScrollToPosition(target)
+          }
+          '''
+          if old_page not in vertical:
+              raise SystemExit('Vertical page turn block not found')
+          vertical_path.write_text(vertical.replace(old_page, new_page, 1))
+
+          reader_path = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          reader = reader_path.read_text()
+          old_scroll = '''    private fun configureVerticalScrollIfNeeded() {
+              val continuous = pageTurnMode == TURN_MODE_VERTICAL
+              contentView.setPadding(
+                  dp(28),
+                  readerTopInsetPx + dp(26),
+                  dp(28),
+                  readerBottomInsetPx + dp(118)
+              )
+              contentView.setTextIsSelectable(false)
+              contentView.isVerticalScrollBarEnabled = false
+              readerScrollView.isVerticalScrollBarEnabled = continuous
+              readerScrollView.isScrollbarFadingEnabled = false
+              readerScrollView.isSmoothScrollingEnabled = true
+              readerScrollView.overScrollMode = if (continuous) {
+                  View.OVER_SCROLL_IF_CONTENT_SCROLLS
+              } else {
+                  View.OVER_SCROLL_NEVER
+              }
+          }
+          '''
+          new_scroll = '''    private fun configureVerticalScrollIfNeeded() {
+              contentView.setPadding(
+                  dp(28),
+                  readerTopInsetPx + dp(26),
+                  dp(28),
+                  readerBottomInsetPx + dp(118)
+              )
+              contentView.setTextIsSelectable(false)
+              contentView.isVerticalScrollBarEnabled = false
+              readerScrollView.isVerticalScrollBarEnabled = false
+              readerScrollView.isHorizontalScrollBarEnabled = false
+              readerScrollView.isSmoothScrollingEnabled = false
+              readerScrollView.overScrollMode = View.OVER_SCROLL_NEVER
+          }
+          '''
+          if old_scroll not in reader:
+              raise SystemExit('Reader vertical scroll block not found')
+          reader_path.write_text(reader.replace(old_scroll, new_scroll, 1))
+
+          test_path = Path('app/src/test/java/com/simplereader/app/ui/V599RequirementsContractTest.kt')
+          test_path.parent.mkdir(parents=True, exist_ok=True)
+          test_path.write_text(r'''package com.simplereader.app.ui
+
+          import java.io.File
+          import org.junit.Assert.assertFalse
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+
+          class V599RequirementsContractTest {
+              private fun source(path: String) = File(path).readText()
+
+              @Test fun `fixed requirements cannot regress`() {
+                  val cover = source("src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt")
+                  val layout = source("src/main/res/layout/activity_reader.xml")
+                  val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
+                  val vertical = source("src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt")
+                  val main = source("src/main/java/com/simplereader/app/ui/MainActivity.kt")
+                  val worker = source("src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt")
+                  assertFalse(cover.contains("drawText(\"TXT\""))
+                  assertFalse(layout.contains("android:background=\"#33FFFFFF\""))
+                  assertTrue(reader.contains("readerProgressLabel.setTextColor(currentTextColor)"))
+                  assertTrue(vertical.contains("PagerSnapHelper"))
+                  assertTrue(vertical.contains("smoothScrollToPosition(target)"))
+                  assertFalse(vertical.contains("isScrollbarFadingEnabled = false"))
+                  assertFalse(reader.contains("readerScrollView.isScrollbarFadingEnabled = false"))
+                  assertTrue(reader.contains("actualPageLabelForDocumentPosition(safePosition)"))
+                  assertTrue(reader.contains("actualPageLabelForAnchor"))
+                  assertFalse(reader.contains("safePosition / pageSize.coerceAtLeast(1)"))
+                  assertTrue(reader.contains("象牙色（日间）"))
+                  assertTrue(reader.contains("护眼背景（日间）"))
+                  assertTrue(reader.contains("白色背景（日间）"))
+                  assertTrue(main.contains("一键缓存"))
+                  assertTrue(main.contains("ReaderPageCacheManager.enqueue"))
+                  assertFalse(worker.contains("setForeground("))
+                  assertFalse(worker.contains("ForegroundInfo"))
+                  assertTrue(worker.contains("CHECKPOINT_CHAPTERS"))
+                  assertTrue(worker.contains("completeChapterCount"))
+              }
+          }
+          '''.replace('\n          ', '\n').lstrip())
+          PY
+          SCRIPT
+
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -Fq 'PagerSnapHelper' app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+          grep -Fq 'readerProgressLabel.setTextColor(currentTextColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'actualPageLabelForDocumentPosition(safePosition)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq '象牙色（日间）' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          ! grep -Fq 'drawText("TXT"' app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt
+          ! grep -Fq 'setForeground(' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          ! grep -Fq 'ForegroundInfo' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          ! grep -Fq 'isScrollbarFadingEnabled = false' app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+          ! grep -Fq 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run v599 contract tests within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --tests 'com.simplereader.app.ui.V599RequirementsContractTest' --stacktrace --console=plain | tee /tmp/v599-test.log
+
+      - name: Build release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v599-build.log
+
+      - name: Verify APK and commit source
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v599-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/v599-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v599-badging.log
+          grep -Fq "versionCode='2098000599'" /tmp/v599-badging.log
+          grep -Fq "versionName='2026.08.02.page-axis-settings.599'" /tmp/v599-badging.log
+          unzip -t /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/v599-unzip.log
+          sha256sum /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/SimpleReader-v599-unsigned.sha256
+          git add app/build.gradle.kts \
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt \
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
+            app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt \
+            app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt \
+            app/src/main/res/layout/activity_reader.xml \
+            app/src/main/res/drawable-nodpi/reader_material_frosted.png \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png \
+            app/src/test/java/com/simplereader/app/ui/V599RequirementsContractTest.kt
+          git diff --cached --check
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'v599: restore settings and unify the real page axis'
+            git push origin HEAD:agent/v599-page-axis-vertical-fix
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v599-unsigned-v2-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v599-unsigned.apk
+            /tmp/v599-test.log
+            /tmp/v599-build.log
+            /tmp/v599-badging.log
+            /tmp/v599-unzip.log
+            /tmp/SimpleReader-v599-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 3
