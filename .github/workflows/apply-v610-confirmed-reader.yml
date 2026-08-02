@@ -22,11 +22,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          payload=.automation/v610-confirmed-reader.patch.gz.b64
-          wc -c "$payload"
-          sha256sum "$payload"
-          echo 'd89b3e75e581577959eee57dc74d57ed5f115046d8b0055d952c3f72b004b72b  '"$payload" | sha256sum -c -
-          base64 -d "$payload" | gzip -d > /tmp/v610.patch
+          echo '1b7d46ebe66dd3563fbcfbad132be656bcbdf49259393ea931e7ebbafe6b917a  .automation/v610-confirmed-reader.part00' | sha256sum -c -
+          echo 'c861e0ff0e761b5716b9b8804c258520eca4e8473b2c27e9ca99340790133f45  .automation/v610-confirmed-reader.part01' | sha256sum -c -
+          echo 'ed8d9de270fa5e08a82909b6b74b110bf6b9ec26464493e37737928bfcb03517  .automation/v610-confirmed-reader.part02' | sha256sum -c -
+          echo 'd8223a56f74af31887ac0346fe8f4cad5e2444a81d0762e3a85afa14315341bf  .automation/v610-confirmed-reader.part03' | sha256sum -c -
+          cat .automation/v610-confirmed-reader.part00 \
+              .automation/v610-confirmed-reader.part01 \
+              .automation/v610-confirmed-reader.part02 \
+              .automation/v610-confirmed-reader.part03 > /tmp/payload.b64
+          echo 'd89b3e75e581577959eee57dc74d57ed5f115046d8b0055d952c3f72b004b72b  /tmp/payload.b64' | sha256sum -c -
+          base64 -d /tmp/payload.b64 | gzip -d > /tmp/v610.patch
           echo '84a637e1909e252ba9f4a5f97591d692040d8b220f5bbe8149ef81f78415e9a7  /tmp/v610.patch' | sha256sum -c -
           git apply --check /tmp/v610.patch
           git apply /tmp/v610.patch
@@ -37,7 +42,7 @@ jobs:
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png > app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png > app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_material_frosted.png > app/src/main/res/drawable-nodpi/reader_material_frosted.png
-          rm -f "$payload"
+          rm -f .automation/v610-confirmed-reader.part*
           bash tools/verify-ui-policy.sh
           git checkout HEAD -- .github/workflows
       - name: Commit exact reader source
