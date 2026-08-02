@@ -1,0 +1,22 @@
+name: Export v609 fix source
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: zip -qr v609-fix-source.zip . -x '.git/*' -x 'app/build/*' -x '.gradle/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v609-fix-source
+          path: v609-fix-source.zip
+          retention-days: 2
