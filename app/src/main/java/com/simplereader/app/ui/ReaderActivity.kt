@@ -1875,8 +1875,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
         val listView = ListView(this).apply {
             adapter = listAdapter
-            isVerticalScrollBarEnabled = true
-            isScrollbarFadingEnabled = false
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
         }
 
         container.addView(searchRow)
@@ -2330,8 +2330,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val recyclerView = androidx.recyclerview.widget.RecyclerView(this).apply {
             this.layoutManager = layoutManager
             itemAnimator = null
-            isVerticalScrollBarEnabled = true
-            isScrollbarFadingEnabled = false
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
         container.addView(statusView)
