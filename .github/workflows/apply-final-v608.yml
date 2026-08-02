@@ -25,7 +25,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '8335d08c8a41e0463d7e4791afdf30423c5938b62abdf6d7c5acc5dc7bc71f07  .automation/final-compat.patch' | sha256sum -c -
           git apply --check .automation/final-compat.patch
           git apply .automation/final-compat.patch
 
