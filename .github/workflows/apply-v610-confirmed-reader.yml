@@ -43,9 +43,11 @@ jobs:
           echo '3c888c251b7d6def694c68f1e9c6ad9ca8167cfe3fb06b361cf07125c3d7b5fc  /tmp/ReaderActivity.kt' | sha256sum -c -
 
           reader_path='app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt'
+          layout_path='app/src/main/res/layout/activity_reader.xml'
           git apply --check --exclude="$reader_path" /tmp/v610.patch
           git apply --exclude="$reader_path" /tmp/v610.patch
           cp /tmp/ReaderActivity.kt "$reader_path"
+          sed -i '0,/android:paddingBottom="26dp"/s//android:paddingBottom="0dp"/' "$layout_path"
 
           mkdir -p app/src/main/java/com/simplereader/app/ui app/src/main/res/drawable-nodpi
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt > app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
