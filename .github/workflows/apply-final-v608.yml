@@ -1,0 +1,44 @@
+name: Apply final v608 compatibility patch
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout v608 head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify and apply final patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '8335d08c8a41e0463d7e4791afdf30423c5938b62abdf6d7c5acc5dc7bc71f07  .automation/final-compat.patch' | sha256sum -c -
+          git apply --check .automation/final-compat.patch
+          git apply .automation/final-compat.patch
+
+      - name: Remove temporary transport files and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .automation
+          rm -f .github/workflows/apply-final-v608.yml
+          rm -f .github/workflows/export-source-v608.yml
+          rm -f app/src/main/java/com/simplereader/app/ui/ReaderViewCompat.kt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Finalize v608 unified PageEngine compatibility and tests'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
