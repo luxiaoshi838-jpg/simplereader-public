@@ -36,7 +36,6 @@ jobs:
               .automation/v609-ui-clean.part06 \
               .automation/v609-ui-clean.part07 \
               .automation/v609-ui-clean.part08 > /tmp/payload.b64
-          sha256sum /tmp/payload.b64
           echo "9ca36b78bbcb8cf1bc4bd1f73df5ea7658a49d08edcefaa29240c3d748bbc17d  /tmp/payload.b64" | sha256sum -c -
           base64 -d /tmp/payload.b64 | gzip -d > /tmp/v609.patch
           git apply --check /tmp/v609.patch
@@ -45,6 +44,7 @@ jobs:
           rm -f .automation/apply-v609-ui-clean.trigger
           rm -f .github/workflows/apply-v609-ui-clean.yml
           bash tools/verify-ui-policy.sh
+          git checkout HEAD -- .github/workflows
 
       - name: Commit clean v609 source
         shell: bash
