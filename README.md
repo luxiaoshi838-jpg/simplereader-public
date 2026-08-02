@@ -8,15 +8,15 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 
 当前最新正式产出：
 
-- 版本：v609
-- versionCode：`2098000609`
-- versionName：`609`
-- APK SHA-256：`641517f30f501b793002713dce1c238216269d9695dde71cb1b9e457fa71d38a`
+- 版本：v610
+- versionCode：`2098000610`
+- versionName：`610`
+- APK SHA-256：`dd33f10d252ae44bb46199a23a98e292a24da32d81be473513cadf6364386ff8`
 - 包名：`com.simplereader.app`
 - 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
-- 正式 APK：`SimpleReader_v609_ui_clean_real_page_engine_signed.apk`
+- 正式 APK：`SimpleReader_v610_confirmed_reader_ui_signed.apk`
 
-v609 删除了禁止继续使用的十字纹/规则线封面、封面格式文字、旧 `ReaderPanels` 目录书签面板、目录内添加书签、v14 专用工作流和每页 118dp 空白实现。当前封面和阅读背景采用颜色、非规则纹理、材质光影叠加；添加书签保留在阅读页上栏右上角；覆盖、仿真、平移、上下和淡入使用不同实现。所有 UI 硬性要求由 [`UI_BASELINE.md`](UI_BASELINE.md)、`tools/verify-ui-policy.sh` 和 `ui-lock.sha256` 强制检查。
+v610 恢复已经确认的阅读实现：目录/书签使用 v600 侧边面板；背景使用颜色、纹理、质感三层独立组合；覆盖、仿真、平移使用不同的横向翻页实现。上下模式不再使用分页容器，整本正文在单一连续阅读区域中滚动，只在真实章节之间保留章节间距。横向分页不再给每页预留底部空白，只有章节最后一页会因正文不足自然留白；章节标题只按真实章节起点处理。
 
 当前任务包括：
 
