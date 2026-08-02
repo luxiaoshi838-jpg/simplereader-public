@@ -1,0 +1,28 @@
+name: v600 export source
+
+on:
+  push:
+    branches: [agent/v600-reader-startup-fix]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v600-reader-startup-fix
+      - name: Package source
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m zip -qr /tmp/simplereader-v600-source.zip . -x '.git/*' 'app/build/*' '.gradle/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v600-source
+          path: /tmp/simplereader-v600-source.zip
+          if-no-files-found: error
+          retention-days: 2
