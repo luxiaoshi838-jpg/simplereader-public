@@ -33,8 +33,20 @@ jobs:
           echo 'd89b3e75e581577959eee57dc74d57ed5f115046d8b0055d952c3f72b004b72b  /tmp/payload.b64' | sha256sum -c -
           base64 -d /tmp/payload.b64 | gzip -d > /tmp/v610.patch
           echo '84a637e1909e252ba9f4a5f97591d692040d8b220f5bbe8149ef81f78415e9a7  /tmp/v610.patch' | sha256sum -c -
-          git apply --check /tmp/v610.patch
-          git apply /tmp/v610.patch
+
+          echo '3bd7918c20e3a56b7fc8d8db68ab3e7d0c385d1955924086739aaec50135fda2  .automation/v610-reader-activity.part00' | sha256sum -c -
+          echo '09c92c5a0fd0689aea6ea57d47e611c4e4cfc96bb2eeb05f53b0c46def4fba0b  .automation/v610-reader-activity.part01' | sha256sum -c -
+          cat .automation/v610-reader-activity.part00 \
+              .automation/v610-reader-activity.part01 > /tmp/reader-activity.b64
+          echo '439cec4f10cf89ee63480cdb5084c49c9c8a1fd5cbd09f867d6c69b7a4f5afe9  /tmp/reader-activity.b64' | sha256sum -c -
+          base64 -d /tmp/reader-activity.b64 | gzip -d > /tmp/ReaderActivity.kt
+          echo '3c888c251b7d6def694c68f1e9c6ad9ca8167cfe3fb06b361cf07125c3d7b5fc  /tmp/ReaderActivity.kt' | sha256sum -c -
+
+          reader_path='app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt'
+          git apply --check --exclude="$reader_path" /tmp/v610.patch
+          git apply --exclude="$reader_path" /tmp/v610.patch
+          cp /tmp/ReaderActivity.kt "$reader_path"
+
           mkdir -p app/src/main/java/com/simplereader/app/ui app/src/main/res/drawable-nodpi
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt > app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt > app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
@@ -42,7 +54,7 @@ jobs:
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png > app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png > app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
           git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_material_frosted.png > app/src/main/res/drawable-nodpi/reader_material_frosted.png
-          rm -f .automation/v610-confirmed-reader.part*
+          rm -f .automation/v610-confirmed-reader.part* .automation/v610-reader-activity.part*
           bash tools/verify-ui-policy.sh
           git checkout HEAD -- .github/workflows
       - name: Commit exact reader source
