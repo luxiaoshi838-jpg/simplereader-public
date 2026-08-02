@@ -3,12 +3,15 @@ name: v599 export current source
 on:
   push:
     branches: [agent/v599-page-axis-vertical-fix]
+  pull_request:
+    branches: [agent/v598-reader-only-duokan]
 
 permissions:
   contents: read
 
 jobs:
   export-source:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v599-page-axis-vertical-fix'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
