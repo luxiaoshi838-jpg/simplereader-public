@@ -2,16 +2,16 @@
 
 ## 当前永久签名
 
-- 当前最新产出：v600
-- 版本号：`2098000600`
-- 版本名：`2026.08.02.reader-startup-fix.600`
-- APK SHA-256：`688476688a7c5e3b0d71744381e37b341d86791e9fc1a70d7ed13c01fe9607df`
+- 当前最新产出：v601
+- 版本号：`2098000601`
+- 版本名：`2026.08.02.reader-page-scroll-fix.601`
+- APK SHA-256：`c88ea51fa11872653bee895a443ecb137875eb949aa1c63f0222d696fa39d2f0`
 - 签名名称：简阅 Public V1 本地签名
 - 证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
 - 包名：`com.simplereader.app`
 - 密钥别名：`simplereader-public-v1`
 - 本地 keystore：`E:\脚本\小说阅读\签名文件\simplereader-public-v1.keystore`
-- 签名方案：V2 + V3
+- 签名方案：V2
 
 ## 密钥保存规则
 
@@ -27,7 +27,7 @@
 
 1. 包名继续为 `com.simplereader.app`。
 2. 证书继续为 `315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
-3. `versionCode` 必须大于当前最新正式版 `2098000600`。
+3. `versionCode` 必须大于当前最新正式版 `2098000601`。
 4. `versionName` 必须保留清晰序列号，便于确认新版本能覆盖旧版本。
 5. APK 输出放在 `E:\脚本\小说阅读\apk-output`，旧版归档到 `E:\脚本\小说阅读\apk-output\旧版`。
 
