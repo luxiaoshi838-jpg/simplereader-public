@@ -1,0 +1,24 @@
+name: Export exact v600 UI baseline
+
+on:
+  push:
+    branches:
+      - restore/v600-ui-baseline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack exact source
+        run: zip -qr exact-v600-source.zip . -x '.git/*' -x 'app/build/*' -x '.gradle/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exact-v600-source
+          path: exact-v600-source.zip
+          retention-days: 2
