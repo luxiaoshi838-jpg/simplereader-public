@@ -17,17 +17,7 @@ data class ReaderDocument(
     val imageDirectory: File? = null,
     val charsetName: String? = null,
     val fromCacheOnly: Boolean = false
-) {
-    fun imageFile(href: String): File? {
-        val directory = imageDirectory?.takeIf(File::isDirectory) ?: return null
-        return directory.listFiles()?.firstOrNull { file ->
-            file.isFile && (
-                file.name.equals(StructuredBookCache.imageFileNameForLookup(href), ignoreCase = true) ||
-                    file.nameWithoutExtension.equals(href.substringAfterLast('/').substringBeforeLast('.'), ignoreCase = true)
-                )
-        }
-    }
-}
+)
 
 object ReaderDocumentLoader {
     fun load(context: Context, book: Book): ReaderDocument {
@@ -59,9 +49,7 @@ object ReaderDocumentLoader {
             .split('/')
             .filter(String::isNotBlank)
             .let { path ->
-                if (rootName != null && path.firstOrNull().equals(rootName, ignoreCase = true)) {
-                    path.drop(1)
-                } else path
+                if (rootName != null && path.firstOrNull().equals(rootName, ignoreCase = true)) path.drop(1) else path
             }
         segments.forEach { segment ->
             current = runCatching { current.findFile(segment) }.getOrNull() ?: return null
@@ -78,10 +66,9 @@ object ReaderDocumentLoader {
             TxtParser.readText(input, book.txtCharset)
         } ?: error("无法读取 TXT 文件")
         val text = result.text.replace("\r\n", "\n").replace('\r', '\n')
-        val chapters = detectTxtChapters(text)
         return ReaderDocument(
             text = text,
-            chapters = chapters,
+            chapters = detectTxtChapters(text),
             sourceSize = source.length().takeIf { it >= 0L } ?: book.fileSize ?: text.length.toLong(),
             sourceModified = source.lastModified().takeIf { it > 0L } ?: book.lastModified ?: 0L,
             charsetName = result.charsetName
@@ -133,20 +120,15 @@ object ReaderDocumentLoader {
             val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
             val raw = text.substring(start, end).trim()
             TxtParser.extractChapterTitle(raw)?.let { title ->
-                if (hits.lastOrNull()?.second?.let { start - it >= 20 } != false) {
-                    hits += title to start
-                }
+                if (hits.lastOrNull()?.second?.let { start - it >= 20 } != false) hits += title to start
             }
             start = end + 1
         }
         if (hits.isEmpty()) return listOf(BookChapter("正文", 0, text.length))
         val output = mutableListOf<BookChapter>()
-        if (hits.first().second > 0) {
-            output += BookChapter("正文", 0, hits.first().second, catalogVisible = false)
-        }
+        if (hits.first().second > 0) output += BookChapter("正文", 0, hits.first().second, catalogVisible = false)
         hits.forEachIndexed { index, hit ->
-            val end = hits.getOrNull(index + 1)?.second ?: text.length
-            output += BookChapter(hit.first, hit.second, end)
+            output += BookChapter(hit.first, hit.second, hits.getOrNull(index + 1)?.second ?: text.length)
         }
         return output
     }
