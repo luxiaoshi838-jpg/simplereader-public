@@ -2,16 +2,16 @@
 
 ## 当前永久签名
 
-- 当前最新产出：v601
-- 版本号：`2098000601`
-- 版本名：`2026.08.02.reader-page-scroll-fix.601`
-- APK SHA-256：`c88ea51fa11872653bee895a443ecb137875eb949aa1c63f0222d696fa39d2f0`
+- 当前最新产出：v608
+- 版本号：`2098000608`
+- 版本名：`608`
+- APK SHA-256：`edbd96bdf6f81bd293c56796f6a5c8ba7416d11ae0c4b66a7035e91c813a1e28`
 - 签名名称：简阅 Public V1 本地签名
 - 证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
 - 包名：`com.simplereader.app`
 - 密钥别名：`simplereader-public-v1`
 - 本地 keystore：`E:\脚本\小说阅读\签名文件\simplereader-public-v1.keystore`
-- 签名方案：V2
+- 签名方案：V2、V3
 
 ## 密钥保存规则
 
@@ -20,6 +20,7 @@
 3. 当前正式 APK 以本地固定 keystore 签名，GitHub workflow 不得使用旧的 `6c2baa...` v2 指纹作为正式产出基线。
 4. 普通 PR 可以构建无正式签名的 APK 用于编译和功能预览，但不得作为正式发布包。
 5. 正式 APK 交付前必须验证证书 SHA-256、包名、versionCode、versionName 和签名方案；任一不符立即失败。
+6. PR 验证构建不得覆盖源码中的 versionCode，否则验证产物不能用于覆盖安装判断。
 
 ## 覆盖安装规则
 
@@ -27,9 +28,10 @@
 
 1. 包名继续为 `com.simplereader.app`。
 2. 证书继续为 `315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
-3. `versionCode` 必须大于当前最新正式版 `2098000601`。
+3. `versionCode` 必须大于当前最新正式版 `2098000608`。
 4. `versionName` 必须保留清晰序列号，便于确认新版本能覆盖旧版本。
 5. APK 输出放在 `E:\脚本\小说阅读\apk-output`，旧版归档到 `E:\脚本\小说阅读\apk-output\旧版`。
+6. 版本号比较必须使用 Android 的整数 `versionCode`，不能只比较文件名或 versionName。
 
 ## 备份兼容
 
