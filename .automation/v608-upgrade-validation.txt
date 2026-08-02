@@ -1,1 +1,2 @@
 Validate v608 upgrade install with versionCode 2098000608.
+Validation workflow now preserves the source versionCode.
