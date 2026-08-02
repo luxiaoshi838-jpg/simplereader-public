@@ -5,6 +5,13 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextUtils
+import android.text.style.BackgroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -12,8 +19,11 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -21,9 +31,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.PagerSnapHelper
-import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
@@ -47,17 +54,15 @@ import java.util.Locale
 class ReaderActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var readerScrollView: NestedScrollView
-    private lateinit var fallbackTextView: TextView
-    private lateinit var pageList: RecyclerView
+    private lateinit var continuousTextView: TextView
+    private lateinit var pagedReaderView: PagedReaderView
     private lateinit var progressLabel: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
-    private lateinit var layoutManager: LinearLayoutManager
 
-    private var pageAdapter: ReaderPageAdapter? = null
-    private var snapHelper: PagerSnapHelper? = null
     private var paginationJob: Job? = null
+    private var continuousRenderJob: Job? = null
     private var bookId: Long = 0L
     private var book: Book? = null
     private var document: ReaderDocument? = null
@@ -69,39 +74,26 @@ class ReaderActivity : AppCompatActivity() {
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
     private var chromeVisible: Boolean = false
-    private var suppressScrollCallback: Boolean = false
     private var searchKeyword: String = ""
     private var searchHits: List<SearchPageHit> = emptyList()
-    private var pageAnimationRunning = false
+    private var activeSearchHit: SearchPageHit? = null
+    private var continuousHighlightSpan: BackgroundColorSpan? = null
+    private var suppressContinuousScroll = false
+    private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
+    private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
+    private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
 
-    private val gestureDetector by lazy {
+    private val continuousGesture by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
-
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                val width = pageList.width.coerceAtLeast(1)
-                val height = pageList.height.coerceAtLeast(1)
-                val centerLeft = width / 4f
-                val centerRight = width * 3f / 4f
-                val centerTop = height / 4f
-                val centerBottom = height * 3f / 4f
-                val centerTap = e.x in centerLeft..centerRight && e.y in centerTop..centerBottom
-                return when {
-                    centerTap -> {
-                        setReaderChromeVisible(!chromeVisible)
-                        true
-                    }
-                    chromeVisible -> true
-                    e.x < width * 0.28f -> {
-                        turnPage(-1)
-                        true
-                    }
-                    e.x > width * 0.72f -> {
-                        turnPage(1)
-                        true
-                    }
-                    else -> false
+                val center = e.x in readerScrollView.width * 0.25f..readerScrollView.width * 0.75f &&
+                    e.y in readerScrollView.height * 0.2f..readerScrollView.height * 0.8f
+                if (center) {
+                    setReaderChromeVisible(!chromeVisible)
+                    return true
                 }
+                return false
             }
         })
     }
@@ -115,7 +107,8 @@ class ReaderActivity : AppCompatActivity() {
 
         database = SimpleReaderDatabase.getDatabase(this)
         readerScrollView = findViewById(R.id.readerScrollView)
-        fallbackTextView = findViewById(R.id.contentView)
+        continuousTextView = findViewById(R.id.contentView)
+        pagedReaderView = findViewById(R.id.pagedReaderView)
         progressLabel = findViewById(R.id.readerProgressLabel)
         readerControls = findViewById(R.id.readerControls)
         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
@@ -123,10 +116,11 @@ class ReaderActivity : AppCompatActivity() {
         bookId = intent.getLongExtra("bookId", 0L)
 
         loadPreferences()
-        installPageList()
+        bindPagedReader()
+        bindContinuousReader()
         bindControls()
-        applyPalette(rebuildPages = false)
-        pageList.post { loadBook() }
+        applyReaderAppearance(rebindPages = false)
+        pagedReaderView.post { loadBook() }
     }
 
     override fun onPause() {
@@ -136,6 +130,8 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         paginationJob?.cancel()
+        continuousRenderJob?.cancel()
+        pagedReaderView.cancelNavigation()
         super.onDestroy()
     }
 
@@ -155,9 +151,7 @@ class ReaderActivity : AppCompatActivity() {
                 shape = GradientDrawable.OVAL
                 setColor(Color.rgb(239, 122, 40))
             }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply {
-                marginEnd = dp(8)
-            }
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
             setOnClickListener { addBookmark() }
         }
         return true
@@ -171,73 +165,61 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (volumeKeyTurnEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
-            turnPage(if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1)
+            val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1
+            if (pageTurnMode == TURN_MODE_VERTICAL) {
+                readerScrollView.smoothScrollBy(0, direction * readerScrollView.height.coerceAtLeast(1))
+            } else {
+                pagedReaderView.turn(direction)
+            }
             return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
-    private fun installPageList() {
-        val root = readerScrollView.parent as FrameLayout
-        pageList = RecyclerView(this).apply {
-            id = View.generateViewId()
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            itemAnimator = null
-            setHasFixedSize(true)
-            background = ReaderSurfaceDrawable(ReaderAppearance.palette(this@ReaderActivity).backgroundColor)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setOnTouchListener { _, event ->
-                gestureDetector.onTouchEvent(event)
-                false
+    private fun bindPagedReader() {
+        pagedReaderView.onTurnCommitted = { direction ->
+            clearSearchHighlight()
+            val pages = readerBook?.pages.orEmpty()
+            val target = (currentPageIndex + direction).coerceIn(0, pages.lastIndex.coerceAtLeast(0))
+            if (target != currentPageIndex) {
+                currentPageIndex = target
+                bindHorizontalPages()
+                updateProgressUi()
+                saveProgress()
+            } else {
+                bindHorizontalPages()
             }
-            addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                    if (!suppressScrollCallback && newState == RecyclerView.SCROLL_STATE_IDLE) {
-                        updateCurrentPageFromViewport()
-                    }
-                }
-
-                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                    if (!suppressScrollCallback && pageTurnMode == TURN_MODE_VERTICAL) {
-                        updateCurrentPageFromViewport()
-                    }
-                }
-            })
         }
-        root.addView(pageList, 0)
-        readerScrollView.visibility = View.GONE
-        fallbackTextView.visibility = View.GONE
-        configureLayoutManager()
+        pagedReaderView.onBoundaryTurn = { direction ->
+            val pages = readerBook?.pages.orEmpty()
+            if (pages.isNotEmpty()) {
+                currentPageIndex = (currentPageIndex + direction).coerceIn(0, pages.lastIndex)
+                bindHorizontalPages()
+            }
+        }
+        pagedReaderView.onCenterTap = { setReaderChromeVisible(!chromeVisible) }
     }
 
-    private fun configureLayoutManager() {
-        val vertical = pageTurnMode == TURN_MODE_VERTICAL
-        snapHelper?.attachToRecyclerView(null)
-        snapHelper = null
-        layoutManager = LinearLayoutManager(
-            this,
-            if (vertical) RecyclerView.VERTICAL else RecyclerView.HORIZONTAL,
+    private fun bindContinuousReader() {
+        readerScrollView.setOnTouchListener { _, event ->
+            continuousGesture.onTouchEvent(event)
             false
-        )
-        pageList.layoutManager = layoutManager
-        pageList.isVerticalScrollBarEnabled = vertical
-        pageList.isHorizontalScrollBarEnabled = !vertical
-        if (!vertical) {
-            snapHelper = PagerSnapHelper().also { it.attachToRecyclerView(pageList) }
+        }
+        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
+            clearSearchHighlight()
+            updateContinuousPosition(scrollY)
         }
     }
 
     private fun bindControls() {
-        findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarks() }
+        findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarkPanelV600() }
         findViewById<TextView>(R.id.readerSearchButton).setOnClickListener {
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
             ReaderAppearance.toggleMode(this)
-            applyPalette(rebuildPages = false)
+            applyReaderAppearance(rebindPages = true)
         }
         findViewById<TextView>(R.id.previousChapterButton).setOnClickListener { jumpChapter(-1) }
         findViewById<TextView>(R.id.nextChapterButton).setOnClickListener { jumpChapter(1) }
@@ -248,21 +230,22 @@ class ReaderActivity : AppCompatActivity() {
             savePreferences()
             updateSettingsLabels()
         }
-        findViewById<TextView>(R.id.themePaperButton).setOnClickListener {
-            ReaderAppearance.saveDayPalette(this, 0xFFF5E9C8.toInt(), 0xFF3B3428.toInt())
-            applyPalette(false)
-        }
-        findViewById<TextView>(R.id.themeEyeButton).setOnClickListener {
-            ReaderAppearance.saveDayPalette(this, 0xFFDAEECD.toInt(), 0xFF2F432C.toInt())
-            applyPalette(false)
-        }
-        findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener {
-            ReaderAppearance.saveDayPalette(this, Color.WHITE, 0xFF202020.toInt())
-            applyPalette(false)
-        }
+        findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("solid_ivory") }
+        findViewById<TextView>(R.id.themeEyeButton).setOnClickListener { selectQuickColor("solid_eye") }
+        findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener { selectQuickColor("solid_white") }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
             ReaderAppearance.setMode(this, ReaderAppearance.MODE_NIGHT)
-            applyPalette(false)
+            applyReaderAppearance(rebindPages = true)
+        }
+        findViewById<TextView>(R.id.themeMoreButton).setOnClickListener {
+            ReaderBackgroundPicker.show(this, currentBackgroundSelection()) { selection ->
+                backgroundColorId = selection.colorId
+                backgroundTextureId = selection.textureId
+                backgroundMaterialId = selection.materialId
+                ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+                savePreferences()
+                applyReaderAppearance(rebindPages = true)
+            }
         }
         mapOf(
             R.id.turnModeOverlapButton to TURN_MODE_OVERLAP,
@@ -270,9 +253,8 @@ class ReaderActivity : AppCompatActivity() {
             R.id.turnModeHorizontalButton to TURN_MODE_HORIZONTAL,
             R.id.turnModeVerticalButton to TURN_MODE_VERTICAL,
             R.id.turnModeFadeButton to TURN_MODE_FADE
-        ).forEach { (id, mode) ->
-            findViewById<TextView>(id).setOnClickListener { setTurnMode(mode) }
-        }
+        ).forEach { (id, mode) -> findViewById<TextView>(id).setOnClickListener { setTurnMode(mode) } }
+
         progressSeekBar.max = 1000
         progressSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             private var pending = 0
@@ -283,8 +265,7 @@ class ReaderActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 val pages = readerBook?.pages.orEmpty()
                 if (pages.isNotEmpty()) {
-                    val index = ((pending / 1000f) * (pages.size - 1)).toInt()
-                    jumpToPage(index, false)
+                    jumpToPage(((pending / 1000f) * (pages.size - 1)).toInt(), false)
                 }
             }
         })
@@ -292,10 +273,7 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun loadBook() {
-        if (bookId <= 0L) {
-            showFatal("书籍记录不存在")
-            return
-        }
+        if (bookId <= 0L) return showFatal("书籍记录不存在")
         lifecycleScope.launch {
             try {
                 val selected = withContext(Dispatchers.IO) { database.bookDao().getBook(bookId) }
@@ -312,7 +290,7 @@ class ReaderActivity : AppCompatActivity() {
                 if (loaded.charsetName != null && !loaded.charsetName.equals(selected.txtCharset, true)) {
                     withContext(Dispatchers.IO) { database.bookDao().updateTxtCharset(selected.id, loaded.charsetName) }
                 }
-                paginateAndDisplay(preserveOffset = null)
+                paginateAndDisplay(null)
                 if (loaded.fromCacheOnly) {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用 EPUB 可读缓存", Toast.LENGTH_LONG).show()
                 }
@@ -325,8 +303,8 @@ class ReaderActivity : AppCompatActivity() {
     private fun paginateAndDisplay(preserveOffset: Int?) {
         val selectedBook = book ?: return
         val loaded = document ?: return
-        if (pageList.width <= 0 || pageList.height <= 0) {
-            pageList.post { paginateAndDisplay(preserveOffset) }
+        if (pagedReaderView.width <= 0 || pagedReaderView.height <= 0) {
+            pagedReaderView.post { paginateAndDisplay(preserveOffset) }
             return
         }
         paginationJob?.cancel()
@@ -336,23 +314,21 @@ class ReaderActivity : AppCompatActivity() {
                 val settings = createLayoutSettings()
                 layoutSettings = settings
                 val identity = PageCacheStore.CacheIdentity(
-                    bookId = selectedBook.id,
-                    filePath = selectedBook.filePath,
-                    fileSize = loaded.sourceSize,
-                    lastModified = loaded.sourceModified,
-                    settingsHash = settings.stableHash()
+                    selectedBook.id,
+                    selectedBook.filePath,
+                    loaded.sourceSize,
+                    loaded.sourceModified,
+                    settings.stableHash()
                 )
                 val paged = withContext(Dispatchers.Default) {
                     PageCacheStore.loadPages(this@ReaderActivity, identity, loaded.text)
                         ?: PageEngine.paginate(
-                            text = loaded.text,
-                            sourceChapters = loaded.chapters,
-                            settings = settings,
-                            typeface = Typeface.DEFAULT,
-                            imageSpanProvider = { href, width, height ->
-                                imageRepository?.span(href, width, height)
-                            }
-                        ).also { PageCacheStore.savePages(this@ReaderActivity, identity, it) }
+                            loaded.text,
+                            loaded.chapters,
+                            settings,
+                            Typeface.DEFAULT
+                        ) { href, width, height -> imageRepository?.span(href, width, height) }
+                            .also { PageCacheStore.savePages(this@ReaderActivity, identity, it) }
                 }
                 readerBook = paged
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
@@ -362,255 +338,305 @@ class ReaderActivity : AppCompatActivity() {
                     progress?.startOffset != null -> paged.pageForOffset(progress.startOffset).globalPageIndex
                     else -> paged.pageForOffset(progress?.position?.toIntOrNull() ?: 0).globalPageIndex
                 }
-                showPagedBook(target)
+                currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
+                showActiveReader()
             } catch (error: Throwable) {
-                showPlainTextFallback(error.message ?: "分页失败")
+                showContinuousFallback(error.message ?: "分页失败")
             }
         }
     }
 
-    private fun createLayoutSettings(): ReaderLayoutSettings {
-        val density = resources.displayMetrics.density
-        return ReaderLayoutSettings(
-            viewportWidthPx = pageList.width.coerceAtLeast(1),
-            viewportHeightPx = pageList.height.coerceAtLeast(1),
-            contentPaddingLeftPx = fallbackTextView.paddingLeft,
-            contentPaddingTopPx = fallbackTextView.paddingTop,
-            contentPaddingRightPx = fallbackTextView.paddingRight,
-            contentPaddingBottomPx = dp(26),
-            textSizePx = readerTextSizeSp * resources.displayMetrics.scaledDensity,
-            typefaceKey = "default",
-            lineSpacingExtraPx = 0f,
-            lineSpacingMultiplier = 1.75f
+    private fun createLayoutSettings(): ReaderLayoutSettings = ReaderLayoutSettings(
+        viewportWidthPx = pagedReaderView.width.coerceAtLeast(1),
+        viewportHeightPx = pagedReaderView.height.coerceAtLeast(1),
+        contentPaddingLeftPx = continuousTextView.paddingLeft,
+        contentPaddingTopPx = continuousTextView.paddingTop,
+        contentPaddingRightPx = continuousTextView.paddingRight,
+        contentPaddingBottomPx = 0,
+        textSizePx = readerTextSizeSp * resources.displayMetrics.scaledDensity,
+        typefaceKey = "default",
+        lineSpacingExtraPx = 0f,
+        lineSpacingMultiplier = 1.75f
+    )
+
+    private fun showActiveReader() {
+        if (pageTurnMode == TURN_MODE_VERTICAL) showContinuousBook() else showHorizontalBook()
+        updateProgressUi()
+    }
+
+    private fun showHorizontalBook() {
+        readerScrollView.visibility = View.GONE
+        pagedReaderView.visibility = View.VISIBLE
+        configurePagedReaderStyle()
+        bindHorizontalPages()
+    }
+
+    private fun configurePagedReaderStyle() {
+        val settings = layoutSettings ?: return
+        val palette = activePalette()
+        pagedReaderView.configure(
+            PagedReaderView.Style(
+                textSizePx = settings.textSizePx,
+                textColor = palette.textColor,
+                horizontalPaddingPx = settings.contentPaddingLeftPx,
+                topPaddingPx = settings.contentPaddingTopPx,
+                bottomPaddingPx = 0,
+                lineSpacingMultiplier = settings.lineSpacingMultiplier,
+                typeface = Typeface.DEFAULT,
+                backgroundFactory = { activeBackgroundDrawable() }
+            )
+        )
+        pagedReaderView.setTurnMode(
+            when (pageTurnMode) {
+                TURN_MODE_SIMULATE -> PagedReaderView.TurnMode.SIMULATE
+                TURN_MODE_HORIZONTAL -> PagedReaderView.TurnMode.SLIDE
+                TURN_MODE_FADE -> PagedReaderView.TurnMode.FADE
+                else -> PagedReaderView.TurnMode.OVERLAP
+            }
         )
     }
 
-    private fun showPagedBook(targetIndex: Int) {
-        val paged = readerBook ?: return
-        pageList.visibility = View.VISIBLE
-        readerScrollView.visibility = View.GONE
-        val palette = ReaderAppearance.palette(this)
-        val settings = layoutSettings ?: return
-        pageAdapter = ReaderPageAdapter(
-            pages = paged.pages,
-            pageWidth = pageList.width,
-            pageHeight = pageList.height,
-            paddingLeft = settings.contentPaddingLeftPx,
-            paddingTop = settings.contentPaddingTopPx,
-            paddingRight = settings.contentPaddingRightPx,
-            paddingBottom = settings.contentPaddingBottomPx,
-            textSizeSp = readerTextSizeSp,
-            lineSpacingExtra = 0f,
-            lineSpacingMultiplier = settings.lineSpacingMultiplier,
-            backgroundFactory = { ReaderSurfaceDrawable(palette.backgroundColor) },
-            textColor = palette.textColor,
-            renderer = ::renderPage
-        )
-        pageList.adapter = pageAdapter
-        jumpToPage(targetIndex, false)
+    private fun bindHorizontalPages() {
+        val pages = readerBook?.pages ?: return
+        if (pages.isEmpty()) return
+        currentPageIndex = currentPageIndex.coerceIn(0, pages.lastIndex)
+        val previous = pages.getOrNull(currentPageIndex - 1)?.let(::snapshotFor)
+        val current = snapshotFor(pages[currentPageIndex])
+        val next = pages.getOrNull(currentPageIndex + 1)?.let(::snapshotFor)
+        pagedReaderView.bind(previous, current, next)
     }
+
+    private fun snapshotFor(page: ReaderPage): ReaderPageSnapshot = ReaderPageSnapshot(
+        startAnchor = ReaderPageAnchor(page.chapterIndex, page.startOffset - readerBook!!.chapters[page.chapterIndex].startOffset, page.startOffset.toLong()),
+        endAnchor = ReaderPageAnchor(page.chapterIndex, page.endOffset - readerBook!!.chapters[page.chapterIndex].startOffset, page.endOffset.toLong()),
+        content = renderPage(page),
+        pageIndexInChapter = page.pageIndexInChapter,
+        pageCountInChapter = page.chapterPageCount
+    )
 
     private fun renderPage(page: ReaderPage): CharSequence {
         val paged = readerBook ?: return ""
         val settings = layoutSettings ?: return ""
         val start = page.startOffset.coerceIn(0, paged.text.length)
         val end = page.endOffset.coerceIn(start, paged.text.length)
-        return PageEngine.styledText(
-            text = paged.text.substring(start, end),
-            settings = settings,
-            titleStartsAtZero = page.pageIndexInChapter == 0,
-            imageSpanProvider = { href, width, height -> imageRepository?.span(href, width, height) }
-        )
+        val rendered = PageEngine.styledText(
+            paged.text.substring(start, end),
+            settings,
+            page.pageIndexInChapter == 0
+        ) { href, width, height -> imageRepository?.span(href, width, height) }
+        val hit = activeSearchHit ?: return rendered
+        if (hit.startOffset !in start until end) return rendered
+        val result = SpannableString(rendered)
+        val localStart = (hit.startOffset - start).coerceIn(0, result.length)
+        val localEnd = (hit.endOffset - start).coerceIn(localStart, result.length)
+        if (localEnd > localStart) {
+            result.setSpan(BackgroundColorSpan(Color.rgb(255, 226, 105)), localStart, localEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return result
     }
 
-    private fun showPlainTextFallback(reason: String) {
-        val loaded = document ?: return showFatal(reason)
-        pageList.visibility = View.GONE
+    private fun showContinuousBook(targetOffset: Int? = null) {
+        val paged = readerBook ?: return
+        val settings = layoutSettings ?: return
+        pagedReaderView.cancelNavigation()
+        pagedReaderView.visibility = View.GONE
         readerScrollView.visibility = View.VISIBLE
-        fallbackTextView.visibility = View.VISIBLE
-        fallbackTextView.text = loaded.text
-        fallbackTextView.textSize = readerTextSizeSp
-        applyPalette(false)
+        continuousTextView.textSize = readerTextSizeSp
+        continuousTextView.setLineSpacing(0f, settings.lineSpacingMultiplier)
+        continuousTextView.setTextColor(activePalette().textColor)
+        continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
+        readerScrollView.background = activeBackgroundDrawable()
+        continuousRenderJob?.cancel()
+        val offset = targetOffset ?: paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
+        continuousRenderJob = lifecycleScope.launch {
+            val styled = withContext(Dispatchers.Default) {
+                PageEngine.styledWholeText(
+                    paged.text,
+                    paged.chapters,
+                    settings
+                ) { href, width, height -> imageRepository?.span(href, width, height) }
+            }
+            continuousTextView.setText(styled, TextView.BufferType.SPANNABLE)
+            applyContinuousHighlight()
+            scrollContinuousToOffset(offset)
+        }
+    }
+
+    private fun showContinuousFallback(reason: String) {
+        val loaded = document ?: return showFatal(reason)
+        pagedReaderView.visibility = View.GONE
+        readerScrollView.visibility = View.VISIBLE
+        continuousTextView.text = loaded.text
+        continuousTextView.textSize = readerTextSizeSp
+        continuousTextView.setTextColor(activePalette().textColor)
+        readerScrollView.background = activeBackgroundDrawable()
         progressLabel.text = "可读模式"
-        Toast.makeText(this, "分页缓存已失效，已切换纯文本可读模式：$reason", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "分页失败，已切换连续阅读：$reason", Toast.LENGTH_LONG).show()
     }
 
-    private fun updateCurrentPageFromViewport() {
-        val pages = readerBook?.pages ?: return
-        if (pages.isEmpty()) return
-        val position = if (pageTurnMode == TURN_MODE_VERTICAL) {
-            val first = layoutManager.findFirstVisibleItemPosition().coerceAtLeast(0)
-            val candidates = listOf(first, first + 1).filter { it in pages.indices }
-            candidates.minByOrNull { index ->
-                kotlin.math.abs(layoutManager.findViewByPosition(index)?.top ?: Int.MAX_VALUE)
-            } ?: first
-        } else {
-            val snap = snapHelper?.findSnapView(layoutManager)
-            if (snap != null) layoutManager.getPosition(snap) else layoutManager.findFirstVisibleItemPosition()
-        }
-        setCurrentPage(position.coerceIn(0, pages.lastIndex))
-    }
-
-    private fun setCurrentPage(index: Int) {
-        val pages = readerBook?.pages ?: return
-        currentPageIndex = index.coerceIn(0, pages.lastIndex)
-        val page = pages[currentPageIndex]
-        progressLabel.text = pageCountLabel()
-        progressSeekBar.progress = if (pages.size <= 1) 0 else ((currentPageIndex * 1000f) / (pages.size - 1)).toInt()
-    }
-
-    private fun jumpToPage(index: Int, animate: Boolean, highlight: SearchPageHit? = null) {
-        val pages = readerBook?.pages ?: return
-        if (pages.isEmpty()) return
-        val target = index.coerceIn(0, pages.lastIndex)
-        if (animate && target != currentPageIndex) {
-            animatePageChange(target, if (target > currentPageIndex) 1 else -1, highlight)
-            return
-        }
-        applyPagePosition(target, highlight)
-    }
-
-    private fun applyPagePosition(target: Int, highlight: SearchPageHit? = null) {
-        suppressScrollCallback = true
-        layoutManager.scrollToPositionWithOffset(target, 0)
-        setCurrentPage(target)
-        highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
-            ?: pageAdapter?.clearHighlight()
-        pageList.postDelayed({
-            suppressScrollCallback = false
-            updateCurrentPageFromViewport()
-        }, 120L)
-    }
-
-    private fun animatePageChange(target: Int, direction: Int, highlight: SearchPageHit?) {
-        if (pageAnimationRunning) return
-        pageAnimationRunning = true
-        suppressScrollCallback = true
-        pageList.animate().cancel()
-        resetPageTransform()
-        val width = pageList.width.coerceAtLeast(1).toFloat()
-
-        fun switchPage() {
-            layoutManager.scrollToPositionWithOffset(target, 0)
-            setCurrentPage(target)
-            highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
-                ?: pageAdapter?.clearHighlight()
-        }
-        fun finish() {
-            resetPageTransform()
-            pageAnimationRunning = false
-            suppressScrollCallback = false
-            updateCurrentPageFromViewport()
-        }
-
-        when (pageTurnMode) {
-            TURN_MODE_VERTICAL -> {
-                pageList.smoothScrollToPosition(target)
-                setCurrentPage(target)
-                pageList.postDelayed({ finish() }, 220L)
-            }
-            TURN_MODE_HORIZONTAL -> {
-                pageList.smoothScrollToPosition(target)
-                setCurrentPage(target)
-                highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
-                    ?: pageAdapter?.clearHighlight()
-                pageList.postDelayed({ finish() }, 240L)
-            }
-            TURN_MODE_SIMULATE -> {
-                pageList.cameraDistance = width * 9f
-                pageList.pivotX = if (direction > 0) 0f else width
-                pageList.animate()
-                    .rotationY(-direction * 17f)
-                    .alpha(0.62f)
-                    .setDuration(125L)
-                    .withEndAction {
-                        switchPage()
-                        pageList.rotationY = direction * 17f
-                        pageList.alpha = 0.62f
-                        pageList.animate()
-                            .rotationY(0f)
-                            .alpha(1f)
-                            .setDuration(165L)
-                            .withEndAction { finish() }
-                            .start()
-                    }
-                    .start()
-            }
-            TURN_MODE_FADE -> {
-                pageList.animate()
-                    .alpha(0f)
-                    .setDuration(95L)
-                    .withEndAction {
-                        switchPage()
-                        pageList.animate().alpha(1f).setDuration(135L).withEndAction { finish() }.start()
-                    }
-                    .start()
-            }
-            else -> {
-                pageList.animate()
-                    .translationX(-direction * width * 0.10f)
-                    .alpha(0.82f)
-                    .setDuration(105L)
-                    .withEndAction {
-                        switchPage()
-                        pageList.translationX = direction * width * 0.045f
-                        pageList.alpha = 0.92f
-                        pageList.animate()
-                            .translationX(0f)
-                            .alpha(1f)
-                            .setDuration(135L)
-                            .withEndAction { finish() }
-                            .start()
-                    }
-                    .start()
-            }
+    private fun updateContinuousPosition(scrollY: Int) {
+        val layout = continuousTextView.layout ?: return
+        if (layout.lineCount <= 0) return
+        val localY = (scrollY - continuousTextView.top).coerceAtLeast(0)
+        val line = layout.getLineForVertical(localY.coerceAtMost(layout.height))
+        val offset = layout.getLineStart(line).coerceAtLeast(0)
+        readerBook?.let {
+            currentPageIndex = it.pageForOffset(offset).globalPageIndex
+            updateProgressUi()
         }
     }
 
-    private fun resetPageTransform() {
-        pageList.translationX = 0f
-        pageList.translationY = 0f
-        pageList.rotationY = 0f
-        pageList.alpha = 1f
-        pageList.pivotX = pageList.width / 2f
+    private fun scrollContinuousToOffset(offset: Int) {
+        continuousTextView.post {
+            val layout = continuousTextView.layout ?: return@post
+            val safe = offset.coerceIn(0, continuousTextView.text.length)
+            val line = layout.getLineForOffset(safe)
+            suppressContinuousScroll = true
+            readerScrollView.scrollTo(0, layout.getLineTop(line).coerceAtLeast(0))
+            readerScrollView.post { suppressContinuousScroll = false }
+        }
     }
 
     private fun turnPage(direction: Int) {
+        clearSearchHighlight()
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            readerScrollView.smoothScrollBy(0, direction * readerScrollView.height.coerceAtLeast(1))
+        } else {
+            pagedReaderView.turn(direction)
+        }
+    }
+
+    private fun jumpToPage(index: Int, animated: Boolean, hit: SearchPageHit? = null) {
         val pages = readerBook?.pages ?: return
-        val target = (currentPageIndex + direction).coerceIn(0, pages.lastIndex)
-        if (target != currentPageIndex) animatePageChange(target, direction, null)
+        if (pages.isEmpty()) return
+        activeSearchHit = hit
+        currentPageIndex = index.coerceIn(0, pages.lastIndex)
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            applyContinuousHighlight()
+            scrollContinuousToOffset(pages[currentPageIndex].startOffset)
+        } else {
+            pagedReaderView.cancelNavigation()
+            bindHorizontalPages()
+        }
+        updateProgressUi()
+        if (!animated) saveProgress()
     }
 
     private fun jumpChapter(direction: Int) {
         val paged = readerBook ?: return
-        val page = paged.pages.getOrNull(currentPageIndex) ?: return
-        val targetChapter = (page.chapterIndex + direction).coerceIn(0, paged.chapters.lastIndex)
-        jumpToPage(paged.firstPageOfChapter(targetChapter), false)
+        val current = paged.pages.getOrNull(currentPageIndex) ?: return
+        val targetChapter = (current.chapterIndex + direction).coerceIn(0, paged.chapters.lastIndex)
+        val targetPage = paged.firstPageOfChapter(targetChapter)
+        jumpToPage(targetPage, false)
     }
 
-    private fun showCatalogBookmarks(startWithBookmarks: Boolean = false) {
+    private fun showCatalogBookmarkPanelV600(showBookmarksFirst: Boolean = false) {
         val paged = readerBook ?: return
         lifecycleScope.launch {
-            val bookmarks = withContext(Dispatchers.IO) { database.bookmarkDao().getBookmarks(bookId).first() }
-            val catalog = paged.chapters.mapIndexedNotNull { index, chapter ->
-                if (!chapter.catalogVisible) return@mapIndexedNotNull null
-                val pageIndex = paged.firstPageOfChapter(index)
-                CatalogPageRow(chapter.title, index, pageIndex, "${pageIndex + 1}/${paged.pages.size}")
+            var bookmarks = withContext(Dispatchers.IO) { database.bookmarkDao().getBookmarks(bookId).first() }
+            var showingCatalog = !showBookmarksFirst
+            val container = LinearLayout(this@ReaderActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(8), dp(12), dp(8))
             }
-            val bookmarkRows = bookmarks.map { bookmark ->
-                val pageIndex = resolveBookmarkPage(bookmark, paged)
-                BookmarkPageRow(bookmark, "${pageIndex + 1}/${paged.pages.size}")
+            val tabs = LinearLayout(this@ReaderActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            val catalogButton = buttonLikeText("目录")
+            val bookmarkButton = buttonLikeText("书签")
+            tabs.addView(catalogButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            tabs.addView(bookmarkButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val listView = ListView(this@ReaderActivity)
+            container.addView(tabs)
+            container.addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            var dialog: AlertDialog? = null
+
+            fun adapter(labels: List<CharSequence>, highlighted: Int = -1, maxLines: Int = 2) =
+                object : ArrayAdapter<CharSequence>(this@ReaderActivity, android.R.layout.simple_list_item_1, labels) {
+                    override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                        return super.getView(position, convertView, parent).also { view ->
+                            (view as? TextView)?.apply {
+                                this.maxLines = maxLines
+                                ellipsize = TextUtils.TruncateAt.END
+                                textSize = 15f
+                                setTypeface(Typeface.DEFAULT, Typeface.NORMAL)
+                                setTextColor(if (position == highlighted) Color.rgb(230, 112, 42) else Color.rgb(42, 39, 31))
+                            }
+                        }
+                    }
+                }
+
+            fun render() {
+                catalogButton.isEnabled = !showingCatalog
+                bookmarkButton.isEnabled = showingCatalog
+                if (showingCatalog) {
+                    val visible = paged.chapters.mapIndexedNotNull { index, chapter ->
+                        chapter.takeIf { it.catalogVisible }?.let { index to it }
+                    }
+                    val currentChapter = paged.pages.getOrNull(currentPageIndex)?.chapterIndex ?: 0
+                    val highlighted = visible.indexOfFirst { it.first == currentChapter }
+                    val labels = visible.mapIndexed { rowIndex, (chapterIndex, chapter) ->
+                        val page = paged.firstPageOfChapter(chapterIndex)
+                        val label = "${rowIndex + 1}. ${chapter.title}\n第 ${page + 1}/${paged.pages.size} 页"
+                        if (chapterIndex != currentChapter) label else SpannableString(label).apply {
+                            val end = label.indexOf('\n').let { if (it < 0) label.length else it }
+                            setSpan(StyleSpan(Typeface.BOLD), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            setSpan(RelativeSizeSpan(1.18f), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                    }.ifEmpty { listOf("暂无目录") }
+                    listView.adapter = adapter(labels, highlighted)
+                    if (highlighted >= 0) listView.post { listView.setSelection(highlighted) }
+                    listView.setOnItemClickListener { _, _, which, _ ->
+                        visible.getOrNull(which)?.let { (chapterIndex, _) ->
+                            dialog?.dismiss()
+                            jumpToPage(paged.firstPageOfChapter(chapterIndex), false)
+                        }
+                    }
+                    listView.setOnItemLongClickListener(null)
+                } else {
+                    val labels = bookmarks.map { bookmark ->
+                        val page = resolveBookmarkPage(bookmark, paged)
+                        "${bookmark.content.ifBlank { "书签" }}\n第 ${page + 1}/${paged.pages.size} 页"
+                    }.ifEmpty { listOf("暂无书签") }
+                    listView.adapter = adapter(labels, maxLines = 3)
+                    listView.setOnItemClickListener { _, _, which, _ ->
+                        bookmarks.getOrNull(which)?.let {
+                            dialog?.dismiss()
+                            jumpToPage(resolveBookmarkPage(it, paged), false)
+                        }
+                    }
+                    listView.setOnItemLongClickListener { _, _, which, _ ->
+                        bookmarks.getOrNull(which)?.let { bookmark ->
+                            confirmDeleteBookmark(bookmark) {
+                                bookmarks = bookmarks.filterNot { it.id == bookmark.id }
+                                render()
+                            }
+                        }
+                        true
+                    }
+                }
             }
-            ReaderCatalogSheet.show(
-                activity = this@ReaderActivity,
-                catalog = catalog,
-                bookmarks = bookmarkRows,
-                startWithBookmarks = startWithBookmarks,
-                onCatalog = { jumpToPage(it.globalPageIndex, false) },
-                onBookmark = { jumpToPage(resolveBookmarkPage(it.bookmark, paged), false) },
-                onDeleteBookmark = { row -> confirmDeleteBookmark(row.bookmark) }
-            )
+
+            catalogButton.setOnClickListener { showingCatalog = true; render() }
+            bookmarkButton.setOnClickListener { showingCatalog = false; render() }
+            render()
+            dialog = AlertDialog.Builder(this@ReaderActivity)
+                .setTitle(if (showingCatalog) "目录" else "书签")
+                .setView(container)
+                .create()
+            dialog.setCanceledOnTouchOutside(true)
+            dialog.show()
+            dialog.window?.let { window ->
+                window.setBackgroundDrawable(ColorDrawable(Color.rgb(250, 246, 232)))
+                window.setGravity(Gravity.START or Gravity.CENTER_VERTICAL)
+                window.setLayout((resources.displayMetrics.widthPixels * 0.72f).toInt(), WindowManager.LayoutParams.MATCH_PARENT)
+            }
         }
+    }
+
+    private fun buttonLikeText(label: String): TextView = TextView(this).apply {
+        text = label
+        gravity = Gravity.CENTER
+        textSize = 18f
+        setPadding(0, dp(16), 0, dp(16))
     }
 
     private fun resolveBookmarkPage(bookmark: Bookmark, paged: ReaderBook): Int = when {
@@ -622,10 +648,8 @@ class ReaderActivity : AppCompatActivity() {
     private fun addBookmark() {
         val paged = readerBook ?: return
         val page = paged.pages.getOrNull(currentPageIndex) ?: return
-        val preview = paged.text.substring(
-            page.startOffset.coerceIn(0, paged.text.length),
-            page.endOffset.coerceIn(page.startOffset.coerceAtMost(paged.text.length), paged.text.length)
-        ).replace(Regex("\\s+"), " ").trim().take(180)
+        val preview = paged.text.substring(page.startOffset, page.endOffset)
+            .replace(Regex("\\s+"), " ").trim().take(180)
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 database.bookmarkDao().insert(
@@ -644,23 +668,22 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun showContentSearch() = showSearch()
-
-    private fun showSearch() {
+    private fun showContentSearch() {
         val paged = readerBook ?: return
         ReaderSearchSheet.show(
-            activity = this,
-            initialKeyword = searchKeyword,
-            initialHits = searchHits,
+            this,
+            searchKeyword,
+            searchHits,
             onSearch = { keyword, callback ->
                 searchKeyword = keyword
                 lifecycleScope.launch {
-                    val result = withContext(Dispatchers.Default) { findAllHits(paged, keyword) }
-                    searchHits = result
-                    callback(result)
+                    searchHits = withContext(Dispatchers.Default) { findAllHits(paged, keyword) }
+                    callback(searchHits)
                 }
             },
-            onHit = { hit -> jumpToPage(hit.globalPageIndex, false, hit) }
+            onHit = { hit -> jumpToPage(hit.globalPageIndex, false, hit) },
+            backgroundDrawable = activeBackgroundDrawable(),
+            textColor = activePalette().textColor
         )
     }
 
@@ -673,39 +696,53 @@ class ReaderActivity : AppCompatActivity() {
             if (index < 0) break
             val end = (index + keyword.length).coerceAtMost(paged.text.length)
             val page = paged.pageForOffset(index)
-            val previewStart = (index - 36).coerceAtLeast(0)
-            val previewEnd = (end + 72).coerceAtMost(paged.text.length)
             output += SearchPageHit(
-                keyword = keyword,
-                chapterIndex = page.chapterIndex,
-                globalPageIndex = page.globalPageIndex,
-                startOffset = index,
-                endOffset = end,
-                previewText = paged.text.substring(previewStart, previewEnd).replace(Regex("\\s+"), " ").trim(),
-                pageLabel = "${page.globalPageIndex + 1}/${page.totalPageCount}"
+                keyword,
+                page.chapterIndex,
+                page.globalPageIndex,
+                index,
+                end,
+                paged.text.substring((index - 36).coerceAtLeast(0), (end + 72).coerceAtMost(paged.text.length))
+                    .replace(Regex("\\s+"), " ").trim(),
+                "${page.globalPageIndex + 1}/${page.totalPageCount}"
             )
             cursor = end.coerceAtLeast(index + 1)
         }
         return output
     }
 
-    private fun pageCountLabel(): String {
-        val page = readerBook?.pages?.getOrNull(currentPageIndex) ?: return "1/1"
-        val currentPage = page.globalPageIndex + 1
-        val totalPages = page.totalPageCount
-        return "$currentPage/$totalPages"
+    private fun applyContinuousHighlight() {
+        val text = continuousTextView.text as? Spannable ?: return
+        continuousHighlightSpan?.let { text.removeSpan(it) }
+        continuousHighlightSpan = null
+        val hit = activeSearchHit ?: return
+        val start = hit.startOffset.coerceIn(0, text.length)
+        val end = hit.endOffset.coerceIn(start, text.length)
+        if (end > start) {
+            val span = BackgroundColorSpan(Color.rgb(255, 226, 105))
+            text.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            continuousHighlightSpan = span
+        }
     }
 
-    private fun confirmDeleteBookmark(bookmark: Bookmark) {
+    private fun clearSearchHighlight() {
+        if (activeSearchHit == null && continuousHighlightSpan == null) return
+        activeSearchHit = null
+        val text = continuousTextView.text as? Spannable
+        continuousHighlightSpan?.let { text?.removeSpan(it) }
+        continuousHighlightSpan = null
+    }
+
+    private fun confirmDeleteBookmark(bookmark: Bookmark, onDeleted: () -> Unit = {}) {
         AlertDialog.Builder(this)
             .setTitle("删除书签")
-            .setMessage("确定删除这个书签吗？")
+            .setMessage(bookmark.content.ifBlank { "位置 ${bookmark.position}" })
             .setNegativeButton("取消", null)
             .setPositiveButton("删除") { _, _ ->
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) { database.bookmarkDao().delete(bookmark) }
-                    Toast.makeText(this@ReaderActivity, "书签已删除", Toast.LENGTH_SHORT).show()
-                    showCatalogBookmarks(startWithBookmarks = true)
+                    onDeleted()
+                    Toast.makeText(this@ReaderActivity, "已删除书签", Toast.LENGTH_SHORT).show()
                 }
             }
             .show()
@@ -719,7 +756,7 @@ class ReaderActivity : AppCompatActivity() {
                 ReadProgress(
                     bookId = bookId,
                     position = page.startOffset.toString(),
-                    locatorType = "PAGE_ENGINE_V2",
+                    locatorType = "PAGE_ENGINE_V3",
                     txtCharOffset = page.startOffset,
                     txtTotalLength = paged.text.length,
                     epubSpineIndex = page.chapterIndex,
@@ -745,24 +782,74 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun setTurnMode(mode: String) {
         if (pageTurnMode == mode) return
+        val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
         pageTurnMode = mode
         savePreferences()
-        configureLayoutManager()
-        pageList.adapter = pageAdapter
-        jumpToPage(currentPageIndex, false)
         updateSettingsLabels()
+        if (readerBook != null) {
+            if (mode == TURN_MODE_VERTICAL) showContinuousBook(offset) else showHorizontalBook()
+        }
     }
 
-    private fun applyPalette(rebuildPages: Boolean) {
-        val palette = ReaderAppearance.palette(this)
-        pageList.background = ReaderSurfaceDrawable(palette.backgroundColor)
-        fallbackTextView.background = ReaderSurfaceDrawable(palette.backgroundColor)
-        fallbackTextView.setTextColor(palette.textColor)
-        (readerScrollView.parent as? View)?.background = ReaderSurfaceDrawable(palette.backgroundColor)
+    private fun selectQuickColor(colorId: String) {
+        backgroundColorId = colorId
+        ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+        savePreferences()
+        applyReaderAppearance(rebindPages = true)
+    }
+
+    private fun currentBackgroundSelection() = ReaderBackgrounds.validated(
+        ReaderBackgrounds.Selection(backgroundColorId, backgroundTextureId, backgroundMaterialId)
+    )
+
+    private fun activePalette(): ReaderAppearance.Palette = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
+        ReaderAppearance.palette(this)
+    } else {
+        val color = ReaderBackgrounds.color(backgroundColorId)
+        ReaderAppearance.Palette(color.backgroundColor, color.textColor)
+    }
+
+    private fun activeBackgroundDrawable() = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
+        ReaderBackgrounds.nightDrawable(this)
+    } else {
+        ReaderBackgrounds.drawable(this, currentBackgroundSelection())
+    }
+
+    private fun applyReaderAppearance(rebindPages: Boolean) {
+        val palette = activePalette()
+        readerScrollView.background = activeBackgroundDrawable()
+        continuousTextView.setTextColor(palette.textColor)
+        continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
+        findViewById<View>(android.R.id.content).background = activeBackgroundDrawable()
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
-        if (readerBook != null) showPagedBook(currentPageIndex)
-        if (rebuildPages) paginateAndDisplay(readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset)
+        findViewById<TextView>(R.id.themeNightButton).text = if (night) "☀" else "☾"
+        updateThemePreviews()
+        if (rebindPages && readerBook != null) {
+            if (pageTurnMode == TURN_MODE_VERTICAL) showContinuousBook() else showHorizontalBook()
+        }
+    }
+
+    private fun updateThemePreviews() {
+        mapOf(
+            R.id.themePaperButton to "solid_ivory",
+            R.id.themeEyeButton to "solid_eye",
+            R.id.themeWhiteButton to "solid_white"
+        ).forEach { (id, colorId) ->
+            findViewById<TextView>(id).background = ReaderBackgrounds.previewDrawable(
+                this,
+                currentBackgroundSelection().copy(colorId = colorId),
+                backgroundColorId == colorId && ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_DAY
+            )
+        }
+    }
+
+    private fun updateProgressUi() {
+        val pages = readerBook?.pages.orEmpty()
+        if (pages.isEmpty()) return
+        currentPageIndex = currentPageIndex.coerceIn(0, pages.lastIndex)
+        progressLabel.text = "${currentPageIndex + 1}/${pages.size}"
+        progressSeekBar.progress = if (pages.size <= 1) 0 else ((currentPageIndex.toFloat() / (pages.size - 1)) * 1000).toInt()
     }
 
     private fun setReaderChromeVisible(visible: Boolean) {
@@ -778,6 +865,13 @@ class ReaderActivity : AppCompatActivity() {
         readerTextSizeSp = prefs.getFloat(PREF_TEXT_SIZE, ReaderAppearance.textSize(this))
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
+        backgroundColorId = prefs.getString(PREF_BACKGROUND_COLOR, ReaderBackgrounds.DEFAULT_COLOR_ID) ?: ReaderBackgrounds.DEFAULT_COLOR_ID
+        backgroundTextureId = prefs.getString(PREF_BACKGROUND_TEXTURE, ReaderBackgrounds.DEFAULT_TEXTURE_ID) ?: ReaderBackgrounds.DEFAULT_TEXTURE_ID
+        backgroundMaterialId = prefs.getString(PREF_BACKGROUND_MATERIAL, ReaderBackgrounds.DEFAULT_MATERIAL_ID) ?: ReaderBackgrounds.DEFAULT_MATERIAL_ID
+        val safe = currentBackgroundSelection()
+        backgroundColorId = safe.colorId
+        backgroundTextureId = safe.textureId
+        backgroundMaterialId = safe.materialId
     }
 
     private fun savePreferences() {
@@ -785,6 +879,9 @@ class ReaderActivity : AppCompatActivity() {
             .putFloat(PREF_TEXT_SIZE, readerTextSizeSp)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+            .putString(PREF_BACKGROUND_COLOR, backgroundColorId)
+            .putString(PREF_BACKGROUND_TEXTURE, backgroundTextureId)
+            .putString(PREF_BACKGROUND_MATERIAL, backgroundMaterialId)
             .apply()
     }
 
@@ -800,8 +897,7 @@ class ReaderActivity : AppCompatActivity() {
         ).forEach { (id, mode) -> findViewById<TextView>(id).alpha = if (pageTurnMode == mode) 1f else 0.62f }
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun showFatal(message: String) {
         AlertDialog.Builder(this)
@@ -817,6 +913,9 @@ class ReaderActivity : AppCompatActivity() {
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key_turn"
+        private const val PREF_BACKGROUND_COLOR = "reader_background_color_id"
+        private const val PREF_BACKGROUND_TEXTURE = "reader_background_texture_id"
+        private const val PREF_BACKGROUND_MATERIAL = "reader_background_material_id"
         private const val TURN_MODE_OVERLAP = "overlap"
         private const val TURN_MODE_SIMULATE = "simulate"
         private const val TURN_MODE_HORIZONTAL = "horizontal"

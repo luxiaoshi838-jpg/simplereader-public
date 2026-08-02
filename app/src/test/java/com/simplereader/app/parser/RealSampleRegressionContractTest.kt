@@ -26,7 +26,7 @@ class RealSampleRegressionContractTest {
     fun `structured reading uses one global real page sequence`() {
         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
         val engine = File("src/main/java/com/simplereader/app/reader/page/PageEngine.kt").readText()
-        assertTrue(reader.contains("ReaderPageAdapter"))
+        assertTrue(reader.contains("PagedReaderView"))
         assertTrue(reader.contains("TURN_MODE_VERTICAL"))
         assertTrue(engine.contains("data class ReaderPage("))
         assertTrue(engine.contains("StaticLayout.Builder"))

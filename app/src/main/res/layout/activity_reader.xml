@@ -4,6 +4,12 @@
     android:layout_height="match_parent"
     android:background="#F5E9C8">
 
+    <com.simplereader.app.ui.PagedReaderView
+        android:id="@+id/pagedReaderView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <androidx.core.widget.NestedScrollView
         android:id="@+id/readerScrollView"
         android:layout_width="match_parent"
@@ -13,7 +19,7 @@
         android:fillViewport="true"
         android:focusable="true"
         android:overScrollMode="ifContentScrolls"
-        android:scrollbars="vertical"
+        android:scrollbars="none"
         >
 
         <TextView
@@ -24,7 +30,7 @@
             android:paddingStart="28dp"
             android:paddingTop="26dp"
             android:paddingEnd="28dp"
-            android:paddingBottom="26dp"
+            android:paddingBottom="0dp"
             android:textColor="#3B3428"
             android:textSize="20sp" />
     </androidx.core.widget.NestedScrollView>
@@ -176,30 +182,45 @@
 
                 <TextView
                     android:id="@+id/themePaperButton"
-                    android:layout_width="54dp"
+                    android:layout_width="44dp"
                     android:layout_height="32dp"
                     android:layout_marginEnd="12dp"
                     android:background="#F5E9C8" />
 
                 <TextView
                     android:id="@+id/themeEyeButton"
-                    android:layout_width="54dp"
+                    android:layout_width="44dp"
                     android:layout_height="32dp"
                     android:layout_marginEnd="12dp"
                     android:background="#DAEECD" />
 
                 <TextView
                     android:id="@+id/themeWhiteButton"
-                    android:layout_width="54dp"
+                    android:layout_width="44dp"
                     android:layout_height="32dp"
                     android:layout_marginEnd="12dp"
                     android:background="#FFFFFF" />
 
                 <TextView
                     android:id="@+id/themeNightButton"
-                    android:layout_width="54dp"
+                    android:layout_width="44dp"
                     android:layout_height="32dp"
-                    android:background="#000000" />
+                    android:layout_marginEnd="8dp"
+                    android:background="#000000"
+                    android:gravity="center"
+                    android:text="☾"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp" />
+
+                <TextView
+                    android:id="@+id/themeMoreButton"
+                    android:layout_width="56dp"
+                    android:layout_height="34dp"
+                    android:background="#4A4842"
+                    android:gravity="center"
+                    android:text="更多"
+                    android:textColor="#EEE9DD"
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <HorizontalScrollView
