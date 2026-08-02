@@ -92,7 +92,10 @@ object ReaderPanels {
                     }
                 }
                 list.setOnItemLongClickListener { _, _, position, _ ->
-                    bookmarks.getOrNull(position)?.let(onDeleteBookmark)
+                    bookmarks.getOrNull(position)?.let {
+                        dialog.dismiss()
+                        onDeleteBookmark(it)
+                    }
                     true
                 }
             } else {

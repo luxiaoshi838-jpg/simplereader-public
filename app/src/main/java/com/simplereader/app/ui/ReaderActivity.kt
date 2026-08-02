@@ -3,6 +3,7 @@ package com.simplereader.app.ui
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.Gravity
@@ -78,11 +79,18 @@ class ReaderActivity : AppCompatActivity() {
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
                 val width = pageList.width.coerceAtLeast(1)
+                val height = pageList.height.coerceAtLeast(1)
+                val centerLeft = width / 4f
+                val centerRight = width * 3f / 4f
+                val centerTop = height / 4f
+                val centerBottom = height * 3f / 4f
+                val centerTap = e.x in centerLeft..centerRight && e.y in centerTop..centerBottom
                 return when {
-                    chromeVisible -> {
-                        setChromeVisible(false)
+                    centerTap -> {
+                        setReaderChromeVisible(!chromeVisible)
                         true
                     }
+                    chromeVisible -> true
                     e.x < width * 0.28f -> {
                         turnPage(-1)
                         true
@@ -91,10 +99,7 @@ class ReaderActivity : AppCompatActivity() {
                         turnPage(1)
                         true
                     }
-                    else -> {
-                        setChromeVisible(true)
-                        true
-                    }
+                    else -> false
                 }
             }
         })
@@ -137,14 +142,28 @@ class ReaderActivity : AppCompatActivity() {
         menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
             .setIcon(android.R.drawable.ic_menu_search)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
-            .setIcon(android.R.drawable.ic_menu_add)
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
+        addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        addItem.actionView = TextView(this).apply {
+            text = "添"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            contentDescription = "添加书签"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(239, 122, 40))
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(8)
+            }
+            setOnClickListener { addBookmark() }
+        }
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        MENU_SEARCH -> { showSearch(); true }
+        MENU_SEARCH -> { showContentSearch(); true }
         MENU_ADD_BOOKMARK -> { addBookmark(); true }
         else -> super.onOptionsItemSelected(item)
     }
@@ -283,6 +302,9 @@ class ReaderActivity : AppCompatActivity() {
                 book = selected
                 title = selected.title
                 supportActionBar?.title = selected.title
+                if (selected.format.equals("CHM", ignoreCase = true)) {
+                    error("当前版本已停止支持 CHM：请改用 TXT 或 EPUB")
+                }
                 val loaded = withContext(Dispatchers.IO) { ReaderDocumentLoader.load(this@ReaderActivity, selected) }
                 document = loaded
                 imageRepository = ReaderImageRepository(this@ReaderActivity, selected.id)
@@ -432,7 +454,7 @@ class ReaderActivity : AppCompatActivity() {
         val pages = readerBook?.pages ?: return
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         val page = pages[currentPageIndex]
-        progressLabel.text = "${page.globalPageIndex + 1}/${page.totalPageCount}"
+        progressLabel.text = pageCountLabel()
         progressSeekBar.progress = if (pages.size <= 1) 0 else ((currentPageIndex * 1000f) / (pages.size - 1)).toInt()
     }
 
@@ -484,10 +506,7 @@ class ReaderActivity : AppCompatActivity() {
                 onCatalog = { jumpToPage(it.globalPageIndex, false) },
                 onBookmark = { jumpToPage(resolveBookmarkPage(it.bookmark, paged), false) },
                 onAddBookmark = ::addBookmark,
-                onDeleteBookmark = { row ->
-                    lifecycleScope.launch(Dispatchers.IO) { database.bookmarkDao().delete(row.bookmark) }
-                    Toast.makeText(this@ReaderActivity, "书签已删除", Toast.LENGTH_SHORT).show()
-                }
+                onDeleteBookmark = { row -> confirmDeleteBookmark(row.bookmark) }
             )
         }
     }
@@ -522,6 +541,8 @@ class ReaderActivity : AppCompatActivity() {
             Toast.makeText(this@ReaderActivity, "书签已添加 ${page.globalPageIndex + 1}/${page.totalPageCount}", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun showContentSearch() = showSearch()
 
     private fun showSearch() {
         val paged = readerBook ?: return
@@ -564,6 +585,28 @@ class ReaderActivity : AppCompatActivity() {
             cursor = end.coerceAtLeast(index + 1)
         }
         return output
+    }
+
+    private fun pageCountLabel(): String {
+        val page = readerBook?.pages?.getOrNull(currentPageIndex) ?: return "1/1"
+        val currentPage = page.globalPageIndex + 1
+        val totalPages = page.totalPageCount
+        return "$currentPage/$totalPages"
+    }
+
+    private fun confirmDeleteBookmark(bookmark: Bookmark) {
+        AlertDialog.Builder(this)
+            .setTitle("删除书签")
+            .setMessage("确定删除这个书签吗？")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除") { _, _ ->
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { database.bookmarkDao().delete(bookmark) }
+                    Toast.makeText(this@ReaderActivity, "书签已删除", Toast.LENGTH_SHORT).show()
+                    showCatalogBookmarks(startWithBookmarks = true)
+                }
+            }
+            .show()
     }
 
     private fun saveProgress() {
@@ -613,13 +656,14 @@ class ReaderActivity : AppCompatActivity() {
         pageList.setBackgroundColor(palette.backgroundColor)
         fallbackTextView.setBackgroundColor(palette.backgroundColor)
         fallbackTextView.setTextColor(palette.textColor)
-        findViewById<FrameLayout>(readerScrollView.parent.id)?.setBackgroundColor(palette.backgroundColor)
-        findViewById<TextView>(R.id.nightButton).text = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) "☀" else "☾"
+        (readerScrollView.parent as? View)?.setBackgroundColor(palette.backgroundColor)
+        val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
+        findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
         if (readerBook != null) showPagedBook(currentPageIndex)
         if (rebuildPages) paginateAndDisplay(readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset)
     }
 
-    private fun setChromeVisible(visible: Boolean) {
+    private fun setReaderChromeVisible(visible: Boolean) {
         chromeVisible = visible
         readerControls.visibility = if (visible) View.VISIBLE else View.GONE
         progressLabel.visibility = if (visible) View.GONE else View.VISIBLE
@@ -653,6 +697,9 @@ class ReaderActivity : AppCompatActivity() {
             R.id.turnModeFadeButton to TURN_MODE_FADE
         ).forEach { (id, mode) -> findViewById<TextView>(id).alpha = if (pageTurnMode == mode) 1f else 0.62f }
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun showFatal(message: String) {
         AlertDialog.Builder(this)
