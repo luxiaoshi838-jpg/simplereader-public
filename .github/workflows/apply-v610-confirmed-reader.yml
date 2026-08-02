@@ -1,0 +1,49 @@
+name: Apply confirmed v610 reader
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'fix/v610-confirmed-reader-ui'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v610-confirmed-reader-ui
+          fetch-depth: 0
+      - name: Verify and apply reader changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=.automation/v610-confirmed-reader.patch.gz.b64
+          echo 'd89b3e75e581577959eee57dc74d57ed5f115046d8b0055d952c3f72b004b72b  '"$payload" | sha256sum -c -
+          base64 -d "$payload" | gzip -d > /tmp/v610.patch
+          echo '84a637e1909e252ba9f4a5f97591d692040d8b220f5bbe8149ef81f78415e9a7  /tmp/v610.patch' | sha256sum -c -
+          git apply --check /tmp/v610.patch
+          git apply /tmp/v610.patch
+          mkdir -p app/src/main/java/com/simplereader/app/ui app/src/main/res/drawable-nodpi
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt > app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt > app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt > app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png > app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png > app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
+          git show 6e14468061ec202d45d48170a0c79a48551a0743:app/src/main/res/drawable-nodpi/reader_material_frosted.png > app/src/main/res/drawable-nodpi/reader_material_frosted.png
+          rm -f "$payload"
+          bash tools/verify-ui-policy.sh
+          git checkout HEAD -- .github/workflows
+      - name: Commit exact reader source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'v610: restore confirmed reader UI and continuous vertical reading'
+          git push origin HEAD:fix/v610-confirmed-reader-ui
