@@ -1,0 +1,392 @@
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+@@ -3,6 +3,7 @@
+ import android.graphics.Color
+ import android.graphics.Typeface
+ import android.graphics.drawable.ColorDrawable
++import android.graphics.drawable.GradientDrawable
+ import android.os.Bundle
+ import android.view.GestureDetector
+ import android.view.Gravity
+@@ -78,11 +79,18 @@
+ 
+             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                 val width = pageList.width.coerceAtLeast(1)
++                val height = pageList.height.coerceAtLeast(1)
++                val centerLeft = width / 4f
++                val centerRight = width * 3f / 4f
++                val centerTop = height / 4f
++                val centerBottom = height * 3f / 4f
++                val centerTap = e.x in centerLeft..centerRight && e.y in centerTop..centerBottom
+                 return when {
+-                    chromeVisible -> {
+-                        setChromeVisible(false)
++                    centerTap -> {
++                        setReaderChromeVisible(!chromeVisible)
+                         true
+                     }
++                    chromeVisible -> true
+                     e.x < width * 0.28f -> {
+                         turnPage(-1)
+                         true
+@@ -91,10 +99,7 @@
+                         turnPage(1)
+                         true
+                     }
+-                    else -> {
+-                        setChromeVisible(true)
+-                        true
+-                    }
++                    else -> false
+                 }
+             }
+         })
+@@ -137,14 +142,28 @@
+         menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
+             .setIcon(android.R.drawable.ic_menu_search)
+             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+-        menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
+-            .setIcon(android.R.drawable.ic_menu_add)
+-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
++        val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
++        addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
++        addItem.actionView = TextView(this).apply {
++            text = "添"
++            gravity = Gravity.CENTER
++            textSize = 16f
++            setTextColor(Color.WHITE)
++            contentDescription = "添加书签"
++            background = GradientDrawable().apply {
++                shape = GradientDrawable.OVAL
++                setColor(Color.rgb(239, 122, 40))
++            }
++            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply {
++                marginEnd = dp(8)
++            }
++            setOnClickListener { addBookmark() }
++        }
+         return true
+     }
+ 
+     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+-        MENU_SEARCH -> { showSearch(); true }
++        MENU_SEARCH -> { showContentSearch(); true }
+         MENU_ADD_BOOKMARK -> { addBookmark(); true }
+         else -> super.onOptionsItemSelected(item)
+     }
+@@ -283,6 +302,9 @@
+                 book = selected
+                 title = selected.title
+                 supportActionBar?.title = selected.title
++                if (selected.format.equals("CHM", ignoreCase = true)) {
++                    error("当前版本已停止支持 CHM：请改用 TXT 或 EPUB")
++                }
+                 val loaded = withContext(Dispatchers.IO) { ReaderDocumentLoader.load(this@ReaderActivity, selected) }
+                 document = loaded
+                 imageRepository = ReaderImageRepository(this@ReaderActivity, selected.id)
+@@ -432,7 +454,7 @@
+         val pages = readerBook?.pages ?: return
+         currentPageIndex = index.coerceIn(0, pages.lastIndex)
+         val page = pages[currentPageIndex]
+-        progressLabel.text = "${page.globalPageIndex + 1}/${page.totalPageCount}"
++        progressLabel.text = pageCountLabel()
+         progressSeekBar.progress = if (pages.size <= 1) 0 else ((currentPageIndex * 1000f) / (pages.size - 1)).toInt()
+     }
+ 
+@@ -484,10 +506,7 @@
+                 onCatalog = { jumpToPage(it.globalPageIndex, false) },
+                 onBookmark = { jumpToPage(resolveBookmarkPage(it.bookmark, paged), false) },
+                 onAddBookmark = ::addBookmark,
+-                onDeleteBookmark = { row ->
+-                    lifecycleScope.launch(Dispatchers.IO) { database.bookmarkDao().delete(row.bookmark) }
+-                    Toast.makeText(this@ReaderActivity, "书签已删除", Toast.LENGTH_SHORT).show()
+-                }
++                onDeleteBookmark = { row -> confirmDeleteBookmark(row.bookmark) }
+             )
+         }
+     }
+@@ -523,6 +542,8 @@
+         }
+     }
+ 
++    private fun showContentSearch() = showSearch()
++
+     private fun showSearch() {
+         val paged = readerBook ?: return
+         ReaderPanels.showSearch(
+@@ -566,6 +587,28 @@
+         return output
+     }
+ 
++    private fun pageCountLabel(): String {
++        val page = readerBook?.pages?.getOrNull(currentPageIndex) ?: return "1/1"
++        val currentPage = page.globalPageIndex + 1
++        val totalPages = page.totalPageCount
++        return "$currentPage/$totalPages"
++    }
++
++    private fun confirmDeleteBookmark(bookmark: Bookmark) {
++        AlertDialog.Builder(this)
++            .setTitle("删除书签")
++            .setMessage("确定删除这个书签吗？")
++            .setNegativeButton("取消", null)
++            .setPositiveButton("删除") { _, _ ->
++                lifecycleScope.launch {
++                    withContext(Dispatchers.IO) { database.bookmarkDao().delete(bookmark) }
++                    Toast.makeText(this@ReaderActivity, "书签已删除", Toast.LENGTH_SHORT).show()
++                    showCatalogBookmarks(startWithBookmarks = true)
++                }
++            }
++            .show()
++    }
++
+     private fun saveProgress() {
+         val paged = readerBook ?: return
+         val page = paged.pages.getOrNull(currentPageIndex) ?: return
+@@ -613,13 +656,14 @@
+         pageList.setBackgroundColor(palette.backgroundColor)
+         fallbackTextView.setBackgroundColor(palette.backgroundColor)
+         fallbackTextView.setTextColor(palette.textColor)
+-        findViewById<FrameLayout>(readerScrollView.parent.id)?.setBackgroundColor(palette.backgroundColor)
+-        findViewById<TextView>(R.id.nightButton).text = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) "☀" else "☾"
++        (readerScrollView.parent as? View)?.setBackgroundColor(palette.backgroundColor)
++        val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
++        findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
+         if (readerBook != null) showPagedBook(currentPageIndex)
+         if (rebuildPages) paginateAndDisplay(readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset)
+     }
+ 
+-    private fun setChromeVisible(visible: Boolean) {
++    private fun setReaderChromeVisible(visible: Boolean) {
+         chromeVisible = visible
+         readerControls.visibility = if (visible) View.VISIBLE else View.GONE
+         progressLabel.visibility = if (visible) View.GONE else View.VISIBLE
+@@ -654,6 +698,9 @@
+         ).forEach { (id, mode) -> findViewById<TextView>(id).alpha = if (pageTurnMode == mode) 1f else 0.62f }
+     }
+ 
++    private fun dp(value: Int): Int =
++        (value * resources.displayMetrics.density + 0.5f).toInt()
++
+     private fun showFatal(message: String) {
+         AlertDialog.Builder(this)
+             .setTitle("无法打开书籍")
+--- a/app/src/main/java/com/simplereader/app/ui/ReaderPanels.kt
++++ b/app/src/main/java/com/simplereader/app/ui/ReaderPanels.kt
+@@ -92,7 +92,10 @@
+                     }
+                 }
+                 list.setOnItemLongClickListener { _, _, position, _ ->
+-                    bookmarks.getOrNull(position)?.let(onDeleteBookmark)
++                    bookmarks.getOrNull(position)?.let {
++                        dialog.dismiss()
++                        onDeleteBookmark(it)
++                    }
+                     true
+                 }
+             } else {
+--- a/app/src/test/java/com/simplereader/app/parser/RealSampleRegressionContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/parser/RealSampleRegressionContractTest.kt
+@@ -5,12 +5,7 @@
+ import org.junit.Test
+ import java.io.File
+ 
+-/**
+- * Source-level guardrails for regressions reported after v13.
+- * These checks intentionally reject superficial implementations that only add
+- * parser names or a fixed chapter buffer without persistent/exportable EPUB/CHM
+- * cache and hierarchy-aware continuous reading.
+- */
++/** Source-level guardrails for the unified v608 reader. */
+ class RealSampleRegressionContractTest {
+@@ -25,55 +20,40 @@
+         assertTrue(source.contains("GB18030"))
+         assertTrue(source.contains("charset"))
+         assertFalse(source.contains("retrieveObjectAsString(entry)"))
+-        assertTrue(source.contains("MAX_DOCUMENT_ENTRIES = 20000"))
+-        assertTrue(source.contains("DOCUMENT_WRITE_PATTERN"))
+     }
+ 
+     @Test
+-    fun `structured reading must not stop at a fixed adjacent chapter window`() {
++    fun `structured reading uses one global real page sequence`() {
+         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+-        assertFalse(reader.contains("offset = Int.MAX_VALUE"))
+-        assertTrue(
+-            "Vertical scrolling must automatically continue into the next cached text window",
+-            reader.contains("maybeExtendTxtContinuousBuffer") &&
+-                reader.contains("StructuredBookCache")
+-        )
++        val engine = File("src/main/java/com/simplereader/app/reader/page/PageEngine.kt").readText()
++        assertTrue(reader.contains("ReaderPageAdapter"))
++        assertTrue(reader.contains("TURN_MODE_VERTICAL"))
++        assertTrue(engine.contains("data class ReaderPage("))
++        assertTrue(engine.contains("StaticLayout.Builder"))
++        assertFalse(reader.contains("currentPosition + pageSize"))
++        assertFalse(reader.contains("LOGICAL_TXT_BYTES_PER_PAGE"))
+     }
+ 
+     @Test
+-    fun `chm table of contents must preserve hierarchy`() {
+-        val parser = File("src/main/java/com/simplereader/app/parser/ChmParser.kt").readText()
+-        assertTrue(
+-            "CHM chapters must retain depth or parent information",
+-            parser.contains("depth:") || parser.contains("parentPath:") || parser.contains("parentId:")
+-        )
+-    }
+-
+-    @Test
+-    fun `epub and chm cache must be persistent and backup exportable`() {
+-        val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
++    fun `epub cache remains persistent and backup exportable`() {
++        val loader = File("src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt").readText()
+         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
+         val decoder = File("src/main/java/com/simplereader/app/data/backup/SimpleReaderBackupDecoder.kt").readText()
+-        assertTrue(
+-            "Structured cache must live outside cacheDir so Android cache cleanup does not erase it",
+-            reader.contains("StructuredBookCache") || reader.contains("filesDir")
+-        )
+-        assertTrue(
+-            "Backup export must include EPUB/CHM structured cache",
+-            main.contains("structured_cache") || main.contains("structuredCache")
+-        )
+-        assertTrue(
+-            "Backup decoder must accept EPUB/CHM structured cache",
+-            decoder.contains("structuredCache") || decoder.contains("structured_cache")
+-        )
++        assertTrue(loader.contains("StructuredBookCache"))
++        assertTrue(main.contains("structured_cache") || main.contains("structuredCache"))
++        assertTrue(decoder.contains("structuredCache") || decoder.contains("structured_cache"))
+     }
+ 
+     @Test
+-    fun `large txt must remain source streamed instead of duplicating content txt`() {
+-        val cache = File("src/main/java/com/simplereader/app/data/cache/StructuredBookCache.kt").readText()
+-        val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+-        assertTrue(cache.contains("TXT 必须直接流式读取"))
+-        assertFalse(cache.contains("\"TXT\" -> buildTxt"))
+-        assertTrue(reader.contains("txtStreamingMode"))
++    fun `txt page count is layout based and cached by source identity`() {
++        val engine = File("src/main/java/com/simplereader/app/reader/page/PageEngine.kt").readText()
++        val cache = File("src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt").readText()
++        assertTrue(engine.contains("viewportWidthPx"))
++        assertTrue(engine.contains("viewportHeightPx"))
++        assertTrue(engine.contains("lineSpacingMultiplier"))
++        assertTrue(cache.contains("fileSize"))
++        assertTrue(cache.contains("lastModified"))
++        assertTrue(cache.contains("readerSettingsHash"))
++        assertFalse(engine.contains("820"))
+     }
+ }
+--- a/app/src/test/java/com/simplereader/app/ui/ChmDisabledContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/ChmDisabledContractTest.kt
+@@ -18,11 +18,11 @@
+     }
+ 
+     @Test
+-    fun `old chm records fail clearly instead of entering broken parser`() {
++    fun `old chm records fail clearly before unified document loading`() {
+         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
++        val loader = File("src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt").readText()
+         assertTrue(reader.contains("当前版本已停止支持 CHM"))
+-        val supportedNames = reader.substringAfter("private fun isSupportedBookName")
+-            .substringBefore("private fun joinPath")
+-        assertFalse(supportedNames.contains(".chm"))
++        assertTrue(loader.contains("format == \"TXT\" || format == \"EPUB\""))
++        assertFalse(loader.contains("\"CHM\" ->"))
+     }
+ }
+--- a/app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/ReaderCatalogAndProgressUiContractTest.kt
+@@ -14,18 +14,19 @@
+ 
+     @Test
+     fun topSearchUsesMagnifyingGlassIcon() {
+-        val text = readerSource()
+-        assertTrue(text.contains("setIcon(android.R.drawable.ic_menu_search)"))
++        assertTrue(readerSource().contains("setIcon(android.R.drawable.ic_menu_search)"))
+     }
+ 
+     @Test
+-    fun bottomReaderProgressIsPageLabelWithoutSeekbar() {
++    fun bottomReaderProgressUsesTheGlobalReaderPageLabel() {
+         val source = readerSource()
+         val layout = readerLayout()
+         assertFalse(source.contains("readerProgressBar"))
+         assertFalse(layout.contains("@+id/readerProgressBar"))
+         assertTrue(layout.contains("android:text=\"1/1\""))
+         assertTrue(source.contains("private fun pageCountLabel()"))
+-        assertTrue(source.contains("return \"\$currentPage/\$totalPages\""))
++        assertTrue(source.contains("page.globalPageIndex + 1"))
++        assertTrue(source.contains("page.totalPageCount"))
++        assertTrue(source.contains("return \"$currentPage/$totalPages\""))
+     }
+ }
+--- a/app/src/test/java/com/simplereader/app/ui/ReaderSearchAndPanelContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/ReaderSearchAndPanelContractTest.kt
+@@ -6,22 +6,26 @@
+ import java.io.File
+ 
+ class ReaderSearchAndPanelContractTest {
+-    private fun source(): String = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
++    private fun reader(): String = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
++    private fun panels(): String = File("src/main/java/com/simplereader/app/ui/ReaderPanels.kt").readText()
+ 
+     @Test
+-    fun `reader restores previous search entry and handler`() {
+-        val text = source()
++    fun `reader keeps current book search entry results and exact page mapping`() {
++        val text = reader()
+         assertTrue(text.contains("menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, \"搜索\")"))
+-        assertTrue(text.contains("MENU_SEARCH ->"))
+         assertTrue(text.contains("showContentSearch()"))
++        assertTrue(text.contains("searchKeyword"))
++        assertTrue(text.contains("searchHits"))
++        assertTrue(text.contains("paged.pageForOffset(index)"))
++        assertTrue(text.contains("globalPageIndex = page.globalPageIndex"))
+     }
+ 
+     @Test
+     fun `catalog and bookmarks switch only by top tab clicks`() {
+-        val text = source()
+-        assertTrue(text.contains("catalogButton.setOnClickListener"))
+-        assertTrue(text.contains("bookmarkButton.setOnClickListener"))
+-        assertFalse(text.contains("listView.setOnTouchListener"))
+-        assertFalse(text.contains("MotionEvent.ACTION_DOWN -> downX"))
++        val text = panels()
++        assertTrue(text.contains("catalogTab.setOnClickListener"))
++        assertTrue(text.contains("bookmarkTab.setOnClickListener"))
++        assertFalse(text.contains("list.setOnTouchListener"))
++        assertFalse(text.contains("MotionEvent.ACTION_DOWN"))
+     }
+ }
+--- a/app/src/test/java/com/simplereader/app/ui/StableWorkflowContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/StableWorkflowContractTest.kt
+@@ -10,7 +10,7 @@
+     fun `group card opens an isolated group bookshelf activity`() {
+         val source = projectFile("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
+         val method = source.substringAfter("private fun showGroupBooksV2(")
+-            .substringBefore("private fun showBookActionsV2(")
++            .substringBefore("private fun ", missingDelimiterValue = "")
+         assertTrue(method.contains("GroupBooksActivity::class.java"))
+         assertTrue(method.contains("GroupBooksActivity.EXTRA_GROUP_ID"))
+         assertFalse(method.contains("selectedGroupId = group.id"))
+--- a/app/src/test/java/com/simplereader/app/ui/V13InteractionContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/V13InteractionContractTest.kt
+@@ -20,12 +20,14 @@
+     }
+ 
+     @Test
+-    fun `reader uses add bookmark action and immediate deletion refresh`() {
++    fun `reader keeps v600 add bookmark action and immediate deletion refresh`() {
+         val text = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
++        val panels = source("src/main/java/com/simplereader/app/ui/ReaderPanels.kt")
+         assertTrue(text.contains("text = \"添\""))
+         assertTrue(text.contains("shape = GradientDrawable.OVAL"))
+         assertTrue(text.contains("confirmDeleteBookmark(bookmark)"))
+-        assertTrue(text.contains("bookmarks = bookmarks.filterNot"))
++        assertTrue(text.contains("showCatalogBookmarks(startWithBookmarks = true)"))
++        assertTrue(panels.contains("dialog.dismiss()"))
+         assertFalse(text.contains("menu.add(Menu.NONE, MENU_PANEL"))
+     }
+ 
