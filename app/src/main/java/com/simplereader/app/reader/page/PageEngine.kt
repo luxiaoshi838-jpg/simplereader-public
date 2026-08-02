@@ -7,6 +7,7 @@ import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.RelativeSizeSpan
+import android.text.style.LineHeightSpan
 import android.text.style.ReplacementSpan
 import android.text.style.StyleSpan
 import com.simplereader.app.parser.EpubParser
@@ -75,7 +76,7 @@ data class ReaderLayoutSettings(
     }
 
     companion object {
-        const val CACHE_MODEL_VERSION = 3
+        const val CACHE_MODEL_VERSION = 4
     }
 }
 
@@ -234,18 +235,62 @@ object PageEngine {
             }
         }
 
-        // Keep the existing behavior for subheadings while ensuring the chapter title is stable.
-        var lineStart = 0
-        while (lineStart < text.length) {
-            val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
-            val line = text.substring(lineStart, lineEnd).trim()
-            if (lineStart > 0 && TxtParser.isLikelyChapterTitle(line)) {
-                styled.setSpan(RelativeSizeSpan(settings.titleScale), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                styled.setSpan(StyleSpan(Typeface.BOLD), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (imageSpanProvider != null) {
+            IMAGE_MARKER.findAll(text).forEach { match ->
+                val href = match.groupValues.getOrNull(1).orEmpty()
+                val span = runCatching {
+                    imageSpanProvider(href, settings.textWidthPx, settings.textHeightPx)
+                }.getOrNull() ?: return@forEach
+                styled.setSpan(
+                    span,
+                    match.range.first,
+                    match.range.last + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
             }
-            lineStart = lineEnd + 1
         }
+        return styled
+    }
 
+
+    /**
+     * One continuous vertical document. It never introduces page containers or page gaps.
+     * Only real chapter starts receive title styling and extra top spacing. Text offsets stay unchanged.
+     */
+    fun styledWholeText(
+        text: String,
+        chapters: List<BookChapter>,
+        settings: ReaderLayoutSettings,
+        imageSpanProvider: ImageSpanProvider? = null
+    ): CharSequence {
+        if (text.isEmpty()) return text
+        val styled = SpannableString(text)
+        chapters.forEachIndexed { index, chapter ->
+            val start = chapter.startOffset.coerceIn(0, text.length)
+            if (start >= text.length) return@forEachIndexed
+            val lineEnd = text.indexOf('\n', start).let { if (it < 0) text.length else it }
+            if (lineEnd <= start || text.substring(start, lineEnd).isBlank()) return@forEachIndexed
+            styled.setSpan(
+                RelativeSizeSpan(settings.titleScale),
+                start,
+                lineEnd,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            styled.setSpan(
+                StyleSpan(Typeface.BOLD),
+                start,
+                lineEnd,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            if (index > 0) {
+                styled.setSpan(
+                    ChapterTopSpacingSpan((settings.textSizePx * settings.lineSpacingMultiplier * 1.8f).toInt()),
+                    start,
+                    lineEnd.coerceAtLeast(start + 1),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
         if (imageSpanProvider != null) {
             IMAGE_MARKER.findAll(text).forEach { match ->
                 val href = match.groupValues.getOrNull(1).orEmpty()
@@ -284,6 +329,21 @@ object PageEngine {
             chapter.copy(endOffset = max(chapter.startOffset, nextStart))
         }.filter { it.endOffset > it.startOffset }
             .ifEmpty { listOf(BookChapter("正文", 0, text.length)) }
+    }
+
+    private class ChapterTopSpacingSpan(private val extraTopPx: Int) : LineHeightSpan {
+        override fun chooseHeight(
+            text: CharSequence?,
+            start: Int,
+            end: Int,
+            spanstartv: Int,
+            v: Int,
+            fm: android.graphics.Paint.FontMetricsInt
+        ) {
+            if (extraTopPx <= 0) return
+            fm.ascent -= extraTopPx
+            fm.top -= extraTopPx
+        }
     }
 
     private data class DraftPage(

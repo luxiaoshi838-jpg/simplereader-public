@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -23,18 +24,20 @@ object ReaderSearchSheet {
         initialKeyword: String,
         initialHits: List<SearchPageHit>,
         onSearch: (String, (List<SearchPageHit>) -> Unit) -> Unit,
-        onHit: (SearchPageHit) -> Unit
+        onHit: (SearchPageHit) -> Unit,
+        backgroundDrawable: Drawable? = null,
+        textColor: Int? = null
     ) {
         val density = activity.resources.displayMetrics.density
         fun dp(value: Int): Int = (value * density + 0.5f).toInt()
         val palette = ReaderAppearance.palette(activity)
-        val primary = palette.textColor
+        val primary = textColor ?: palette.textColor
         val secondary = withAlpha(primary, 0.64f)
         val accent = Color.rgb(239, 122, 40)
         val dialog = BottomSheetDialog(activity)
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ReaderSurfaceDrawable(palette.backgroundColor, seed = 977)
+            background = backgroundDrawable ?: ReaderBackgrounds.drawable(activity, ReaderBackgrounds.Selection())
             setPadding(dp(18), dp(14), dp(18), dp(18))
         }
         val titleRow = LinearLayout(activity).apply {

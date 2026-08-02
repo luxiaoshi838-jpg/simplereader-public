@@ -13,15 +13,13 @@ class ReaderChromeContractTest {
         File("src/main/res/layout/activity_reader.xml").readText()
 
     @Test
-    fun topAndBottomBarsAreHiddenTogetherAndOnlyCenterTapTogglesThem() {
+    fun topAndBottomBarsAreHiddenTogetherAndCenterTapWorksInBothModes() {
         val text = source()
         assertTrue(text.contains("supportActionBar?.hide()"))
         assertTrue(text.contains("private fun setReaderChromeVisible(visible: Boolean)"))
-        assertTrue(text.contains("val centerLeft = width / 4f"))
-        assertTrue(text.contains("val centerRight = width * 3f / 4f"))
-        assertTrue(text.contains("val centerTop = height / 4f"))
-        assertTrue(text.contains("val centerBottom = height * 3f / 4f"))
-        assertTrue(text.contains("e.x in centerLeft..centerRight && e.y in centerTop..centerBottom"))
+        assertTrue(text.contains("e.x in readerScrollView.width * 0.25f..readerScrollView.width * 0.75f"))
+        assertTrue(text.contains("e.y in readerScrollView.height * 0.2f..readerScrollView.height * 0.8f"))
+        assertTrue(text.contains("pagedReaderView.onCenterTap = { setReaderChromeVisible(!chromeVisible) }"))
         assertFalse(text.contains("toggleReaderControls()"))
     }
 

@@ -22,12 +22,12 @@ class V13InteractionContractTest {
     @Test
     fun `bookmark creation stays in reader top bar only`() {
         val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
-        val catalog = source("src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt")
         assertTrue(reader.contains("text = \"添\""))
         assertTrue(reader.contains("shape = GradientDrawable.OVAL"))
         assertTrue(reader.contains("MENU_ADD_BOOKMARK"))
-        assertFalse(catalog.contains("添加书签"))
-        assertFalse(catalog.contains("onAddBookmark"))
+        val panelStart = reader.indexOf("private fun showCatalogBookmarkPanelV600")
+        val panelEnd = reader.indexOf("private fun buttonLikeText", panelStart)
+        assertFalse(reader.substring(panelStart, panelEnd).contains("addBookmark()"))
     }
 
     @Test

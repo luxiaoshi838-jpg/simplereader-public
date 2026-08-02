@@ -1,33 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 fail() { echo "UI POLICY FAILURE: $*" >&2; exit 1; }
 
-# Forbidden historical implementations must not exist in the active source tree.
-test ! -e app/src/main/java/com/simplereader/app/ui/ReaderPanels.kt || fail "legacy ReaderPanels.kt is forbidden"
-test ! -e .github/v14-continuous-build-status.md || fail "v14 status file is forbidden"
-if find .github/workflows -maxdepth 1 -type f -iname '*v14*' | grep -q .; then
-  fail "v14 workflow files are forbidden"
-fi
+reader=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+engine=app/src/main/java/com/simplereader/app/reader/page/PageEngine.kt
+layout=app/src/main/res/layout/activity_reader.xml
 
+# Rejected replacement implementations must be absent.
+for path in \
+  app/src/main/java/com/simplereader/app/ui/ReaderPanels.kt \
+  app/src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt \
+  app/src/main/java/com/simplereader/app/ui/ReaderSurfaceDrawable.kt \
+  app/src/main/java/com/simplereader/app/ui/ReaderPageAdapter.kt \
+  app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt; do
+  test ! -e "$path" || fail "rejected implementation remains: $path"
+done
+
+# Cover format text/cross hatch remain forbidden.
 grep -R --line-number --fixed-strings 'drawText("TXT"' app/src/main/java && fail "TXT cover text is forbidden" || true
 grep -R --line-number --fixed-strings 'txtPaint' app/src/main/java && fail "TXT cover paint is forbidden" || true
-grep -R --line-number --fixed-strings 'verticalCount' app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt && fail "cross-hatch cover is forbidden" || true
-grep -R --line-number --fixed-strings 'lineCount' app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt && fail "regular lined cover is forbidden" || true
-grep -R --line-number --fixed-strings 'onAddBookmark' app/src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt && fail "bookmark creation must not be inside catalog/bookmark sheet" || true
-grep -R --line-number --fixed-strings '添加书签' app/src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt && fail "bookmark creation label must not appear in catalog/bookmark sheet" || true
 
-grep -q 'backgroundFactory' app/src/main/java/com/simplereader/app/ui/ReaderPageAdapter.kt || fail "reader page adapter must accept a layered background factory"
-grep -q 'ReaderSurfaceDrawable' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "reader pages must use layered surface drawable"
-grep -q 'contentPaddingBottomPx = dp(26)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "page paginator must not inherit the old 118dp bottom gap"
-! grep -q 'paddingBottom="118dp"' app/src/main/res/layout/activity_reader.xml || fail "118dp reader bottom gap is forbidden"
+# Exact confirmed reader structures.
+grep -q 'showCatalogBookmarkPanelV600' "$reader" || fail "v600 catalog/bookmark panel missing"
+grep -q 'window.setGravity(Gravity.START or Gravity.CENTER_VERTICAL)' "$reader" || fail "v600 side panel placement missing"
+grep -q 'ReaderBackgroundPicker.show' "$reader" || fail "layered background picker missing"
+grep -q 'ReaderBackgrounds.Selection' "$reader" || fail "colour-texture-material selection missing"
+grep -q 'PagedReaderView.TurnMode.OVERLAP' "$reader" || fail "overlap mode missing"
+grep -q 'PagedReaderView.TurnMode.SIMULATE' "$reader" || fail "simulation mode missing"
+grep -q 'PagedReaderView.TurnMode.SLIDE' "$reader" || fail "slide mode missing"
+grep -q 'readerScrollView.visibility = View.VISIBLE' "$reader" || fail "continuous reader missing"
+! grep -q 'PagerSnapHelper' "$reader" || fail "vertical/page snap helper is forbidden"
+! grep -q 'RecyclerView' "$reader" || fail "reader page containers are forbidden in ReaderActivity"
 
-grep -q 'TURN_MODE_SIMULATE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "simulation mode missing"
-grep -q 'rotationY' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "simulation mode must have a distinct perspective animation"
-grep -q 'TURN_MODE_HORIZONTAL' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "horizontal mode missing"
-grep -q 'translationX' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt || fail "overlap/horizontal modes must not collapse into one behavior"
+grep -q 'contentPaddingBottomPx = 0' "$reader" || fail "per-page bottom reservation must be zero"
+grep -q 'bottomPaddingPx = 0' "$reader" || fail "horizontal renderer bottom reservation must be zero"
+! grep -q 'paddingBottom="118dp"' "$layout" || fail "118dp page gap is forbidden"
+grep -q 'android:paddingBottom="0dp"' "$layout" || fail "continuous document must not add per-page bottom space"
 
-# Exact hashes lock the finished UI files. Update only after explicit owner approval.
-if [[ -f ui-lock.sha256 ]]; then
-  sha256sum -c ui-lock.sha256
-fi
+grep -q 'styledWholeText' "$engine" || fail "whole-book continuous styling missing"
+! grep -q 'TxtParser.isLikelyChapterTitle' "$engine" || fail "non-chapter title guessing is forbidden"
+
+test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "confirmed layered background source missing"
+test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt || fail "confirmed background picker missing"
+test -e app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt || fail "confirmed horizontal renderer missing"

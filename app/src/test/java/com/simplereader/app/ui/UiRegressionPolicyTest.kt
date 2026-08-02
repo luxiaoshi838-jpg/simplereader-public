@@ -9,40 +9,40 @@ class UiRegressionPolicyTest {
     private fun source(path: String): String = File(path).readText()
 
     @Test
-    fun `forbidden cover implementations are absent`() {
-        val cover = source("src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt")
-        assertFalse(cover.contains("TXT"))
-        assertFalse(cover.contains("txtPaint"))
-        assertFalse(cover.contains("verticalCount"))
-        assertFalse(cover.contains("lineCount"))
-        assertTrue(cover.contains("cubicTo"))
+    fun `confirmed layered background is restored`() {
+        val background = source("src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt")
+        val picker = source("src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt")
+        assertTrue(background.contains("data class Selection"))
+        assertTrue(background.contains("colorId"))
+        assertTrue(background.contains("textureId"))
+        assertTrue(background.contains("materialId"))
+        assertTrue(background.contains("COLOR(\"纯色\")"))
+        assertTrue(background.contains("TEXTURE(\"纹理\")"))
+        assertTrue(background.contains("MATERIAL(\"质感\")"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.COLOR"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.TEXTURE"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.MATERIAL"))
     }
 
     @Test
-    fun `reader background always contains colour texture and material layers`() {
-        val surface = source("src/main/java/com/simplereader/app/ui/ReaderSurfaceDrawable.kt")
-        assertTrue(surface.contains("basePaint"))
-        assertTrue(surface.contains("materialPaint"))
-        assertTrue(surface.contains("fibrePaint"))
-        assertTrue(surface.contains("grainPaint"))
+    fun `horizontal modes use distinct confirmed renderer`() {
+        val renderer = source("src/main/java/com/simplereader/app/ui/PagedReaderView.kt")
+        assertTrue(renderer.contains("TurnMode.OVERLAP"))
+        assertTrue(renderer.contains("TurnMode.SIMULATE"))
+        assertTrue(renderer.contains("TurnMode.SLIDE"))
+        assertTrue(renderer.contains("rotationY"))
+        assertTrue(renderer.contains("outgoing.translationX"))
     }
 
     @Test
-    fun `normal pages do not inherit old toolbar bottom gap`() {
+    fun `vertical mode is one continuous document and pages reserve no bottom gap`() {
         val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
         val layout = source("src/main/res/layout/activity_reader.xml")
-        assertTrue(reader.contains("contentPaddingBottomPx = dp(26)"))
+        assertTrue(reader.contains("showContinuousBook"))
+        assertTrue(reader.contains("contentPaddingBottomPx = 0"))
+        assertFalse(reader.contains("PagerSnapHelper"))
+        assertFalse(reader.contains("RecyclerView"))
+        assertTrue(layout.contains("android:paddingBottom=\"0dp\""))
         assertFalse(layout.contains("paddingBottom=\"118dp\""))
-    }
-
-    @Test
-    fun `page turn modes remain distinct`() {
-        val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
-        assertTrue(reader.contains("TURN_MODE_SIMULATE ->"))
-        assertTrue(reader.contains("rotationY"))
-        assertTrue(reader.contains("TURN_MODE_HORIZONTAL ->"))
-        assertTrue(reader.contains("smoothScrollToPosition"))
-        assertTrue(reader.contains("TURN_MODE_FADE ->"))
-        assertTrue(reader.contains("translationX"))
     }
 }
