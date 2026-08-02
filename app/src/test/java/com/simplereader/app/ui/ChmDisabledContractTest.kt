@@ -18,11 +18,11 @@ class ChmDisabledContractTest {
     }
 
     @Test
-    fun `old chm records fail clearly instead of entering broken parser`() {
+    fun `old chm records fail clearly before unified document loading`() {
         val reader = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+        val loader = File("src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt").readText()
         assertTrue(reader.contains("当前版本已停止支持 CHM"))
-        val supportedNames = reader.substringAfter("private fun isSupportedBookName")
-            .substringBefore("private fun joinPath")
-        assertFalse(supportedNames.contains(".chm"))
+        assertTrue(loader.contains("format == \"TXT\" || format == \"EPUB\""))
+        assertFalse(loader.contains("\"CHM\" ->"))
     }
 }
