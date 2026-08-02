@@ -3,30 +3,29 @@ from pathlib import Path
 
 def require_replace(text: str, old: str, new: str, label: str) -> str:
     if old not in text:
-        raise SystemExit(f"{label} not found")
+        raise SystemExit(f'{label} not found')
     return text.replace(old, new, 1)
 
-
-main_path = Path("app/src/main/java/com/simplereader/app/ui/MainActivity.kt")
+main_path = Path('app/src/main/java/com/simplereader/app/ui/MainActivity.kt')
 main = main_path.read_text()
-if "import com.simplereader.app.reader.cache.ReaderPageCacheManager" not in main:
+if 'import com.simplereader.app.reader.cache.ReaderPageCacheManager' not in main:
     main = require_replace(
         main,
-        "import com.simplereader.app.parser.EpubParser\n",
-        "import com.simplereader.app.parser.EpubParser\nimport com.simplereader.app.reader.cache.ReaderPageCacheManager\n",
-        "MainActivity import marker",
+        'import com.simplereader.app.parser.EpubParser\n',
+        'import com.simplereader.app.parser.EpubParser\nimport com.simplereader.app.reader.cache.ReaderPageCacheManager\n',
+        'MainActivity import marker',
     )
 main = require_replace(
     main,
     '.setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->',
     '.setItems(arrayOf("批量管理分组", "同步书架", "一键缓存")) { _, which ->',
-    "bookshelf menu items",
+    'bookshelf menu items',
 )
 main = require_replace(
     main,
-    "                    1 -> confirmSyncBookshelf()\n                }",
-    "                    1 -> confirmSyncBookshelf()\n                    2 -> confirmCacheBookshelf()\n                }",
-    "bookshelf menu actions",
+    '                    1 -> confirmSyncBookshelf()\n                }',
+    '                    1 -> confirmSyncBookshelf()\n                    2 -> confirmCacheBookshelf()\n                }',
+    'bookshelf menu actions',
 )
 cache_function = '''    private fun confirmCacheBookshelf() {
         val cacheable = books
@@ -61,53 +60,53 @@ cache_function = '''    private fun confirmCacheBookshelf() {
 '''
 main = require_replace(
     main,
-    "    private fun showBookActionsV2(book: ShelfBookItem) {",
-    cache_function + "    private fun showBookActionsV2(book: ShelfBookItem) {",
-    "MainActivity cache insertion marker",
+    '    private fun showBookActionsV2(book: ShelfBookItem) {',
+    cache_function + '    private fun showBookActionsV2(book: ShelfBookItem) {',
+    'MainActivity cache insertion marker',
 )
 main_path.write_text(main)
 
-gradle_path = Path("app/build.gradle.kts")
+gradle_path = Path('app/build.gradle.kts')
 gradle = gradle_path.read_text()
-if "androidx.work:work-runtime-ktx" not in gradle:
+if 'androidx.work:work-runtime-ktx' not in gradle:
     gradle = require_replace(
         gradle,
         '    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")\n',
         '    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")\n'
         '    implementation("androidx.work:work-runtime-ktx:2.9.1")\n',
-        "Gradle WorkManager dependency marker",
+        'Gradle WorkManager dependency marker',
     )
 gradle_path.write_text(gradle)
 
-vertical_path = Path("app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt")
+vertical_path = Path('app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt')
 vertical = vertical_path.read_text()
-if "import androidx.recyclerview.widget.PagerSnapHelper" not in vertical:
+if 'import androidx.recyclerview.widget.PagerSnapHelper' not in vertical:
     vertical = require_replace(
         vertical,
-        "import androidx.recyclerview.widget.LinearLayoutManager\n",
-        "import androidx.recyclerview.widget.LinearLayoutManager\nimport androidx.recyclerview.widget.PagerSnapHelper\n",
-        "VerticalPageFlowView import marker",
+        'import androidx.recyclerview.widget.LinearLayoutManager\n',
+        'import androidx.recyclerview.widget.LinearLayoutManager\nimport androidx.recyclerview.widget.PagerSnapHelper\n',
+        'VerticalPageFlowView import marker',
     )
-vertical = vertical.replace(" * Continuous vertical reader", " * Whole-page vertical reader")
+vertical = vertical.replace(' * Continuous vertical reader', ' * Whole-page vertical reader')
 vertical = require_replace(
     vertical,
-    "        isVerticalScrollBarEnabled = true\n        isScrollbarFadingEnabled = false\n",
-    "        isVerticalScrollBarEnabled = false\n        isHorizontalScrollBarEnabled = false\n",
-    "VerticalPageFlowView scrollbar block",
+    '        isVerticalScrollBarEnabled = true\n        isScrollbarFadingEnabled = false\n',
+    '        isVerticalScrollBarEnabled = false\n        isHorizontalScrollBarEnabled = false\n',
+    'VerticalPageFlowView scrollbar block',
 )
 vertical = require_replace(
     vertical,
-    "    private val topFade = View(context).apply { isClickable = false }\n",
-    "    private val pageSnapHelper = PagerSnapHelper()\n"
-    "    private val topFade = View(context).apply { isClickable = false }\n",
-    "VerticalPageFlowView snap helper marker",
+    '    private val topFade = View(context).apply { isClickable = false }\n',
+    '    private val pageSnapHelper = PagerSnapHelper()\n'
+    '    private val topFade = View(context).apply { isClickable = false }\n',
+    'VerticalPageFlowView snap helper marker',
 )
 vertical = require_replace(
     vertical,
-    "    init {\n        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n",
-    "    init {\n        pageSnapHelper.attachToRecyclerView(recyclerView)\n"
-    "        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n",
-    "VerticalPageFlowView init marker",
+    '    init {\n        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n',
+    '    init {\n        pageSnapHelper.attachToRecyclerView(recyclerView)\n'
+    '        addView(recyclerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))\n',
+    'VerticalPageFlowView init marker',
 )
 vertical = require_replace(
     vertical,
@@ -125,11 +124,11 @@ vertical = require_replace(
         recyclerView.smoothScrollToPosition(target)
     }
 ''',
-    "VerticalPageFlowView page turn block",
+    'VerticalPageFlowView page turn block',
 )
 vertical_path.write_text(vertical)
 
-reader_path = Path("app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
+reader_path = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
 reader = reader_path.read_text()
 reader = require_replace(
     reader,
@@ -137,9 +136,9 @@ reader = require_replace(
         val continuous = pageTurnMode == TURN_MODE_VERTICAL
         contentView.setPadding(
             dp(28),
-            readerTopInsetPx + dp(26),
+            stableTopInsetPx() + dp(26),
             dp(28),
-            readerBottomInsetPx + dp(118)
+            stableBottomInsetPx() + dp(118)
         )
         contentView.setTextIsSelectable(false)
         contentView.isVerticalScrollBarEnabled = false
@@ -156,9 +155,9 @@ reader = require_replace(
     '''    private fun configureVerticalScrollIfNeeded() {
         contentView.setPadding(
             dp(28),
-            readerTopInsetPx + dp(26),
+            stableTopInsetPx() + dp(26),
             dp(28),
-            readerBottomInsetPx + dp(118)
+            stableBottomInsetPx() + dp(118)
         )
         contentView.setTextIsSelectable(false)
         contentView.isVerticalScrollBarEnabled = false
@@ -168,10 +167,10 @@ reader = require_replace(
         readerScrollView.overScrollMode = View.OVER_SCROLL_NEVER
     }
 ''',
-    "ReaderActivity continuous scroll block",
+    'ReaderActivity continuous scroll block',
 )
 reader_path.write_text(reader)
 
-worker = Path("app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt").read_text()
-if "setForeground(" in worker or "ForegroundInfo" in worker:
-    raise SystemExit("Selected cache worker still contains foreground-service code")
+worker = Path('app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt').read_text()
+if 'setForeground(' in worker or 'ForegroundInfo' in worker:
+    raise SystemExit('Selected cache worker still contains foreground-service code')
