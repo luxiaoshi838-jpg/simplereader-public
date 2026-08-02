@@ -8,15 +8,15 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 
 当前最新正式产出：
 
-- 版本：v608
-- versionCode：`2098000608`
-- versionName：`608`
-- APK SHA-256：`edbd96bdf6f81bd293c56796f6a5c8ba7416d11ae0c4b66a7035e91c813a1e28`
+- 版本：v609
+- versionCode：`2098000609`
+- versionName：`609`
+- APK SHA-256：`641517f30f501b793002713dce1c238216269d9695dde71cb1b9e457fa71d38a`
 - 包名：`com.simplereader.app`
 - 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
-- 正式 APK：`SimpleReader_v608_v600_ui_real_page_engine_upgrade_signed.apk`
+- 正式 APK：`SimpleReader_v609_ui_clean_real_page_engine_signed.apk`
 
-v608 以 v600 UI 为锁定基线，统一使用真实 `ReaderPage` 页面序列处理 TXT/EPUB 的右下角页码、目录、书签、搜索、翻页、滑动和阅读进度。书架布局、封面风格、主题 XML、阅读页 XML、顶部栏和底部栏不随分页内核修改回退。
+v609 删除了禁止继续使用的十字纹/规则线封面、封面格式文字、旧 `ReaderPanels` 目录书签面板、目录内添加书签、v14 专用工作流和每页 118dp 空白实现。当前封面和阅读背景采用颜色、非规则纹理、材质光影叠加；添加书签保留在阅读页上栏右上角；覆盖、仿真、平移、上下和淡入使用不同实现。所有 UI 硬性要求由 [`UI_BASELINE.md`](UI_BASELINE.md)、`tools/verify-ui-policy.sh` 和 `ui-lock.sha256` 强制检查。
 
 当前任务包括：
 
