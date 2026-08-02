@@ -16,9 +16,12 @@ class UiRegressionPolicyTest {
         assertTrue(background.contains("colorId"))
         assertTrue(background.contains("textureId"))
         assertTrue(background.contains("materialId"))
-        assertTrue(picker.contains("纯色"))
-        assertTrue(picker.contains("纹理"))
-        assertTrue(picker.contains("质感"))
+        assertTrue(background.contains("COLOR(\"纯色\")"))
+        assertTrue(background.contains("TEXTURE(\"纹理\")"))
+        assertTrue(background.contains("MATERIAL(\"质感\")"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.COLOR"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.TEXTURE"))
+        assertTrue(picker.contains("ReaderBackgrounds.Category.MATERIAL"))
     }
 
     @Test
