@@ -1,0 +1,27 @@
+name: Export v600 UI baseline
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact v600 commit
+        uses: actions/checkout@v4
+        with:
+          ref: f25903a61bff9b786b4660a5e429731447751fb0
+      - name: Pack exact v600 source
+        run: zip -qr exact-v600-source.zip . -x '.git/*' -x 'app/build/*' -x '.gradle/*'
+      - name: Upload exact v600 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-v600-source
+          path: exact-v600-source.zip
+          retention-days: 2
