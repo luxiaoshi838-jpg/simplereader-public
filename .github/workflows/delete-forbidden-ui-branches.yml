@@ -1,0 +1,91 @@
+name: Delete forbidden UI history branches
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'maintenance/delete-forbidden-ui-branches'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Authenticate repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Delete obsolete UI and reader branch refs
+        shell: bash
+        run: |
+          set -u
+          branches=(
+            'agent/catalog-page-ui-base'
+            'agent/catalog-page-ui-clean'
+            'agent/reader-chrome-catalog-base-405'
+            'agent/reader-search-current-book-clean'
+            'agent/reader-search-restore-current-book'
+            'agent/restore-reader-search-menu'
+            'agent/run-catalog-page-ui'
+            'agent/run-catalog-page-ui-r5'
+            'agent/run-catalog-page-ui-r6'
+            'agent/run-catalog-page-ui-r7'
+            'agent/run-reader-chrome-catalog-405'
+            'agent/run-reader-search-apk-402'
+            'agent/search-session-panel-base'
+            'agent/search-session-panel-clean'
+            'agent/search-session-panel-highlight'
+            'agent/search-session-panel-run'
+            'agent/search-session-panel-run2'
+            'agent/migration-v2-hide-format'
+            'agent/readium-epub-reader'
+            'agent/v13-epub-chm-theme-grid'
+            'agent/v13-reader-theme-shelf'
+            'agent/v14-epub-open-group-cover-fix'
+            'agent/v14-real-epub-chm-continuous'
+            'agent/v15-epub-stream-group-cover'
+            'agent/v576-cover-texture'
+            'agent/v578-cover-only'
+            'agent/v579-reading-paper-texture'
+            'agent/v579-v575-texture-only'
+            'agent/v579-v575-texture-page'
+            'agent/v582-duokan-backgrounds'
+            'agent/v591-duokan-fixed-page-flow'
+            'agent/v592-demand-page-controller'
+            'agent/v593-duokan-page-anchor'
+            'agent/v594-open-crash-guard'
+            'agent/v595-duokan-chapter-pages'
+            'agent/v596-android16-scrollbar-guard'
+            'agent/v598-reader-only-duokan'
+            'agent/v599-page-axis-vertical-fix'
+            'agent/v600-reader-startup-fix'
+            'baseline/v575'
+            'ci/v608-final-validation'
+            'ci/v608-upgrade-fix'
+            'restore/v600-ui-baseline'
+            'restore/v600-ui-target'
+            'work/page-engine-v608'
+            'fix/v609-ui-lock-page-engine'
+          )
+          failures=()
+          for branch in "${branches[@]}"; do
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              if git push origin --delete "$branch"; then
+                echo "DELETED $branch"
+              else
+                failures+=("$branch")
+              fi
+            else
+              echo "ABSENT $branch"
+            fi
+          done
+          if ((${#failures[@]})); then
+            printf 'FAILED %s\n' "${failures[@]}"
+            exit 1
+          fi
+          git push origin --delete "$GITHUB_HEAD_REF" || true
