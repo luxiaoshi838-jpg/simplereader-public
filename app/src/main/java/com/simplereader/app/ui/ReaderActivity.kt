@@ -120,6 +120,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private var readerTouchDownRawX: Float = 0f
     private var readerTouchDownRawY: Float = 0f
     private var readerTouchDownTime: Long = 0L
+    private var readerTouchDownScrollY: Int = 0
     private var programmaticScrollGuardUntil: Long = 0L
 
     private data class TxtForwardAppendAnchor(
@@ -501,6 +502,23 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         return (targetByte - TXT_STREAM_WINDOW_BYTES / 3L).coerceAtLeast(0L)
     }
 
+    private fun txtChapterStartFor(targetByte: Long): Long {
+        return epubChapterStartPositions
+            .lastOrNull { it.toLong() <= targetByte.coerceAtLeast(0L) }
+            ?.toLong()
+            ?: 0L
+    }
+
+    private fun txtChapterEndFor(targetByte: Long): Long {
+        if (epubChapterStartPositions.isEmpty()) return txtTotalBytes
+        val safeByte = targetByte.coerceAtLeast(0L)
+        return epubChapterStartPositions
+            .firstOrNull { it.toLong() > safeByte }
+            ?.toLong()
+            ?.coerceAtMost(txtTotalBytes)
+            ?: txtTotalBytes
+    }
+
     private fun isStructuredChapterDocument(): Boolean {
         val format = book?.format?.uppercase().orEmpty()
         return !txtStreamingMode && format == "EPUB" && epubChapters.isNotEmpty()
@@ -532,7 +550,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             structuredChapterIndex = targetIndex
             currentPosition = (chapterStart + localOffset).coerceIn(chapterStart, chapterEnd)
             displayContent()
-            if (direction != 0 && pageTurnMode != TURN_MODE_VERTICAL) animatePageTurn(direction)
+            if (direction != 0) animatePageTurn(direction)
             markProgressDirty()
             if (saveImmediately) saveProgressNow() else scheduleProgressSave()
             return
@@ -551,7 +569,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                         chapters = epubChapters,
                         starts = epubChapterStartPositions,
                         centerIndex = targetIndex,
-                        includeAdjacent = pageTurnMode == TURN_MODE_VERTICAL
+                        includeAdjacent = false
                     )
                 }
                 if (buffer.content.isBlank()) {
@@ -570,7 +588,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
                 currentPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
                 displayContent()
-                if (direction != 0 && pageTurnMode != TURN_MODE_VERTICAL) animatePageTurn(direction)
+                if (direction != 0) animatePageTurn(direction)
                 markProgressDirty()
                 if (saveImmediately) saveProgressNow() else scheduleProgressSave()
             } catch (error: Throwable) {
@@ -588,7 +606,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     ): StructuredReadingBuffer {
         val safeCenter = centerIndex.coerceIn(0, chapters.lastIndex)
         val indices = if (includeAdjacent) {
-            (safeCenter..safeCenter + 1).filter { it in chapters.indices }
+            (safeCenter - 1..safeCenter + 1).filter { it in chapters.indices }
         } else {
             listOf(safeCenter)
         }
@@ -603,6 +621,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun maybeExtendStructuredContinuousBuffer(scrollY: Int) {
+        return
         if (
             suppressNextScrollProgress ||
             isProgrammaticScrollGuardActive() ||
@@ -635,14 +654,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 )
             }
             val preservedPosition = newBuffer.positionFor(oldLocation.chapterIndex, oldLocation.offset)
-                ?: newBuffer.positionFor(nextCenter, 0)
                 ?: return@launch
             structuredReadingBuffer = newBuffer
             structuredChapterIndex = oldLocation.chapterIndex.coerceIn(0, epubChapters.lastIndex)
             currentContent = newBuffer.content
             currentPosition = preservedPosition
             suppressNextScrollProgress = true
-            contentView.text = styledReadingText(currentContent)
+            contentView.text = currentContent
             contentView.textSize = readerTextSize
             configureVerticalScrollIfNeeded()
             contentView.post {
@@ -793,7 +811,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             chapters = chapters,
             starts = starts,
             centerIndex = targetIndex,
-            includeAdjacent = true
+            includeAdjacent = false
         )
         val initialPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
         return LoadedContent(
@@ -1018,17 +1036,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun pageCountLabel(): String {
-        val (positionUnits, _) = readerPageUnits()
-        val (currentPage, totalPages) = logicalPageStatsForPosition(positionUnits)
+        val (positionUnits, totalUnits) = readerPageUnits()
+        val (currentPage, totalPages) = logicalPageStatsForPosition(positionUnits, totalUnits)
         return "$currentPage/$totalPages"
     }
 
-    private fun readerUnitsPerPage(): Long {
-        return when {
-            txtStreamingMode -> estimatedTxtBytesPerPage()
-            else -> pageSize.toLong().coerceAtLeast(1L)
-        }
-    }
+    private fun readerUnitsPerPage(): Long =
+        if (txtStreamingMode) LOGICAL_TXT_BYTES_PER_PAGE else pageSize.toLong().coerceAtLeast(1L)
 
     private fun logicalPageStatsForPosition(positionUnits: Long): Pair<Long, Long> {
         val (_, totalUnits) = readerPageUnits()
@@ -1040,25 +1054,22 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val unitsPerPage = readerUnitsPerPage().coerceAtLeast(1L)
         val starts = logicalChapterStarts(total)
         if (starts.isEmpty()) {
-            val totalPages = ceilDiv(total, unitsPerPage).coerceAtLeast(1L)
-            val page = (positionUnits.coerceIn(0L, total - 1L) / unitsPerPage + 1L)
+            val totalPages = ceilDiv(total, unitsPerPage)
+            val currentPage = (positionUnits.coerceIn(0L, total - 1L) / unitsPerPage + 1L)
                 .coerceIn(1L, totalPages)
-            return page to totalPages
+            return currentPage to totalPages
         }
 
-        var pagesBefore = 0L
         var totalPages = 0L
-        val safePosition = positionUnits.coerceIn(0L, total - 1L)
         var currentPage = 1L
+        val safePosition = positionUnits.coerceIn(0L, total - 1L)
         starts.forEachIndexed { index, start ->
             val end = starts.getOrNull(index + 1) ?: total
-            val length = (end - start).coerceAtLeast(1L)
-            val pages = ceilDiv(length, unitsPerPage).coerceAtLeast(1L)
+            val chapterPages = ceilDiv((end - start).coerceAtLeast(1L), unitsPerPage)
             if (safePosition in start until end) {
-                currentPage = pagesBefore + ((safePosition - start) / unitsPerPage + 1L)
+                currentPage = totalPages + ((safePosition - start) / unitsPerPage + 1L)
             }
-            pagesBefore += pages
-            totalPages += pages
+            totalPages += chapterPages
         }
         return currentPage.coerceIn(1L, totalPages.coerceAtLeast(1L)) to totalPages.coerceAtLeast(1L)
     }
@@ -1078,6 +1089,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun ceilDiv(value: Long, divisor: Long): Long {
         val safeDivisor = divisor.coerceAtLeast(1L)
         return ((value.coerceAtLeast(0L) + safeDivisor - 1L) / safeDivisor).coerceAtLeast(1L)
+    }
+
+    private fun pageMetaForPosition(position: Long, totalUnits: Long = readerPageUnits().second): String {
+        val safeTotal = totalUnits.coerceAtLeast(1L)
+        val safePosition = position.coerceAtLeast(0L)
+        val (page, totalPages) = logicalPageStatsForPosition(safePosition, safeTotal)
+        val percent = (safePosition.toDouble() / safeTotal.toDouble() * 100.0).coerceIn(0.0, 100.0)
+        return "$page/$totalPages - ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
     }
 
     private fun renderedPageCountLabel(): String? {
@@ -1184,6 +1203,21 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         } else {
             View.OVER_SCROLL_NEVER
         }
+        contentView.post { applyChapterPageMinHeight(continuous) }
+    }
+
+    private fun applyChapterPageMinHeight(continuous: Boolean) {
+        if (!continuous) {
+            contentView.minHeight = 0
+            return
+        }
+        val viewportHeight = readerScrollView.height.coerceAtLeast(1)
+        val contentHeight = (
+            contentView.layout?.height?.plus(contentView.paddingTop + contentView.paddingBottom)
+                ?: contentView.height
+        ).coerceAtLeast(1)
+        val pageCount = ((contentHeight + viewportHeight - 1) / viewportHeight).coerceAtLeast(1)
+        contentView.minHeight = pageCount * viewportHeight
     }
 
     private fun updateVerticalScrollProgress(scrollY: Int) {
@@ -1237,13 +1271,18 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             txtContinuousBuffer.isEmpty
         ) return
         val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+        val chapterEnd = if (epubChapterStartPositions.isNotEmpty()) {
+            txtChapterEndFor(currentPosition.toLong())
+        } else {
+            Long.MAX_VALUE
+        }
         if (maxScroll <= 0) {
-            if (!txtReachedEnd) extendTxtContinuousBuffer(forward = true)
+            if (!txtReachedEnd && txtContinuousBuffer.endByte < chapterEnd) extendTxtContinuousBuffer(forward = true)
             return
         }
         val fraction = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
         when {
-            fraction >= TXT_PREFETCH_FORWARD_FRACTION && !txtReachedEnd ->
+            fraction >= TXT_PREFETCH_FORWARD_FRACTION && !txtReachedEnd && txtContinuousBuffer.endByte < chapterEnd ->
                 extendTxtContinuousBuffer(forward = true)
             fraction <= TXT_PREFETCH_BACKWARD_FRACTION && !txtReachedStart ->
                 extendTxtContinuousBuffer(forward = false)
@@ -1264,11 +1303,19 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 val window = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(targetUri)?.let { stream ->
                         if (forward) {
+                            val forwardMaxBytes = if (epubChapterStartPositions.isNotEmpty()) {
+                                val chapterEnd = txtChapterEndFor(currentPosition.toLong())
+                                (chapterEnd - txtContinuousBuffer.endByte)
+                                    .coerceIn(1L, TXT_STREAM_WINDOW_BYTES.toLong())
+                                    .toInt()
+                            } else {
+                                TXT_STREAM_WINDOW_BYTES
+                            }
                             TxtParser.readWindow(
                                 inputStream = stream,
                                 charsetName = charsetName,
                                 startByte = txtContinuousBuffer.endByte,
-                                maxBytes = TXT_STREAM_WINDOW_BYTES
+                                maxBytes = forwardMaxBytes
                             )
                         } else {
                             TxtParser.readWindowBefore(
@@ -1321,7 +1368,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         preserveAbsoluteAnchor: Boolean
     ) {
         beginProgrammaticScrollGuard()
-        contentView.text = styledReadingText(currentContent)
+        contentView.text = currentContent
         contentView.textSize = readerTextSize
         configureVerticalScrollIfNeeded()
         contentView.post {
@@ -1384,7 +1431,6 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun applyActiveReaderMode(palette: ReaderAppearance.Palette) {
         currentBackgroundColor = palette.backgroundColor
         currentTextColor = palette.textColor
-        readerScrollView.setBackgroundColor(palette.backgroundColor)
         contentView.setBackgroundColor(palette.backgroundColor)
         contentView.setTextColor(palette.textColor)
         window.decorView.setBackgroundColor(palette.backgroundColor)
@@ -2279,23 +2325,13 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             }
 
             fun positionMeta(position: Int): String {
-                if (isStructuredChapterDocument()) {
-                    val index = epubChapterStartPositions.indexOfLast { it <= position }
-                        .coerceAtLeast(0)
-                        .coerceAtMost(epubChapters.lastIndex.coerceAtLeast(0))
-                    val percent = if (currentContent.isNotEmpty()) {
-                        (position.toDouble() / currentContent.length.toDouble() * 100.0).coerceIn(0.0, 100.0)
-                    } else {
-                        0.0
-                    }
-                    return "第 ${index + 1} 章 · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
-                }
-                val safePosition = position.coerceAtLeast(0).toLong()
-                val total = if (txtStreamingMode) txtTotalBytes else currentContent.length.toLong()
-                val safeTotal = total.coerceAtLeast(1L)
-                val page = (safePosition / pageSize.coerceAtLeast(1)).coerceAtLeast(0L) + 1L
-                val percent = (safePosition.toDouble() / safeTotal.toDouble() * 100.0).coerceIn(0.0, 100.0)
-                return "第 ${page} 页 · ${String.format(java.util.Locale.US, "%.1f%%", percent)}"
+                val total = when {
+                    txtStreamingMode -> txtTotalBytes
+                    isStructuredChapterDocument() && structuredWholeText != null ->
+                        structuredWholeText.orEmpty().length.toLong()
+                    else -> currentContent.length.toLong()
+                }.coerceAtLeast(1L)
+                return pageMetaForPosition(position.coerceAtLeast(0).toLong(), total)
             }
 
             fun catalogLabel(index: Int, title: String, position: Int, highlighted: Boolean): CharSequence {
@@ -2606,20 +2642,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun bookmarkListLabel(bookmark: Bookmark): String {
         val position = bookmark.position.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
-        val total = if (txtStreamingMode) {
-            txtTotalBytes
-        } else {
-            currentContent.length.toLong()
+        val total = when {
+            txtStreamingMode -> txtTotalBytes
+            isStructuredChapterDocument() && structuredWholeText != null -> structuredWholeText.orEmpty().length.toLong()
+            else -> currentContent.length.toLong()
         }.coerceAtLeast(1L)
-        val page = (position / pageSize.coerceAtLeast(1)).coerceAtLeast(0L) + 1L
-        val percent = (position.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0)
-        val progress = String.format(java.util.Locale.US, "%.1f%%", percent)
         val preview = bookmark.content
             .replace(Regex("\\s+"), " ")
             .trim()
             .ifBlank { "无预览" }
             .let { if (it.length > 64) "${it.take(64)}..." else it }
-        return "第 ${page} 页 · $progress\n$preview"
+        return "${pageMetaForPosition(position, total)}\n$preview"
     }
 
     private fun showBookmarks() {
@@ -2874,8 +2907,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         listOf(R.id.themePaperButton, R.id.themeEyeButton, R.id.themeWhiteButton).forEach { id ->
             findViewById<TextView>(id).apply {
-                isEnabled = true
-                alpha = 1f
+                isEnabled = !night
+                alpha = if (night) 0.35f else 1f
             }
         }
         findViewById<TextView>(R.id.themeNightButton).apply {
@@ -2967,10 +3000,17 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         txtBufferLoadJob = lifecycleScope.launch {
             try {
                 val targetByte = byteOffset.coerceIn(0L, txtTotalBytes.coerceAtLeast(0L))
+                val chapterStart = if (epubChapterStartPositions.isNotEmpty()) txtChapterStartFor(targetByte) else 0L
+                val chapterEnd = if (epubChapterStartPositions.isNotEmpty()) txtChapterEndFor(targetByte) else txtTotalBytes
                 val windowStart = if (keepContextBeforeTarget) {
                     streamingWindowStartForTarget(targetByte)
                 } else {
                     targetByte
+                }.coerceAtLeast(chapterStart)
+                val windowMaxBytes = if (epubChapterStartPositions.isNotEmpty()) {
+                    (chapterEnd - windowStart).coerceIn(1L, TXT_STREAM_WINDOW_BYTES.toLong()).toInt()
+                } else {
+                    TXT_STREAM_WINDOW_BYTES
                 }
                 val window = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(targetUri)?.let { stream ->
@@ -2978,7 +3018,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                             inputStream = stream,
                             charsetName = charsetName,
                             startByte = windowStart,
-                            maxBytes = TXT_STREAM_WINDOW_BYTES
+                            maxBytes = windowMaxBytes
                         )
                     }
                 } ?: return@launch showError("无法读取当前位置")
@@ -3389,6 +3429,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 readerTouchDownRawX = event.rawX
                 readerTouchDownRawY = event.rawY
                 readerTouchDownTime = event.eventTime
+                readerTouchDownScrollY = readerScrollView.scrollY
             }
             MotionEvent.ACTION_UP -> {
                 val movedX = kotlin.math.abs(event.rawX - readerTouchDownRawX)
@@ -3404,9 +3445,64 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     toggleReaderChrome()
                     return true
                 }
+                if (handleVerticalChapterBoundaryRelease(event.rawY, movedX, movedY)) {
+                    return true
+                }
             }
         }
         return false
+    }
+
+    private fun handleVerticalChapterBoundaryRelease(rawY: Float, movedX: Float, movedY: Float): Boolean {
+        if (pageTurnMode != TURN_MODE_VERTICAL || readerChromeVisible || isProgrammaticScrollGuardActive()) return false
+        if (movedY < dp(72) || movedY < movedX * 1.4f) return false
+        val maxScroll = (contentView.height - readerScrollView.height).coerceAtLeast(0)
+        val deltaY = rawY - readerTouchDownRawY
+        val wasAtBottom = readerTouchDownScrollY >= maxScroll - dp(8)
+        val isAtBottom = readerScrollView.scrollY >= maxScroll - dp(8)
+        val wasAtTop = readerTouchDownScrollY <= dp(8)
+        val isAtTop = readerScrollView.scrollY <= dp(8)
+        return when {
+            deltaY < 0 && (wasAtBottom || isAtBottom) -> {
+                loadNextChapterFromBoundary()
+                true
+            }
+            deltaY > 0 && (wasAtTop || isAtTop) -> {
+                loadPreviousChapterFromBoundary()
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun loadNextChapterFromBoundary() {
+        if (txtStreamingMode) {
+            val next = epubChapterStartPositions.firstOrNull { it.toLong() > currentPosition.toLong() }?.toLong()
+            if (next != null) showStreamingTxtPage(next, saveImmediately = true, direction = 1)
+            return
+        }
+        if (isStructuredChapterDocument() && !structuredWholeBookMode) {
+            val currentIndex = currentStructuredLocation().chapterIndex
+            val next = (currentIndex + 1).coerceAtMost(epubChapters.lastIndex)
+            if (next > currentIndex) {
+                loadStructuredChapter(next, offset = 0, saveImmediately = true, direction = 1)
+            }
+        }
+    }
+
+    private fun loadPreviousChapterFromBoundary() {
+        if (txtStreamingMode) {
+            val previous = epubChapterStartPositions.lastOrNull { it.toLong() < currentPosition.toLong() }?.toLong()
+            if (previous != null) showStreamingTxtPage(previous, saveImmediately = true, direction = -1)
+            return
+        }
+        if (isStructuredChapterDocument() && !structuredWholeBookMode) {
+            val currentIndex = currentStructuredLocation().chapterIndex
+            val previous = (currentIndex - 1).coerceAtLeast(0)
+            if (previous < currentIndex) {
+                loadStructuredChapter(previous, offset = 0, saveImmediately = true, direction = -1)
+            }
+        }
     }
 
     private fun isReaderChromeCenter(rawX: Float, rawY: Float): Boolean {
@@ -3494,6 +3590,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
         private const val EPUB_CHAPTER_SEPARATOR = "\n\n"
         private const val TXT_STREAM_WINDOW_BYTES = 192 * 1024
+        private const val LOGICAL_TXT_BYTES_PER_PAGE = 820L
         private const val TXT_PREFETCH_FORWARD_FRACTION = 0.90f
         private const val TXT_PREFETCH_BACKWARD_FRACTION = 0.12f
         private const val STRUCTURED_PREFETCH_FORWARD_FRACTION = 0.86f

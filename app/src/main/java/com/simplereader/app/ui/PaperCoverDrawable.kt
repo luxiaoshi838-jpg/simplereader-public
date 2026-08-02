@@ -26,6 +26,11 @@ class PaperCoverDrawable(
         color = Color.argb(20, 255, 255, 255)
         strokeWidth = 1f
     }
+    private val txtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(92, 232, 238, 244)
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD)
+    }
     private val rect = RectF()
     private val clipPath = Path()
 
@@ -69,6 +74,8 @@ class PaperCoverDrawable(
         edgePaint.color = Color.argb(42, 255, 255, 255)
         canvas.drawLine(rect.left + 7f, rect.top + 8f, rect.left + 7f, rect.bottom - 8f, edgePaint)
 
+        txtPaint.textSize = rect.height() * 0.16f
+        canvas.drawText("TXT", rect.centerX(), rect.bottom - rect.height() * 0.18f, txtPaint)
         canvas.restoreToCount(save)
     }
 
@@ -77,6 +84,7 @@ class PaperCoverDrawable(
         edgePaint.alpha = alpha
         grainPaint.alpha = alpha
         linePaint.alpha = alpha
+        txtPaint.alpha = alpha
     }
 
     override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
