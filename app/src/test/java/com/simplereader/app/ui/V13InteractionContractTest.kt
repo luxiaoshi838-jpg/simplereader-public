@@ -25,7 +25,7 @@ class V13InteractionContractTest {
         val panels = source("src/main/java/com/simplereader/app/ui/ReaderPanels.kt")
         assertTrue(text.contains("text = \"添\""))
         assertTrue(text.contains("shape = GradientDrawable.OVAL"))
-        assertTrue(text.contains("confirmDeleteBookmark(bookmark)"))
+        assertTrue(text.contains("confirmDeleteBookmark(row.bookmark)"))
         assertTrue(text.contains("showCatalogBookmarks(startWithBookmarks = true)"))
         assertTrue(panels.contains("dialog.dismiss()"))
         assertFalse(text.contains("menu.add(Menu.NONE, MENU_PANEL"))
