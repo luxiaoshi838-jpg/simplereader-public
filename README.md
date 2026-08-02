@@ -8,13 +8,13 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 
 当前最新正式产出：
 
-- 版本：v600
-- versionCode：`2098000600`
-- versionName：`2026.08.02.reader-startup-fix.600`
-- APK SHA-256：`688476688a7c5e3b0d71744381e37b341d86791e9fc1a70d7ed13c01fe9607df`
+- 版本：v601
+- versionCode：`2098000601`
+- versionName：`2026.08.02.reader-page-scroll-fix.601`
+- APK SHA-256：`c88ea51fa11872653bee895a443ecb137875eb949aa1c63f0222d696fa39d2f0`
 - 包名：`com.simplereader.app`
 - 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
-- 本地 APK：`E:\脚本\小说阅读\apk-output\SimpleReader_v600_public_signed.apk`
+- 本地 APK：`E:\脚本\小说阅读\apk-output\SimpleReader_v601_reader_page_scroll_fix_signed.apk`
 
 当前任务包括：
 
