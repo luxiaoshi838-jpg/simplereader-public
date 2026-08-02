@@ -1,0 +1,54 @@
+name: Apply verified v609 UI cleanup
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'fix/v609-ui-lock-page-engine'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout v609 work branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/v609-ui-lock-page-engine
+          fetch-depth: 0
+
+      - name: Verify and apply exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .automation/v609-ui-clean.part00 \
+              .automation/v609-ui-clean.part01 \
+              .automation/v609-ui-clean.part02 \
+              .automation/v609-ui-clean.part03 \
+              .automation/v609-ui-clean.part04 \
+              .automation/v609-ui-clean.part05 \
+              .automation/v609-ui-clean.part06 \
+              .automation/v609-ui-clean.part07 \
+              .automation/v609-ui-clean.part08 > /tmp/payload.b64
+          echo "9ca36b78bbcb8cf1bc4bd1f73df5ea7658a49d08edcefaa29240c3d748bbc17d  /tmp/payload.b64" | sha256sum -c -
+          base64 -d /tmp/payload.b64 | gzip -d > /tmp/v609.patch
+          git apply --check /tmp/v609.patch
+          git apply /tmp/v609.patch
+          rm -f .automation/v609-ui-clean.part*
+          rm -f .automation/apply-v609-ui-clean.trigger
+          rm -f .github/workflows/apply-v609-ui-clean.yml
+          bash tools/verify-ui-policy.sh
+
+      - name: Commit clean v609 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "v609: remove forbidden UI history and rebuild clean reader UI"
+          git push origin HEAD:fix/v609-ui-lock-page-engine
