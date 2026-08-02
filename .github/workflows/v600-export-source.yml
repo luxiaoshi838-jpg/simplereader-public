@@ -3,12 +3,15 @@ name: v600 export source
 on:
   push:
     branches: [agent/v600-reader-startup-fix]
+  pull_request:
+    branches: [agent/v599-page-axis-vertical-fix]
 
 permissions:
   contents: read
 
 jobs:
   export:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v600-reader-startup-fix'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
