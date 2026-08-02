@@ -532,7 +532,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
             structuredChapterIndex = targetIndex
             currentPosition = (chapterStart + localOffset).coerceIn(chapterStart, chapterEnd)
             displayContent()
-            if (direction != 0) animatePageTurn(direction)
+            if (direction != 0 && pageTurnMode != TURN_MODE_VERTICAL) animatePageTurn(direction)
             markProgressDirty()
             if (saveImmediately) saveProgressNow() else scheduleProgressSave()
             return
@@ -570,7 +570,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 }
                 currentPosition = buffer.positionFor(targetIndex, targetOffset) ?: 0
                 displayContent()
-                if (direction != 0) animatePageTurn(direction)
+                if (direction != 0 && pageTurnMode != TURN_MODE_VERTICAL) animatePageTurn(direction)
                 markProgressDirty()
                 if (saveImmediately) saveProgressNow() else scheduleProgressSave()
             } catch (error: Throwable) {
@@ -588,7 +588,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     ): StructuredReadingBuffer {
         val safeCenter = centerIndex.coerceIn(0, chapters.lastIndex)
         val indices = if (includeAdjacent) {
-            (safeCenter - 1..safeCenter + 1).filter { it in chapters.indices }
+            (safeCenter..safeCenter + 1).filter { it in chapters.indices }
         } else {
             listOf(safeCenter)
         }
@@ -635,13 +635,14 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                 )
             }
             val preservedPosition = newBuffer.positionFor(oldLocation.chapterIndex, oldLocation.offset)
+                ?: newBuffer.positionFor(nextCenter, 0)
                 ?: return@launch
             structuredReadingBuffer = newBuffer
             structuredChapterIndex = oldLocation.chapterIndex.coerceIn(0, epubChapters.lastIndex)
             currentContent = newBuffer.content
             currentPosition = preservedPosition
             suppressNextScrollProgress = true
-            contentView.text = currentContent
+            contentView.text = styledReadingText(currentContent)
             contentView.textSize = readerTextSize
             configureVerticalScrollIfNeeded()
             contentView.post {
@@ -1017,11 +1018,66 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     }
 
     private fun pageCountLabel(): String {
-        val (positionUnits, totalUnits) = readerPageUnits()
-        val unitsPerPage = pageSize.toLong().coerceAtLeast(1L)
-        val totalPages = ((totalUnits + unitsPerPage - 1L) / unitsPerPage).coerceAtLeast(1L)
-        val currentPage = (positionUnits / unitsPerPage + 1L).coerceIn(1L, totalPages)
+        val (positionUnits, _) = readerPageUnits()
+        val (currentPage, totalPages) = logicalPageStatsForPosition(positionUnits)
         return "$currentPage/$totalPages"
+    }
+
+    private fun readerUnitsPerPage(): Long {
+        return when {
+            txtStreamingMode -> estimatedTxtBytesPerPage()
+            else -> pageSize.toLong().coerceAtLeast(1L)
+        }
+    }
+
+    private fun logicalPageStatsForPosition(positionUnits: Long): Pair<Long, Long> {
+        val (_, totalUnits) = readerPageUnits()
+        return logicalPageStatsForPosition(positionUnits, totalUnits)
+    }
+
+    private fun logicalPageStatsForPosition(positionUnits: Long, totalUnits: Long): Pair<Long, Long> {
+        val total = totalUnits.coerceAtLeast(1L)
+        val unitsPerPage = readerUnitsPerPage().coerceAtLeast(1L)
+        val starts = logicalChapterStarts(total)
+        if (starts.isEmpty()) {
+            val totalPages = ceilDiv(total, unitsPerPage).coerceAtLeast(1L)
+            val page = (positionUnits.coerceIn(0L, total - 1L) / unitsPerPage + 1L)
+                .coerceIn(1L, totalPages)
+            return page to totalPages
+        }
+
+        var pagesBefore = 0L
+        var totalPages = 0L
+        val safePosition = positionUnits.coerceIn(0L, total - 1L)
+        var currentPage = 1L
+        starts.forEachIndexed { index, start ->
+            val end = starts.getOrNull(index + 1) ?: total
+            val length = (end - start).coerceAtLeast(1L)
+            val pages = ceilDiv(length, unitsPerPage).coerceAtLeast(1L)
+            if (safePosition in start until end) {
+                currentPage = pagesBefore + ((safePosition - start) / unitsPerPage + 1L)
+            }
+            pagesBefore += pages
+            totalPages += pages
+        }
+        return currentPage.coerceIn(1L, totalPages.coerceAtLeast(1L)) to totalPages.coerceAtLeast(1L)
+    }
+
+    private fun logicalChapterStarts(totalUnits: Long): List<Long> {
+        val starts = epubChapterStartPositions
+            .map { it.toLong() }
+            .filter { it in 0 until totalUnits }
+            .distinct()
+            .sorted()
+            .toMutableList()
+        if (starts.isEmpty()) return emptyList()
+        if (starts.first() > 0L) starts.add(0, 0L)
+        return starts
+    }
+
+    private fun ceilDiv(value: Long, divisor: Long): Long {
+        val safeDivisor = divisor.coerceAtLeast(1L)
+        return ((value.coerceAtLeast(0L) + safeDivisor - 1L) / safeDivisor).coerceAtLeast(1L)
     }
 
     private fun renderedPageCountLabel(): String? {
@@ -1265,7 +1321,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         preserveAbsoluteAnchor: Boolean
     ) {
         beginProgrammaticScrollGuard()
-        contentView.text = currentContent
+        contentView.text = styledReadingText(currentContent)
         contentView.textSize = readerTextSize
         configureVerticalScrollIfNeeded()
         contentView.post {
@@ -1328,6 +1384,7 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     private fun applyActiveReaderMode(palette: ReaderAppearance.Palette) {
         currentBackgroundColor = palette.backgroundColor
         currentTextColor = palette.textColor
+        readerScrollView.setBackgroundColor(palette.backgroundColor)
         contentView.setBackgroundColor(palette.backgroundColor)
         contentView.setTextColor(palette.textColor)
         window.decorView.setBackgroundColor(palette.backgroundColor)
@@ -2817,8 +2874,8 @@ class ReaderActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         listOf(R.id.themePaperButton, R.id.themeEyeButton, R.id.themeWhiteButton).forEach { id ->
             findViewById<TextView>(id).apply {
-                isEnabled = !night
-                alpha = if (night) 0.35f else 1f
+                isEnabled = true
+                alpha = 1f
             }
         }
         findViewById<TextView>(R.id.themeNightButton).apply {
