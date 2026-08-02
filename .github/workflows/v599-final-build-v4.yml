@@ -1,0 +1,139 @@
+name: v599 final regression build v4
+
+on:
+  push:
+    branches: [agent/v599-page-axis-vertical-fix]
+  pull_request:
+    branches: [agent/v598-reader-only-duokan]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v599-final-regression-v4
+  cancel-in-progress: true
+
+jobs:
+  build-v599-v4:
+    if: github.event_name == 'push' || github.head_ref == 'agent/v599-page-axis-vertical-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SIMPLE_READER_VERSION_CODE: '2098000599'
+      SIMPLE_READER_VERSION_NAME: '2026.08.02.page-axis-settings.599'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v599-page-axis-vertical-fix
+          fetch-depth: 0
+
+      - name: Restore complete confirmed reader shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m bash <<'SCRIPT'
+          V595=origin/agent/v595-duokan-chapter-pages
+          files=(
+            app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt
+            app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt
+            app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt
+            app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt
+            app/src/main/java/com/simplereader/app/ui/TxtChapterIndexStore.kt
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+            app/src/main/res/layout/activity_reader.xml
+            app/src/main/res/drawable-nodpi/reader_material_frosted.png
+            app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png
+            app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
+          )
+          for path in "${files[@]}"; do
+            mkdir -p "$(dirname "$path")"
+            git show "$V595:$path" > "$path"
+          done
+          python3 scripts/v599_materialize.py
+          SCRIPT
+          grep -Fq 'arrayOf("批量管理分组", "同步书架", "一键缓存")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -Fq 'PagerSnapHelper' app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+          grep -Fq 'readerProgressLabel.setTextColor(currentTextColor)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'actualPageLabelForDocumentPosition(safePosition)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq '象牙色（日间）' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          ! grep -Fq 'drawText("TXT"' app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt
+          ! grep -Fq 'setForeground(' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          ! grep -Fq 'ForegroundInfo' app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt
+          ! grep -Fq 'isScrollbarFadingEnabled = false' app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt
+          ! grep -Fq 'android:background="#33FFFFFF"' app/src/main/res/layout/activity_reader.xml
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run v599 contract tests within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testReleaseUnitTest --tests 'com.simplereader.app.ui.V599RequirementsContractTest' --stacktrace --console=plain | tee /tmp/v599-test.log
+
+      - name: Build release within five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain | tee /tmp/v599-build.log
+
+      - name: Verify APK and commit source
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" /tmp/SimpleReader-v599-unsigned.apk
+          "$build_tools/aapt2" dump badging /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/v599-badging.log
+          grep -Fq "package: name='com.simplereader.app'" /tmp/v599-badging.log
+          grep -Fq "versionCode='2098000599'" /tmp/v599-badging.log
+          grep -Fq "versionName='2026.08.02.page-axis-settings.599'" /tmp/v599-badging.log
+          unzip -t /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/v599-unzip.log
+          sha256sum /tmp/SimpleReader-v599-unsigned.apk | tee /tmp/SimpleReader-v599-unsigned.sha256
+          git add app/build.gradle.kts \
+            app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheManager.kt \
+            app/src/main/java/com/simplereader/app/reader/cache/ReaderPageCacheWorker.kt \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
+            app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt \
+            app/src/main/java/com/simplereader/app/ui/PaperTextureData.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt \
+            app/src/main/java/com/simplereader/app/ui/TxtChapterIndexStore.kt \
+            app/src/main/java/com/simplereader/app/ui/VerticalPageFlowView.kt \
+            app/src/main/res/layout/activity_reader.xml \
+            app/src/main/res/drawable-nodpi/reader_material_frosted.png \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png
+          git diff --cached --check
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'v599: restore all confirmed settings and unified page axis'
+            git push origin HEAD:agent/v599-page-axis-vertical-fix
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v599-unsigned-v4-${{ github.run_number }}
+          path: |
+            /tmp/SimpleReader-v599-unsigned.apk
+            /tmp/v599-test.log
+            /tmp/v599-build.log
+            /tmp/v599-badging.log
+            /tmp/v599-unzip.log
+            /tmp/SimpleReader-v599-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 3
