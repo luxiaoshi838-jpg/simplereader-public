@@ -20,15 +20,14 @@ class V13InteractionContractTest {
     }
 
     @Test
-    fun `reader keeps v600 add bookmark action and immediate deletion refresh`() {
-        val text = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
-        val panels = source("src/main/java/com/simplereader/app/ui/ReaderPanels.kt")
-        assertTrue(text.contains("text = \"添\""))
-        assertTrue(text.contains("shape = GradientDrawable.OVAL"))
-        assertTrue(text.contains("confirmDeleteBookmark(row.bookmark)"))
-        assertTrue(text.contains("showCatalogBookmarks(startWithBookmarks = true)"))
-        assertTrue(panels.contains("dialog.dismiss()"))
-        assertFalse(text.contains("menu.add(Menu.NONE, MENU_PANEL"))
+    fun `bookmark creation stays in reader top bar only`() {
+        val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
+        val catalog = source("src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt")
+        assertTrue(reader.contains("text = \"添\""))
+        assertTrue(reader.contains("shape = GradientDrawable.OVAL"))
+        assertTrue(reader.contains("MENU_ADD_BOOKMARK"))
+        assertFalse(catalog.contains("添加书签"))
+        assertFalse(catalog.contains("onAddBookmark"))
     }
 
     @Test

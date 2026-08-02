@@ -1,6 +1,7 @@
 package com.simplereader.app.ui
 
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
@@ -21,7 +22,7 @@ class ReaderPageAdapter(
     private val textSizeSp: Float,
     private val lineSpacingExtra: Float,
     private val lineSpacingMultiplier: Float,
-    private val backgroundColor: Int,
+    private val backgroundFactory: () -> Drawable,
     private val textColor: Int,
     private val renderer: (ReaderPage) -> CharSequence
 ) : RecyclerView.Adapter<ReaderPageAdapter.PageHolder>() {
@@ -45,7 +46,7 @@ class ReaderPageAdapter(
             setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom)
             textSize = textSizeSp
             setTextColor(textColor)
-            setBackgroundColor(backgroundColor)
+            background = backgroundFactory()
             layoutParams = RecyclerView.LayoutParams(pageWidth, pageHeight)
         }
         return PageHolder(view)

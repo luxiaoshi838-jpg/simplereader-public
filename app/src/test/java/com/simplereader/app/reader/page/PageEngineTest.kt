@@ -19,7 +19,7 @@ class PageEngineTest {
         contentPaddingLeftPx = 84,
         contentPaddingTopPx = 78,
         contentPaddingRightPx = 84,
-        contentPaddingBottomPx = 118,
+        contentPaddingBottomPx = 26,
         textSizePx = textSize,
         typefaceKey = "default",
         lineSpacingExtraPx = 0f,

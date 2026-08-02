@@ -1,0 +1,12 @@
+895c0224bc136adb9638f2578aabb74cb3c6f80b6c16f86580f8f4267e3fa3fd  app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+49a836bcd4b1fd98618f5aa651352a210c378fa2d07b8d7920ea9f41f84f7a35  app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
+88685514ba3fad295b17f05e9476743668d01daeee04336707b2ab99d6f92420  app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt
+fee5577889d215e5b775841e04d64a29ae23fafd5b99e391f68ea0273bb8e9a2  app/src/main/java/com/simplereader/app/ui/ReaderAppearance.kt
+231dc5e0730d63405f563e394fe43563fccdd0854f8e374f958b458a927cb389  app/src/main/java/com/simplereader/app/ui/ReaderSurfaceDrawable.kt
+3ea168423d3cf20e1f2d439ea91354d81d704a60511b04fb9edd2f5a8d270ae4  app/src/main/java/com/simplereader/app/ui/ReaderCatalogSheet.kt
+5a5ff216ca7dc4e88a64e6e70ec8368a28b536c23c9b80556ab18e8231783bf0  app/src/main/java/com/simplereader/app/ui/ReaderSearchSheet.kt
+aed8ef853e031786b5e45f848c0a3ac1367834eafa502063459423bcf7ac9d90  app/src/main/java/com/simplereader/app/ui/ReaderPageAdapter.kt
+2522c5dc3725b070a293881039993f6b6e17ce124caacac05739ffcc45125915  app/src/main/res/layout/activity_main.xml
+136cc1af2f358a9b1e070fe1ae6ce98527caf3246f0bc48349fe502b9f5e35ee  app/src/main/res/layout/activity_reader.xml
+57681038afd005dcd260eabdd6d16619709c4a3fe20324362ea00e093e85b5fd  app/src/main/res/values/colors.xml
+21985dac0382a8521fd4611b9ba8da5b04764287a96c821ebf9a2cfc9688efa3  app/src/main/res/values/styles.xml

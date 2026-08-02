@@ -72,6 +72,7 @@ class ReaderActivity : AppCompatActivity() {
     private var suppressScrollCallback: Boolean = false
     private var searchKeyword: String = ""
     private var searchHits: List<SearchPageHit> = emptyList()
+    private var pageAnimationRunning = false
 
     private val gestureDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -183,7 +184,7 @@ class ReaderActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             itemAnimator = null
             setHasFixedSize(true)
-            setBackgroundColor(ReaderAppearance.palette(this@ReaderActivity).backgroundColor)
+            background = ReaderSurfaceDrawable(ReaderAppearance.palette(this@ReaderActivity).backgroundColor)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -376,7 +377,7 @@ class ReaderActivity : AppCompatActivity() {
             contentPaddingLeftPx = fallbackTextView.paddingLeft,
             contentPaddingTopPx = fallbackTextView.paddingTop,
             contentPaddingRightPx = fallbackTextView.paddingRight,
-            contentPaddingBottomPx = fallbackTextView.paddingBottom,
+            contentPaddingBottomPx = dp(26),
             textSizePx = readerTextSizeSp * resources.displayMetrics.scaledDensity,
             typefaceKey = "default",
             lineSpacingExtraPx = 0f,
@@ -401,7 +402,7 @@ class ReaderActivity : AppCompatActivity() {
             textSizeSp = readerTextSizeSp,
             lineSpacingExtra = 0f,
             lineSpacingMultiplier = settings.lineSpacingMultiplier,
-            backgroundColor = palette.backgroundColor,
+            backgroundFactory = { ReaderSurfaceDrawable(palette.backgroundColor) },
             textColor = palette.textColor,
             renderer = ::renderPage
         )
@@ -462,20 +463,122 @@ class ReaderActivity : AppCompatActivity() {
         val pages = readerBook?.pages ?: return
         if (pages.isEmpty()) return
         val target = index.coerceIn(0, pages.lastIndex)
-        suppressScrollCallback = true
-        if (animate && pageTurnMode != TURN_MODE_VERTICAL) {
-            pageList.smoothScrollToPosition(target)
-        } else {
-            layoutManager.scrollToPositionWithOffset(target, 0)
+        if (animate && target != currentPageIndex) {
+            animatePageChange(target, if (target > currentPageIndex) 1 else -1, highlight)
+            return
         }
+        applyPagePosition(target, highlight)
+    }
+
+    private fun applyPagePosition(target: Int, highlight: SearchPageHit? = null) {
+        suppressScrollCallback = true
+        layoutManager.scrollToPositionWithOffset(target, 0)
         setCurrentPage(target)
         highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
             ?: pageAdapter?.clearHighlight()
-        pageList.postDelayed({ suppressScrollCallback = false; updateCurrentPageFromViewport() }, 180L)
+        pageList.postDelayed({
+            suppressScrollCallback = false
+            updateCurrentPageFromViewport()
+        }, 120L)
+    }
+
+    private fun animatePageChange(target: Int, direction: Int, highlight: SearchPageHit?) {
+        if (pageAnimationRunning) return
+        pageAnimationRunning = true
+        suppressScrollCallback = true
+        pageList.animate().cancel()
+        resetPageTransform()
+        val width = pageList.width.coerceAtLeast(1).toFloat()
+
+        fun switchPage() {
+            layoutManager.scrollToPositionWithOffset(target, 0)
+            setCurrentPage(target)
+            highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
+                ?: pageAdapter?.clearHighlight()
+        }
+        fun finish() {
+            resetPageTransform()
+            pageAnimationRunning = false
+            suppressScrollCallback = false
+            updateCurrentPageFromViewport()
+        }
+
+        when (pageTurnMode) {
+            TURN_MODE_VERTICAL -> {
+                pageList.smoothScrollToPosition(target)
+                setCurrentPage(target)
+                pageList.postDelayed({ finish() }, 220L)
+            }
+            TURN_MODE_HORIZONTAL -> {
+                pageList.smoothScrollToPosition(target)
+                setCurrentPage(target)
+                highlight?.let { pageAdapter?.setHighlight(it.startOffset, it.endOffset) }
+                    ?: pageAdapter?.clearHighlight()
+                pageList.postDelayed({ finish() }, 240L)
+            }
+            TURN_MODE_SIMULATE -> {
+                pageList.cameraDistance = width * 9f
+                pageList.pivotX = if (direction > 0) 0f else width
+                pageList.animate()
+                    .rotationY(-direction * 17f)
+                    .alpha(0.62f)
+                    .setDuration(125L)
+                    .withEndAction {
+                        switchPage()
+                        pageList.rotationY = direction * 17f
+                        pageList.alpha = 0.62f
+                        pageList.animate()
+                            .rotationY(0f)
+                            .alpha(1f)
+                            .setDuration(165L)
+                            .withEndAction { finish() }
+                            .start()
+                    }
+                    .start()
+            }
+            TURN_MODE_FADE -> {
+                pageList.animate()
+                    .alpha(0f)
+                    .setDuration(95L)
+                    .withEndAction {
+                        switchPage()
+                        pageList.animate().alpha(1f).setDuration(135L).withEndAction { finish() }.start()
+                    }
+                    .start()
+            }
+            else -> {
+                pageList.animate()
+                    .translationX(-direction * width * 0.10f)
+                    .alpha(0.82f)
+                    .setDuration(105L)
+                    .withEndAction {
+                        switchPage()
+                        pageList.translationX = direction * width * 0.045f
+                        pageList.alpha = 0.92f
+                        pageList.animate()
+                            .translationX(0f)
+                            .alpha(1f)
+                            .setDuration(135L)
+                            .withEndAction { finish() }
+                            .start()
+                    }
+                    .start()
+            }
+        }
+    }
+
+    private fun resetPageTransform() {
+        pageList.translationX = 0f
+        pageList.translationY = 0f
+        pageList.rotationY = 0f
+        pageList.alpha = 1f
+        pageList.pivotX = pageList.width / 2f
     }
 
     private fun turnPage(direction: Int) {
-        jumpToPage(currentPageIndex + direction, true)
+        val pages = readerBook?.pages ?: return
+        val target = (currentPageIndex + direction).coerceIn(0, pages.lastIndex)
+        if (target != currentPageIndex) animatePageChange(target, direction, null)
     }
 
     private fun jumpChapter(direction: Int) {
@@ -498,14 +601,13 @@ class ReaderActivity : AppCompatActivity() {
                 val pageIndex = resolveBookmarkPage(bookmark, paged)
                 BookmarkPageRow(bookmark, "${pageIndex + 1}/${paged.pages.size}")
             }
-            ReaderPanels.showCatalogAndBookmarks(
+            ReaderCatalogSheet.show(
                 activity = this@ReaderActivity,
                 catalog = catalog,
                 bookmarks = bookmarkRows,
                 startWithBookmarks = startWithBookmarks,
                 onCatalog = { jumpToPage(it.globalPageIndex, false) },
                 onBookmark = { jumpToPage(resolveBookmarkPage(it.bookmark, paged), false) },
-                onAddBookmark = ::addBookmark,
                 onDeleteBookmark = { row -> confirmDeleteBookmark(row.bookmark) }
             )
         }
@@ -546,7 +648,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showSearch() {
         val paged = readerBook ?: return
-        ReaderPanels.showSearch(
+        ReaderSearchSheet.show(
             activity = this,
             initialKeyword = searchKeyword,
             initialHits = searchHits,
@@ -653,10 +755,10 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun applyPalette(rebuildPages: Boolean) {
         val palette = ReaderAppearance.palette(this)
-        pageList.setBackgroundColor(palette.backgroundColor)
-        fallbackTextView.setBackgroundColor(palette.backgroundColor)
+        pageList.background = ReaderSurfaceDrawable(palette.backgroundColor)
+        fallbackTextView.background = ReaderSurfaceDrawable(palette.backgroundColor)
         fallbackTextView.setTextColor(palette.textColor)
-        (readerScrollView.parent as? View)?.setBackgroundColor(palette.backgroundColor)
+        (readerScrollView.parent as? View)?.background = ReaderSurfaceDrawable(palette.backgroundColor)
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
         if (readerBook != null) showPagedBook(currentPageIndex)
