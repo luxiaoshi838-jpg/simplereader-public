@@ -28,9 +28,9 @@
             android:layout_height="wrap_content"
             android:lineSpacingMultiplier="1.75"
             android:paddingStart="28dp"
-            android:paddingTop="50dp"
+            android:paddingTop="24dp"
             android:paddingEnd="28dp"
-            android:paddingBottom="0dp"
+            android:paddingBottom="24dp"
             android:textColor="#3B3428"
             android:textSize="20sp" />
     </androidx.core.widget.NestedScrollView>

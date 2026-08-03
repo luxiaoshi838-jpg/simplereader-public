@@ -20,6 +20,10 @@ done
 grep -R --line-number --fixed-strings 'drawText("TXT"' app/src/main/java && fail "TXT cover text is forbidden" || true
 grep -R --line-number --fixed-strings 'txtPaint' app/src/main/java && fail "TXT cover paint is forbidden" || true
 
+grep -R --line-number --fixed-strings 'book_cover_default_txt' app/src/main && fail "TXT badge cover resource/reference is forbidden" || true
+test -e app/src/main/res/drawable-nodpi/book_cover_default_generic.webp || fail "generic default cover missing"
+grep -q 'android:name=".App"' app/src/main/AndroidManifest.xml || fail "App crash logger is not registered"
+
 # Exact confirmed reader structures.
 grep -q 'showCatalogBookmarkPanelV600' "$reader" || fail "v600 catalog/bookmark panel missing"
 grep -q 'window.setGravity(Gravity.START or Gravity.CENTER_VERTICAL)' "$reader" || fail "v600 side panel placement missing"
@@ -32,21 +36,23 @@ grep -q 'readerScrollView.visibility = View.VISIBLE' "$reader" || fail "continuo
 ! grep -q 'PagerSnapHelper' "$reader" || fail "vertical/page snap helper is forbidden"
 ! grep -q 'RecyclerView' "$reader" || fail "reader page containers are forbidden in ReaderActivity"
 
-grep -q 'contentPaddingBottomPx = 0' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "per-page bottom reservation must be zero"
-grep -q 'bottomPaddingPx = 0' "$reader" || fail "horizontal renderer bottom reservation must be zero"
+grep -q 'CONTENT_BOTTOM_PADDING_DP = 24' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "reader bottom guard must be one character"
+grep -q 'bottomPaddingPx = settings.contentPaddingBottomPx' "$reader" || fail "horizontal renderer must honor the bottom guard"
 ! grep -q 'paddingBottom="118dp"' "$layout" || fail "118dp page gap is forbidden"
-grep -q 'android:paddingBottom="0dp"' "$layout" || fail "continuous document must not add per-page bottom space"
+grep -q 'android:paddingBottom="24dp"' "$layout" || fail "continuous reader bottom guard must be one character"
 ! grep -q '#33FFFFFF' "$layout" || fail "progress indicator background block is forbidden"
 ! grep -A14 '@+id/readerProgressLabel' "$layout" | grep -q 'android:background=' || fail "progress indicator must be plain text without a box"
 
-grep -q 'styledWholeText' "$engine" || fail "whole-book continuous styling missing"
+grep -q 'styledWholeText' "$engine" || fail "continuous styling missing"
+grep -q 'renderContinuousWindow' "$reader" || fail "bounded continuous window missing"
+grep -q 'CONTINUOUS_PAGES_AFTER' "$reader" || fail "bounded continuous window size missing"
 ! grep -q 'TxtParser.isLikelyChapterTitle' "$engine" || fail "non-chapter title guessing is forbidden"
 
 test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "confirmed layered background source missing"
 test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt || fail "confirmed background picker missing"
 test -e app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt || fail "confirmed horizontal renderer missing"
 
-grep -q 'android:paddingTop="50dp"' "$layout" || fail "reader text top must be v612 padding plus one character"
+grep -q 'android:paddingTop="24dp"' "$layout" || fail "reader text top guard must be one character"
 ! sed -n '1,8p' "$layout" | grep -q 'android:paddingTop=' || fail "reader root layout must keep the v612 top boundary"
 grep -q 'TITLE_SIZE_DELTA_SP = 2f' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "chapter title must be exactly 2sp larger"
 grep -q 'updateCurrentChapterTitle' "$reader" || fail "reader chrome must use current chapter title"
@@ -55,7 +61,8 @@ test -e app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fai
 grep -q 'ExistingWorkPolicy.KEEP' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fail "background cache must remain unique and persistent"
 grep -q 'hasCurrentCatalog' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fail "no-catalog mode must skip books with a current catalog"
 grep -q 'forceCatalogRefresh = true' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fail "selected books must be re-recognized"
-grep -q 'CATALOG_RULE_VERSION' app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt || fail "catalog rule version must invalidate old recognitions"
+grep -q 'CATALOG_RULE_VERSION' app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt || fail "catalog rule version must be recorded"
+grep -q 'MANIFEST_PREFIX' app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt || fail "layout-specific page manifests missing"
 grep -q 'arrayOf("书架目录缓存", "批量管理分组", "同步书架")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt || fail "shelf catalog cache entry missing from shelf management"
 grep -q 'arrayOf("全书架目录缓存", "全书架无目录书籍缓存")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt || fail "shelf catalog cache options missing"
 grep -q 'MODE_BOOKS_WITHOUT_CATALOG' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fail "no-catalog shelf cache mode missing"

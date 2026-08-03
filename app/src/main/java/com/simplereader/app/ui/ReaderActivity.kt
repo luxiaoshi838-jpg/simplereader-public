@@ -81,6 +81,9 @@ class ReaderActivity : AppCompatActivity() {
     private var activeSearchHit: SearchPageHit? = null
     private var continuousHighlightSpan: BackgroundColorSpan? = null
     private var suppressContinuousScroll = false
+    private var continuousWindowStartOffset = 0
+    private var continuousWindowEndOffset = 0
+    private var continuousWindowShiftPosted = false
     private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
     private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
     private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
@@ -211,6 +214,7 @@ class ReaderActivity : AppCompatActivity() {
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
             clearSearchHighlight()
             updateContinuousPosition(scrollY)
+            scheduleContinuousWindowShift(scrollY)
         }
     }
 
@@ -403,7 +407,7 @@ class ReaderActivity : AppCompatActivity() {
                 textColor = palette.textColor,
                 horizontalPaddingPx = settings.contentPaddingLeftPx,
                 topPaddingPx = settings.contentPaddingTopPx,
-                bottomPaddingPx = 0,
+                bottomPaddingPx = settings.contentPaddingBottomPx,
                 lineSpacingMultiplier = settings.lineSpacingMultiplier,
                 typeface = Typeface.DEFAULT,
                 backgroundFactory = { activeBackgroundDrawable() }
@@ -469,19 +473,45 @@ class ReaderActivity : AppCompatActivity() {
         continuousTextView.setTextColor(activePalette().textColor)
         continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
         readerScrollView.background = activeBackgroundDrawable()
-        continuousRenderJob?.cancel()
         val offset = targetOffset ?: paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
+        renderContinuousWindow(offset)
+    }
+
+    /**
+     * Vertical mode renders only a bounded page neighborhood. A multi-megabyte novel is never
+     * assigned to one TextView/StaticLayout, preventing blank jumps, frozen scrolling and OOM exits.
+     */
+    private fun renderContinuousWindow(targetOffset: Int) {
+        val paged = readerBook ?: return
+        val settings = layoutSettings ?: return
+        if (paged.pages.isEmpty()) return
+        val targetPage = paged.pageForOffset(targetOffset).globalPageIndex
+        val firstPage = (targetPage - CONTINUOUS_PAGES_BEFORE).coerceAtLeast(0)
+        val lastPage = (targetPage + CONTINUOUS_PAGES_AFTER).coerceAtMost(paged.pages.lastIndex)
+        val startOffset = paged.pages[firstPage].startOffset.coerceIn(0, paged.text.length)
+        val endOffset = paged.pages[lastPage].endOffset.coerceIn(startOffset, paged.text.length)
+        val windowText = paged.text.substring(startOffset, endOffset)
+        val localChapters = paged.chapters.mapNotNull { chapter ->
+            if (chapter.startOffset !in startOffset until endOffset) return@mapNotNull null
+            chapter.copy(
+                startOffset = chapter.startOffset - startOffset,
+                endOffset = (chapter.endOffset - startOffset).coerceIn(0, windowText.length)
+            )
+        }
+        continuousRenderJob?.cancel()
         continuousRenderJob = lifecycleScope.launch {
             val styled = withContext(Dispatchers.Default) {
                 PageEngine.styledWholeText(
-                    paged.text,
-                    paged.chapters,
+                    windowText,
+                    localChapters,
                     settings
                 ) { href, width, height -> imageRepository?.span(href, width, height) }
             }
+            continuousWindowStartOffset = startOffset
+            continuousWindowEndOffset = endOffset
             continuousTextView.setText(styled, TextView.BufferType.SPANNABLE)
             applyContinuousHighlight()
-            scrollContinuousToOffset(offset)
+            scrollContinuousToOffset(targetOffset)
         }
     }
 
@@ -489,31 +519,55 @@ class ReaderActivity : AppCompatActivity() {
         val loaded = document ?: return showFatal(reason)
         pagedReaderView.visibility = View.GONE
         readerScrollView.visibility = View.VISIBLE
-        continuousTextView.text = loaded.text
+        continuousWindowStartOffset = 0
+        continuousWindowEndOffset = loaded.text.length.coerceAtMost(CONTINUOUS_FALLBACK_CHARS)
+        continuousTextView.text = loaded.text.substring(continuousWindowStartOffset, continuousWindowEndOffset)
         continuousTextView.textSize = readerTextSizeSp
         continuousTextView.setTextColor(activePalette().textColor)
         readerScrollView.background = activeBackgroundDrawable()
         progressLabel.text = "可读模式"
-        Toast.makeText(this, "分页失败，已切换连续阅读：$reason", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "分页失败，已打开有限文本窗口：$reason", Toast.LENGTH_LONG).show()
+    }
+
+    private fun sourceOffsetAtScroll(scrollY: Int): Int {
+        val layout = continuousTextView.layout ?: return continuousWindowStartOffset
+        if (layout.lineCount <= 0) return continuousWindowStartOffset
+        val localY = (scrollY - continuousTextView.top).coerceAtLeast(0)
+        val line = layout.getLineForVertical(localY.coerceAtMost(layout.height))
+        val localOffset = layout.getLineStart(line).coerceIn(0, continuousTextView.text.length)
+        return (continuousWindowStartOffset + localOffset)
+            .coerceIn(continuousWindowStartOffset, continuousWindowEndOffset)
     }
 
     private fun updateContinuousPosition(scrollY: Int) {
-        val layout = continuousTextView.layout ?: return
-        if (layout.lineCount <= 0) return
-        val localY = (scrollY - continuousTextView.top).coerceAtLeast(0)
-        val line = layout.getLineForVertical(localY.coerceAtMost(layout.height))
-        val offset = layout.getLineStart(line).coerceAtLeast(0)
+        val offset = sourceOffsetAtScroll(scrollY)
         readerBook?.let {
             currentPageIndex = it.pageForOffset(offset).globalPageIndex
             updateProgressUi()
         }
     }
 
+    private fun scheduleContinuousWindowShift(scrollY: Int) {
+        val paged = readerBook ?: return
+        if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
+        val threshold = readerScrollView.height
+        val nearTop = scrollY < threshold && continuousWindowStartOffset > 0
+        val nearBottom = scrollY + readerScrollView.height > continuousTextView.height - threshold &&
+            continuousWindowEndOffset < paged.text.length
+        if (!nearTop && !nearBottom) return
+        val anchorOffset = sourceOffsetAtScroll(scrollY)
+        continuousWindowShiftPosted = true
+        readerScrollView.postDelayed({
+            continuousWindowShiftPosted = false
+            if (pageTurnMode == TURN_MODE_VERTICAL) renderContinuousWindow(anchorOffset)
+        }, CONTINUOUS_SHIFT_DELAY_MS)
+    }
+
     private fun scrollContinuousToOffset(offset: Int) {
         continuousTextView.post {
             val layout = continuousTextView.layout ?: return@post
-            val safe = offset.coerceIn(0, continuousTextView.text.length)
-            val line = layout.getLineForOffset(safe)
+            val localOffset = (offset - continuousWindowStartOffset).coerceIn(0, continuousTextView.text.length)
+            val line = layout.getLineForOffset(localOffset)
             suppressContinuousScroll = true
             readerScrollView.scrollTo(0, layout.getLineTop(line).coerceAtLeast(0))
             readerScrollView.post { suppressContinuousScroll = false }
@@ -535,8 +589,13 @@ class ReaderActivity : AppCompatActivity() {
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         if (pageTurnMode == TURN_MODE_VERTICAL) {
-            applyContinuousHighlight()
-            scrollContinuousToOffset(pages[currentPageIndex].startOffset)
+            val targetOffset = pages[currentPageIndex].startOffset
+            if (targetOffset !in continuousWindowStartOffset until continuousWindowEndOffset) {
+                renderContinuousWindow(targetOffset)
+            } else {
+                applyContinuousHighlight()
+                scrollContinuousToOffset(targetOffset)
+            }
         } else {
             pagedReaderView.cancelNavigation()
             bindHorizontalPages()
@@ -742,8 +801,9 @@ class ReaderActivity : AppCompatActivity() {
         continuousHighlightSpan?.let { text.removeSpan(it) }
         continuousHighlightSpan = null
         val hit = activeSearchHit ?: return
-        val start = hit.startOffset.coerceIn(0, text.length)
-        val end = hit.endOffset.coerceIn(start, text.length)
+        if (hit.endOffset <= continuousWindowStartOffset || hit.startOffset >= continuousWindowEndOffset) return
+        val start = (hit.startOffset - continuousWindowStartOffset).coerceIn(0, text.length)
+        val end = (hit.endOffset - continuousWindowStartOffset).coerceIn(start, text.length)
         if (end > start) {
             val span = BackgroundColorSpan(Color.rgb(255, 226, 105))
             text.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -970,5 +1030,9 @@ class ReaderActivity : AppCompatActivity() {
         private const val TURN_MODE_FADE = "fade"
         private const val MENU_ADD_BOOKMARK = 2
         private const val MENU_SEARCH = 5
+        private const val CONTINUOUS_PAGES_BEFORE = 24
+        private const val CONTINUOUS_PAGES_AFTER = 48
+        private const val CONTINUOUS_SHIFT_DELAY_MS = 120L
+        private const val CONTINUOUS_FALLBACK_CHARS = 240_000
     }
 }
