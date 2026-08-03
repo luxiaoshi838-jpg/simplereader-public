@@ -1,0 +1,56 @@
+name: Export v618 Android build tools
+
+on:
+  push:
+    branches:
+      - agent/v618-build-tools
+    paths:
+      - .github/workflows/export-v618-build-tools.yml
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    if: github.event.head_commit.message != 'Record v618 toolchain run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          printf '%s\n' "$GITHUB_RUN_ID" > .automation/v618-toolchain-run.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .automation/v618-toolchain-run.txt
+          git commit -m 'Record v618 toolchain run'
+          git push
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install exact Android Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=KILL 120s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;33.0.1"'
+      - name: Pack JDK and Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v618-toolchain/android-sdk/build-tools
+          cp -aL "$JAVA_HOME" /tmp/v618-toolchain/jdk17
+          cp -a "$ANDROID_HOME/build-tools/33.0.1" /tmp/v618-toolchain/android-sdk/build-tools/
+          tar -C /tmp/v618-toolchain -czf /tmp/v618-toolchain.tar.gz .
+          sha256sum /tmp/v618-toolchain.tar.gz > /tmp/v618-toolchain.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-v618-build-tools
+          path: |
+            /tmp/v618-toolchain.tar.gz
+            /tmp/v618-toolchain.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
