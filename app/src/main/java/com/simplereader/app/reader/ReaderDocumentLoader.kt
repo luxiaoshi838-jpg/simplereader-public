@@ -21,12 +21,12 @@ data class ReaderDocument(
 )
 
 object ReaderDocumentLoader {
-    fun load(context: Context, book: Book): ReaderDocument {
+    fun load(context: Context, book: Book, forceCatalogRefresh: Boolean = false): ReaderDocument {
         val format = book.format.uppercase()
         require(format == "TXT" || format == "EPUB") { "当前仅支持 TXT 与 EPUB" }
         val source = resolveDocument(context, book)
         return when (format) {
-            "TXT" -> loadTxt(context, book, source)
+            "TXT" -> loadTxt(context, book, source, forceCatalogRefresh)
             else -> loadEpub(context, book, source)
         }
     }
@@ -62,7 +62,12 @@ object ReaderDocumentLoader {
         return runCatching { current.findFile(fileName) }.getOrNull()?.takeIf { it.isFile && it.exists() }
     }
 
-    private fun loadTxt(context: Context, book: Book, source: DocumentFile?): ReaderDocument {
+    private fun loadTxt(
+        context: Context,
+        book: Book,
+        source: DocumentFile?,
+        forceCatalogRefresh: Boolean
+    ): ReaderDocument {
         val sourceSize = source?.length()?.takeIf { it >= 0L } ?: book.fileSize ?: -1L
         val sourceModified = source?.lastModified()?.takeIf { it > 0L } ?: book.lastModified ?: 0L
         PageCacheStore.loadNormalizedTxt(
@@ -73,9 +78,25 @@ object ReaderDocumentLoader {
             lastModified = sourceModified
         )?.let { cached ->
             val text = cached.textFile.readText(Charsets.UTF_8)
+            val chapters = if (!forceCatalogRefresh && cached.catalogRuleVersion == TxtParser.CATALOG_RULE_VERSION) {
+                cached.chapters
+            } else {
+                detectTxtChapters(text).also { refreshed ->
+                    PageCacheStore.saveNormalizedTxt(
+                        context = context,
+                        bookId = book.id,
+                        filePath = book.filePath,
+                        fileSize = sourceSize.takeIf { it >= 0L } ?: text.length.toLong(),
+                        lastModified = sourceModified,
+                        normalizedText = text,
+                        chapters = refreshed,
+                        charsetName = cached.charsetName
+                    )
+                }
+            }
             return ReaderDocument(
                 text = text,
-                chapters = cached.chapters,
+                chapters = chapters,
                 sourceSize = sourceSize.takeIf { it >= 0L } ?: text.length.toLong(),
                 sourceModified = sourceModified,
                 charsetName = cached.charsetName,
@@ -147,21 +168,62 @@ object ReaderDocumentLoader {
 
     private fun detectTxtChapters(text: String): List<BookChapter> {
         if (text.isBlank()) return listOf(BookChapter("正文", 0, text.length))
-        val hits = mutableListOf<Pair<String, Int>>()
-        var start = 0
-        while (start < text.length) {
-            val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
-            val raw = text.substring(start, end).trim()
-            TxtParser.extractChapterTitle(raw)?.let { title ->
-                if (hits.lastOrNull()?.second?.let { start - it >= 20 } != false) hits += title to start
+
+        data class LineInfo(
+            val raw: String,
+            val startOffset: Int,
+            val previousBlank: Boolean,
+            val nextBlank: Boolean
+        )
+
+        val lines = mutableListOf<LineInfo>()
+        var cursor = 0
+        var previousBlank = true
+        while (cursor <= text.length) {
+            val end = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+            val raw = text.substring(cursor, end).trim()
+            val nextStart = (end + 1).coerceAtMost(text.length)
+            val nextEnd = if (nextStart < text.length) {
+                text.indexOf('\n', nextStart).let { if (it < 0) text.length else it }
+            } else {
+                text.length
             }
-            start = end + 1
+            val nextBlank = nextStart >= text.length || text.substring(nextStart, nextEnd).isBlank()
+            lines += LineInfo(raw, cursor, previousBlank, nextBlank)
+            previousBlank = raw.isBlank()
+            if (end >= text.length) break
+            cursor = end + 1
+        }
+
+        fun collectStructured(): List<Pair<String, Int>> =
+            lines.mapNotNull { line ->
+                TxtParser.extractStructuredChapterTitle(line.raw)?.let { it to line.startOffset }
+            }
+
+        fun collectFallback(): List<Pair<String, Int>> =
+            lines.mapNotNull { line ->
+                if (!(line.previousBlank || line.nextBlank)) return@mapNotNull null
+                TxtParser.extractFallbackChapterTitle(line.raw)?.let { it to line.startOffset }
+            }
+
+        val structured = collectStructured()
+        val selected = if (structured.isNotEmpty()) structured else collectFallback()
+        val hits = selected.fold(mutableListOf<Pair<String, Int>>()) { output, hit ->
+            if (output.lastOrNull()?.second?.let { hit.second - it >= 20 } != false) output += hit
+            output
         }
         if (hits.isEmpty()) return listOf(BookChapter("正文", 0, text.length))
+
         val output = mutableListOf<BookChapter>()
-        if (hits.first().second > 0) output += BookChapter("正文", 0, hits.first().second, catalogVisible = false)
+        if (hits.first().second > 0) {
+            output += BookChapter("正文", 0, hits.first().second, catalogVisible = false)
+        }
         hits.forEachIndexed { index, hit ->
-            output += BookChapter(hit.first, hit.second, hits.getOrNull(index + 1)?.second ?: text.length)
+            output += BookChapter(
+                title = hit.first,
+                startOffset = hit.second,
+                endOffset = hits.getOrNull(index + 1)?.second ?: text.length
+            )
         }
         return output
     }

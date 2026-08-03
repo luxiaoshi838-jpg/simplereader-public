@@ -36,12 +36,14 @@ import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.Bookmark
 import com.simplereader.app.data.entity.ReadProgress
+import com.simplereader.app.parser.TxtParser
 import com.simplereader.app.reader.ReaderDocument
 import com.simplereader.app.reader.ReaderDocumentLoader
 import com.simplereader.app.reader.ReaderImageRepository
 import com.simplereader.app.reader.page.PageCacheStore
 import com.simplereader.app.reader.page.PageEngine
 import com.simplereader.app.reader.page.ReaderBook
+import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
 import kotlinx.coroutines.Dispatchers
@@ -279,8 +281,8 @@ class ReaderActivity : AppCompatActivity() {
                 val selected = withContext(Dispatchers.IO) { database.bookDao().getBook(bookId) }
                     ?: error("书籍记录不存在")
                 book = selected
-                title = selected.title
-                supportActionBar?.title = selected.title
+                title = ""
+                supportActionBar?.title = ""
                 if (selected.format.equals("CHM", ignoreCase = true)) {
                     error("当前版本已停止支持 CHM：请改用 TXT 或 EPUB")
                 }
@@ -319,7 +321,8 @@ class ReaderActivity : AppCompatActivity() {
                     loaded.sourceSize,
                     loaded.sourceModified,
                     settings.stableHash(),
-                    PageCacheStore.textFingerprint(loaded.text)
+                    PageCacheStore.textFingerprint(loaded.text),
+                    TxtParser.CATALOG_RULE_VERSION
                 )
                 val cached = withContext(Dispatchers.IO) {
                     PageCacheStore.loadPages(this@ReaderActivity, identity, loaded.text)
@@ -345,9 +348,19 @@ class ReaderActivity : AppCompatActivity() {
                 }
                 currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
                 showActiveReader()
-                if (cached == null) {
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        runCatching { PageCacheStore.savePages(this@ReaderActivity, identity, paged) }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        if (cached == null) {
+                            PageCacheStore.savePages(this@ReaderActivity, identity, paged)
+                        }
+                        PageCacheStore.markRecognitionComplete(
+                            context = this@ReaderActivity,
+                            bookId = selectedBook.id,
+                            fileName = selectedBook.fileName,
+                            fileSize = selectedBook.fileSize,
+                            chapterCount = paged.chapters.count { it.catalogVisible },
+                            pageCount = paged.pages.size
+                        )
                     }
                 }
             } catch (error: Throwable) {
@@ -356,18 +369,18 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun createLayoutSettings(): ReaderLayoutSettings = ReaderLayoutSettings(
-        viewportWidthPx = pagedReaderView.width.coerceAtLeast(1),
-        viewportHeightPx = pagedReaderView.height.coerceAtLeast(1),
-        contentPaddingLeftPx = continuousTextView.paddingLeft,
-        contentPaddingTopPx = continuousTextView.paddingTop,
-        contentPaddingRightPx = continuousTextView.paddingRight,
-        contentPaddingBottomPx = 0,
-        textSizePx = readerTextSizeSp * resources.displayMetrics.scaledDensity,
-        typefaceKey = "default",
-        lineSpacingExtraPx = 0f,
-        lineSpacingMultiplier = 1.75f
-    )
+    private fun createLayoutSettings(): ReaderLayoutSettings {
+        ReaderCacheProfile.rememberViewport(this, pagedReaderView.width, pagedReaderView.height)
+        return ReaderCacheProfile.createSettings(
+            context = this,
+            textSizeSp = readerTextSizeSp,
+            viewportWidthPx = pagedReaderView.width,
+            viewportHeightPx = pagedReaderView.height,
+            contentPaddingLeftPx = continuousTextView.paddingLeft,
+            contentPaddingTopPx = continuousTextView.paddingTop,
+            contentPaddingRightPx = continuousTextView.paddingRight
+        )
+    }
 
     private fun showActiveReader() {
         if (pageTurnMode == TURN_MODE_VERTICAL) showContinuousBook() else showHorizontalBook()
@@ -577,6 +590,9 @@ class ReaderActivity : AppCompatActivity() {
             fun render() {
                 catalogButton.isEnabled = !showingCatalog
                 bookmarkButton.isEnabled = showingCatalog
+                dialog?.setTitle(
+                    if (showingCatalog) "目录　${book?.title.orEmpty()}" else "书签"
+                )
                 if (showingCatalog) {
                     val visible = paged.chapters.mapIndexedNotNull { index, chapter ->
                         chapter.takeIf { it.catalogVisible }?.let { index to it }
@@ -585,7 +601,7 @@ class ReaderActivity : AppCompatActivity() {
                     val highlighted = visible.indexOfFirst { it.first == currentChapter }
                     val labels = visible.mapIndexed { rowIndex, (chapterIndex, chapter) ->
                         val page = paged.firstPageOfChapter(chapterIndex)
-                        val label = "${rowIndex + 1}. ${chapter.title}\n第 ${page + 1}/${paged.pages.size} 页"
+                        val label = "${rowIndex + 1}.${chapter.title}\n第 ${page + 1}/${paged.pages.size} 页"
                         if (chapterIndex != currentChapter) label else SpannableString(label).apply {
                             val end = label.indexOf('\n').let { if (it < 0) label.length else it }
                             setSpan(StyleSpan(Typeface.BOLD), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -629,7 +645,7 @@ class ReaderActivity : AppCompatActivity() {
             bookmarkButton.setOnClickListener { showingCatalog = false; render() }
             render()
             dialog = AlertDialog.Builder(this@ReaderActivity)
-                .setTitle(if (showingCatalog) "目录" else "书签")
+                .setTitle(if (showingCatalog) "目录　${book?.title.orEmpty()}" else "书签")
                 .setView(container)
                 .create()
             dialog.setCanceledOnTouchOutside(true)
@@ -860,6 +876,22 @@ class ReaderActivity : AppCompatActivity() {
         currentPageIndex = currentPageIndex.coerceIn(0, pages.lastIndex)
         progressLabel.text = "${currentPageIndex + 1}/${pages.size}"
         progressSeekBar.progress = if (pages.size <= 1) 0 else ((currentPageIndex.toFloat() / (pages.size - 1)) * 1000).toInt()
+        updateCurrentChapterTitle()
+    }
+
+    private fun updateCurrentChapterTitle() {
+        val paged = readerBook ?: return
+        val page = paged.pages.getOrNull(currentPageIndex) ?: return
+        val rawTitle = paged.chapters.getOrNull(page.chapterIndex)?.title.orEmpty().trim()
+        val explicitChapter = Regex(
+            "第\\s*[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*(?:单元|章|节|篇|部|卷|回|集)"
+        ).find(rawTitle)
+        val chapterTitle = (explicitChapter?.let { rawTitle.substring(it.range.first) }
+            ?: rawTitle.replace(Regex("^\\s*\\d+[.、．]\\s*"), ""))
+            .trim()
+            .ifBlank { book?.title.orEmpty() }
+        title = chapterTitle
+        supportActionBar?.title = chapterTitle
     }
 
     private fun setReaderChromeVisible(visible: Boolean) {
@@ -867,7 +899,12 @@ class ReaderActivity : AppCompatActivity() {
         readerControls.visibility = if (visible) View.VISIBLE else View.GONE
         progressLabel.visibility = if (visible) View.GONE else View.VISIBLE
         if (!visible) readerSettingsPanel.visibility = View.GONE
-        if (visible) supportActionBar?.show() else supportActionBar?.hide()
+        if (visible) {
+            updateCurrentChapterTitle()
+            supportActionBar?.show()
+        } else {
+            supportActionBar?.hide()
+        }
     }
 
     private fun loadPreferences() {

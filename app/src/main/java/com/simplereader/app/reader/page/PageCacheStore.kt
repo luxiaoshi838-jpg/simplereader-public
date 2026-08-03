@@ -2,6 +2,7 @@ package com.simplereader.app.reader.page
 
 import android.content.Context
 import android.util.Base64
+import com.simplereader.app.parser.TxtParser
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -18,6 +19,7 @@ object PageCacheStore {
     private const val MANIFEST = "pages.json"
     private const val TXT_CONTENT = "content.txt"
     private const val TXT_SOURCE = "txt-source.json"
+    private const val RECOGNITION = "recognition.json"
     private const val EXPORT_ENCODING = "gzip+base64+utf8"
 
     data class CacheIdentity(
@@ -26,14 +28,73 @@ object PageCacheStore {
         val fileSize: Long,
         val lastModified: Long,
         val settingsHash: String,
-        val textFingerprint: String
+        val textFingerprint: String,
+        val catalogRuleVersion: Int
     )
 
     data class NormalizedTxt(
         val textFile: File,
         val chapters: List<BookChapter>,
-        val charsetName: String
+        val charsetName: String,
+        val catalogRuleVersion: Int
     )
+
+
+    /** A book is already recognized only when its file name and file size are unchanged. */
+    fun isRecognitionCurrent(
+        context: Context,
+        bookId: Long,
+        fileName: String,
+        fileSize: Long?
+    ): Boolean = runCatching {
+        val directory = bookDir(context, bookId)
+        require(directory.resolve(MANIFEST).isFile)
+        val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
+        root.optString("fileName").equals(fileName, ignoreCase = true) &&
+            root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
+            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
+            root.optBoolean("completed", false)
+    }.getOrDefault(false)
+
+    /** True only when the unchanged current file already has at least one visible catalog entry. */
+    fun hasCurrentCatalog(
+        context: Context,
+        bookId: Long,
+        fileName: String,
+        fileSize: Long?
+    ): Boolean = runCatching {
+        val directory = bookDir(context, bookId)
+        require(directory.resolve(MANIFEST).isFile)
+        val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
+        root.optString("fileName").equals(fileName, ignoreCase = true) &&
+            root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
+            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
+            root.optBoolean("completed", false) &&
+            root.optInt("chapterCount", 0) > 0
+    }.getOrDefault(false)
+
+    fun markRecognitionComplete(
+        context: Context,
+        bookId: Long,
+        fileName: String,
+        fileSize: Long?,
+        chapterCount: Int,
+        pageCount: Int
+    ) {
+        val directory = bookDir(context, bookId).apply { mkdirs() }
+        atomicWrite(
+            directory.resolve(RECOGNITION),
+            JSONObject()
+                .put("fileName", fileName)
+                .put("fileSize", fileSize ?: JSONObject.NULL)
+                .put("chapterCount", chapterCount)
+                .put("pageCount", pageCount)
+                .put("catalogRuleVersion", TxtParser.CATALOG_RULE_VERSION)
+                .put("completed", true)
+                .put("completedAt", System.currentTimeMillis())
+                .toString()
+        )
+    }
 
     fun textFingerprint(text: String): String {
         val sampleSize = 8_192
@@ -52,6 +113,7 @@ object PageCacheStore {
             require(version in MIN_COMPATIBLE_CACHE_VERSION..CACHE_VERSION)
             require(root.optLong("bookId") == identity.bookId)
             require(root.optString("readerSettingsHash") == identity.settingsHash)
+            require(root.optInt("catalogRuleVersion", 0) == identity.catalogRuleVersion)
 
             val storedFingerprint = root.optString("textFingerprint")
             if (storedFingerprint.isNotBlank()) {
@@ -120,6 +182,7 @@ object PageCacheStore {
             .put("lastModified", identity.lastModified)
             .put("readerSettingsHash", identity.settingsHash)
             .put("textFingerprint", identity.textFingerprint)
+            .put("catalogRuleVersion", identity.catalogRuleVersion)
             .put("chapters", chapters)
             .put("pages", pages)
         atomicWrite(directory.resolve(MANIFEST), root.toString())
@@ -153,7 +216,8 @@ object PageCacheStore {
             NormalizedTxt(
                 textFile = content,
                 chapters = root.getJSONArray("chapters").toBookChapters(normalizedText.length),
-                charsetName = root.optString("charsetName", Charsets.UTF_8.name())
+                charsetName = root.optString("charsetName", Charsets.UTF_8.name()),
+                catalogRuleVersion = root.optInt("catalogRuleVersion", 0)
             )
         }.getOrNull()
     }
@@ -189,10 +253,11 @@ object PageCacheStore {
                 .put("lastModified", lastModified)
                 .put("charsetName", charsetName)
                 .put("textFingerprint", textFingerprint(normalizedText))
+                .put("catalogRuleVersion", TxtParser.CATALOG_RULE_VERSION)
                 .put("chapters", chapterJson)
                 .toString()
         )
-        return NormalizedTxt(content, chapters, charsetName)
+        return NormalizedTxt(content, chapters, charsetName, TxtParser.CATALOG_RULE_VERSION)
     }
 
     /** Export compact local TXT/chapter and layout page caches for backup/sync. */
@@ -207,6 +272,10 @@ object PageCacheStore {
                 directory.resolve(MANIFEST).takeIf(File::isFile)?.let { manifest ->
                     item.put("pageManifestEncoding", EXPORT_ENCODING)
                     item.put("pageManifestData", encodeCompressed(manifest.readText(Charsets.UTF_8)))
+                }
+                directory.resolve(RECOGNITION).takeIf(File::isFile)?.let { recognition ->
+                    item.put("recognitionEncoding", EXPORT_ENCODING)
+                    item.put("recognitionData", encodeCompressed(recognition.readText(Charsets.UTF_8)))
                 }
                 val txtSource = directory.resolve(TXT_SOURCE)
                 val txtContent = directory.resolve(TXT_CONTENT)
@@ -245,6 +314,14 @@ object PageCacheStore {
                     }
                 }
 
+                if (item.optString("recognitionEncoding") == EXPORT_ENCODING) {
+                    val encoded = item.optString("recognitionData")
+                    if (encoded.isNotBlank()) {
+                        atomicWrite(directory.resolve(RECOGNITION), decodeCompressed(encoded))
+                        restoredAny = true
+                    }
+                }
+
                 if (item.optString("txtSourceEncoding") == EXPORT_ENCODING &&
                     item.optString("txtContentEncoding") == EXPORT_ENCODING
                 ) {
@@ -269,6 +346,13 @@ object PageCacheStore {
             if (restoredAny) restored += 1
         }
         return restored
+    }
+
+    /** Remove layout and recognition results while preserving normalized TXT content. */
+    fun clearDerivedCatalogAndPages(context: Context, bookId: Long) {
+        val directory = bookDir(context, bookId)
+        directory.resolve(MANIFEST).delete()
+        directory.resolve(RECOGNITION).delete()
     }
 
     fun clearBook(context: Context, bookId: Long) {
