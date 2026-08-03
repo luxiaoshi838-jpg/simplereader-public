@@ -35,11 +35,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Install required Android Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;33.0.1" >/tmp/sdkmanager.log
+          test -d "$ANDROID_HOME/build-tools/33.0.1"
       - name: Pack real JDK 17 and Build Tools 33.0.1
         shell: bash
         run: |
           set -euo pipefail
-          test -d "$ANDROID_HOME/build-tools/33.0.1"
           mkdir -p /tmp/build-fix/android-sdk/build-tools
           cp -a "$ANDROID_HOME/build-tools/33.0.1" /tmp/build-fix/android-sdk/build-tools/
           cp -aL "$JAVA_HOME" /tmp/build-fix/jdk17
