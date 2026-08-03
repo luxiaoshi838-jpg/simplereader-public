@@ -1,0 +1,120 @@
+diff --git a/UI_BASELINE.md b/UI_BASELINE.md
+index 1ce4866..383040f 100644
+--- a/UI_BASELINE.md
++++ b/UI_BASELINE.md
+@@ -13,9 +13,12 @@
+ - 禁止恢复：`ReaderCatalogSheet`、`ReaderSurfaceDrawable`、`ReaderPageAdapter`、`VerticalPageFlowView`、阅读页 `RecyclerView/PagerSnapHelper`。
+ 
+ - 右下角页码只能显示纯文字，禁止半透明白色方块、底板或卡片背景。
+-- 阅读区顶部：正文整体必须比系统顶部再下移一个字符高度（24dp），不得贴住通知栏。
++- 阅读区顶部：以 v612 整页边界为基准，根布局不得整体下移；仅正文第一行的顶部内边距由 26dp 调为 50dp（增加一个字符高度）。
+ - 章节标题：仅真实章节首行，比正文固定大 2sp，并保持加粗。
+ - 阅读上栏：显示当前章节名，不显示书籍名；目录面板标题为“目录　书籍名”。
+ - TXT 目录识别：先使用标准、带前缀和结构词规则；整本未识别出结构标题时才启用无标点独立短行兜底。兜底不得把带标点句子或明显普通正文句误识别为目录。
+ - 书架目录缓存：点击后必须提供“全书架目录缓存”和“全书架无目录书籍缓存”两个选项。前者处理全部书籍；后者仅跳过当前文件名、文件大小未变化且已经识别出目录的书籍。两种模式都必须使用 WorkManager 前台后台任务缓存目录与分页，阅读或切换到其他应用不影响任务。
+ - 缓存范围必须由用户点击上述两个选项明确决定；目录规则版本变化只负责判定旧识别结果是否有效，不得自动替用户改成全书架缓存。
++
++- 默认封面与阅读纹理：TXT 使用上传的蓝色 TXT 封面；EPUB 有真实封面时必须优先真实封面，无封面时才使用 EPUB 默认封面；纯色、纹理、质感素材使用用户上传包。
++- 闪退日志：未捕获崩溃写入私有文件，下次启动弹出；仅点击“复制并清除”后删除。
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 690447d..fbfb534 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -19,10 +19,10 @@ android {
+     namespace = "com.simplereader.app"
+     compileSdk = 35
+ 
+-    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000613")
++    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000614")
+         .toIntOrNull()
+-        ?: 2098000613
+-    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "613"
++        ?: 2098000614
++    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "614"
+ 
+     defaultConfig {
+         applicationId = "com.simplereader.app"
+diff --git a/app/src/main/java/com/simplereader/app/App.kt b/app/src/main/java/com/simplereader/app/App.kt
+index 83607c7..521b21e 100644
+--- a/app/src/main/java/com/simplereader/app/App.kt
++++ b/app/src/main/java/com/simplereader/app/App.kt
+@@ -2,6 +2,7 @@ package com.simplereader.app
+ 
+ import android.app.Application
+ import com.simplereader.app.data.db.SimpleReaderDatabase
++import com.simplereader.app.util.CrashLogStore
+ 
+ class App : Application() {
+     companion object {
+@@ -12,5 +13,6 @@ class App : Application() {
+     override fun onCreate() {
+         super.onCreate()
+         instance = this
++        CrashLogStore.install(this)
+     }
+ }
+diff --git a/app/src/main/java/com/simplereader/app/parser/TxtParser.kt b/app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+index bba03aa..0ec8722 100644
+--- a/app/src/main/java/com/simplereader/app/parser/TxtParser.kt
++++ b/app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+@@ -48,7 +48,7 @@ data class TxtTranscodeResult(
+ 
+ object TxtParser {
+     /** Bump this whenever TXT catalog recognition rules change. */
+-    const val CATALOG_RULE_VERSION = 2
++    const val CATALOG_RULE_VERSION = 3
+ 
+     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
+     private const val MAX_LINE_BYTES = 1024 * 1024
+@@ -76,7 +76,7 @@ object TxtParser {
+             Regex("""^\s*[（(【\[]\s*$CHAPTER_NUMBER\s*[）)】\]]\s+\S+.*$"""),
+             Regex("""^\s*[0-9０-９]{1,6}\s+(?![年月日点时分秒个次米])\S.{0,100}$"""),
+             Regex("""^\s*[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\s*[、.．:：—-]\s*\S+.*$"""),
+-            Regex("""^\s*[^\s，。！？；;:：]{1,40}[（(]\s*$CHAPTER_NUMBER\s*[）)]\s*$"""),
++            Regex("""^\s*[\p{script=Han}]{1,40}[（(]$CHAPTER_NUMBER[）)]\s*$"""),
+             Regex("""^\s*[\p{L}\p{N}]{2,39}(?:单元|章|节|篇|部|卷|回|集)$"""),
+             Regex("""^\s*(?:Chapter|CHAPTER|chapter)\s+[0-9IVXLCDMivxlcdm]+\b.*$"""),
+             Regex("""^\s*(?:正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇)(?:\s+\S.*)?$""")
+diff --git a/app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt b/app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
+index 124bebf..4d7794c 100644
+--- a/app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
++++ b/app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
+@@ -77,8 +77,8 @@ object ReaderDocumentLoader {
+             fileSize = sourceSize,
+             lastModified = sourceModified
+         )?.let { cached ->
+-            val text = cached.textFile.readText(Charsets.UTF_8)
+-            val chapters = if (!forceCatalogRefresh && cached.catalogRuleVersion == TxtParser.CATALOG_RULE_VERSION) {
++            val text = cached.text
++            val chapters = if (!forceCatalogRefresh) {
+                 cached.chapters
+             } else {
+                 detectTxtChapters(text).also { refreshed ->
+diff --git a/app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt b/app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
+index e0df97f..238b6e1 100644
+--- a/app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
++++ b/app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
+@@ -33,7 +33,7 @@ object PageCacheStore {
+     )
+ 
+     data class NormalizedTxt(
+-        val textFile: File,
++        val text: String,
+         val chapters: List<BookChapter>,
+         val charsetName: String,
+         val catalogRuleVersion: Int
+@@ -52,7 +52,6 @@ object PageCacheStore {
+         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
+         root.optString("fileName").equals(fileName, ignoreCase = true) &&
+             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
+-            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
+             root.optBoolean("completed", false)
+     }.getOrDefault(false)
+ 
+@@ -68,7 +67,6 @@ object PageCacheStore {
+         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
+         root.optString("fileName").equals(fileName, ignoreCase = true) &&
+             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
+-            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
+             root.optBoolean("completed", false) &&
+             root.optInt("chapterCount", 0)
