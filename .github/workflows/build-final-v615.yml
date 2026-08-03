@@ -39,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           python tools/apply_final_v615_bounds.py
+          python tools/fix_v615_dynamic_bottom_policy.py
           git diff --check
           bash tools/verify-ui-policy.sh
           grep -n 'WindowCompat.setDecorFitsSystemWindows\|statusBarInsetPx + oneCharacterPx\|navigationBarInsetPx + oneCharacterPx' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
@@ -64,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .automation/final-v615-run.txt .github/workflows/build-final-v615.yml tools/apply_final_v615_bounds.py
+          rm -f .automation/final-v615-run.txt .github/workflows/build-final-v615.yml tools/apply_final_v615_bounds.py tools/fix_v615_dynamic_bottom_policy.py
           git add -A
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
