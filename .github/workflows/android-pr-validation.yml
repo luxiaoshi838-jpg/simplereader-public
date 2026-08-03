@@ -17,14 +17,15 @@ concurrency:
 jobs:
   apply-v615:
     name: Apply verified v615 payload
-    if: github.ref == 'refs/heads/agent/v615-reader-stability'
+    if: github.head_ref == 'agent/v615-reader-stability' || github.ref == 'refs/heads/agent/v615-reader-stability'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout current revision
+      - name: Checkout v615 working branch
         uses: actions/checkout@v4
         with:
+          ref: agent/v615-reader-stability
           fetch-depth: 0
 
       - name: Apply source, covers, and supplied full-size textures
