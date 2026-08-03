@@ -1,0 +1,112 @@
+ect.PAPER_GRAIN -> {
+-                val resId = texture.drawableRes ?: return
++                val asset = texture.asset ?: return
+                 drawNeutralTextureLayer(
+                     canvas = canvas,
+                     area = area,
+-                    resId = resId,
++                    asset = asset,
+                     targetTilePx = 205f * density,
+                     alpha = texture.alpha,
+                     contrast = texture.contrast
+                 )
+             }
+             ReaderBackgrounds.TextureEffect.PAPER_FIBER -> {
+-                val resId = texture.drawableRes ?: return
++                val asset = texture.asset ?: return
+                 drawNeutralTextureLayer(
+                     canvas = canvas,
+                     area = area,
+-                    resId = resId,
++                    asset = asset,
+                     targetTilePx = 255f * density,
+                     alpha = texture.alpha,
+                     contrast = texture.contrast
+@@ -341,12 +323,12 @@ private class LayeredReaderBackgroundDrawable(
+     private fun drawNeutralTextureLayer(
+         canvas: Canvas,
+         area: Rect,
+-        resId: Int,
++        asset: DuokanAssets.Asset,
+         targetTilePx: Float,
+         alpha: Int,
+         contrast: Float
+     ) {
+-        val bitmap = ReaderBackgroundBitmapCache.neutralTexture(context, resId, contrast) ?: return
++        val bitmap = ReaderBackgroundBitmapCache.neutralTexture(asset, contrast) ?: return
+         drawBitmapLayer(
+             canvas = canvas,
+             area = area,
+@@ -362,11 +344,11 @@ private class LayeredReaderBackgroundDrawable(
+             ReaderBackgrounds.MaterialEffect.NONE -> Unit
+             ReaderBackgrounds.MaterialEffect.MATTE -> drawMatte(canvas, area)
+             ReaderBackgrounds.MaterialEffect.FROSTED -> {
+-                val resId = material.drawableRes ?: return
++                val asset = material.asset ?: return
+                 drawBitmapLayer(
+                     canvas = canvas,
+                     area = area,
+-                    bitmap = ReaderBackgroundBitmapCache.bitmap(context, resId) ?: return,
++                    bitmap = ReaderBackgroundBitmapCache.bitmap(asset) ?: return,
+                     targetTilePx = 430f * density,
+                     alpha = material.alpha,
+                     mode = PorterDuff.Mode.OVERLAY
+diff --git a/app/src/main/res/layout/activity_reader.xml b/app/src/main/res/layout/activity_reader.xml
+index 7a091d8..116745d 100644
+--- a/app/src/main/res/layout/activity_reader.xml
++++ b/app/src/main/res/layout/activity_reader.xml
+@@ -2,8 +2,7 @@
+ <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     android:layout_width="match_parent"
+     android:layout_height="match_parent"
+-    android:background="#F5E9C8"
+-    android:paddingTop="24dp">
++    android:background="#F5E9C8">
+ 
+     <com.simplereader.app.ui.PagedReaderView
+         android:id="@+id/pagedReaderView"
+@@ -29,7 +28,7 @@
+             android:layout_height="wrap_content"
+             android:lineSpacingMultiplier="1.75"
+             android:paddingStart="28dp"
+-            android:paddingTop="26dp"
++            android:paddingTop="50dp"
+             android:paddingEnd="28dp"
+             android:paddingBottom="0dp"
+             android:textColor="#3B3428"
+diff --git a/app/src/test/java/com/simplereader/app/ui/ReaderTopTitleAndCatalogContractTest.kt b/app/src/test/java/com/simplereader/app/ui/ReaderTopTitleAndCatalogContractTest.kt
+index ce42b65..03ae22b 100644
+--- a/app/src/test/java/com/simplereader/app/ui/ReaderTopTitleAndCatalogContractTest.kt
++++ b/app/src/test/java/com/simplereader/app/ui/ReaderTopTitleAndCatalogContractTest.kt
+@@ -1,6 +1,7 @@
+ package com.simplereader.app.ui
+ 
+ import java.io.File
++import org.junit.Assert.assertFalse
+ import org.junit.Assert.assertTrue
+ import org.junit.Test
+ 
+@@ -8,7 +9,8 @@ class ReaderTopTitleAndCatalogContractTest {
+     @Test
+     fun readerKeepsOneCharacterBelowSystemTop() {
+         val layout = File("src/main/res/layout/activity_reader.xml").readText()
+-        assertTrue(layout.contains("android:paddingTop=\"24dp\""))
++        assertFalse(layout.contains("android:paddingTop=\"24dp\""))
++        assertTrue(layout.contains("android:paddingTop=\"50dp\""))
+     }
+ 
+     @Test
+diff --git a/tools/verify-ui-policy.sh b/tools/verify-ui-policy.sh
+index ce46305..5124f08 100755
+--- a/tools/verify-ui-policy.sh
++++ b/tools/verify-ui-policy.sh
+@@ -46,7 +46,8 @@ test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "
+ test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt || fail "confirmed background picker missing"
+ test -e app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt || fail "confirmed horizontal renderer missing"
+ 
+-grep -q 'android:paddingTop="24dp"' "$layout" || fail "reader top guard must be one character high"
++! grep -q 'android:paddingTop="24dp"' "$layout" || fail "reader root must keep the v612 boundary"
++grep -q 'android:paddingTop="50dp"' "$layout" || fail "reader text top must be one character lower than v612"
+ grep -q 'TITLE_SIZE_DELTA_SP = 2f' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "chapter title must be exactly 2sp larger"
+ grep -q 'updateCurrentChapterTitle' "$reader" || fail "reader chrome must use current chapter title"
+ grep -q '目录　${book?.title.orEmpty()}' "$reader" || fail "catalog must show book title beside 目录"
