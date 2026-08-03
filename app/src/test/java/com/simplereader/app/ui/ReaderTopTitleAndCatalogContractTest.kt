@@ -6,9 +6,10 @@ import org.junit.Test
 
 class ReaderTopTitleAndCatalogContractTest {
     @Test
-    fun readerKeepsOneCharacterBelowSystemTop() {
+    fun readerLowersTextFromV612BaselineWithoutMovingWholePage() {
         val layout = File("src/main/res/layout/activity_reader.xml").readText()
-        assertTrue(layout.contains("android:paddingTop=\"24dp\""))
+        assertTrue(layout.contains("android:paddingTop=\"50dp\""))
+        assertTrue(!layout.substringBefore("<com.simplereader.app.ui.PagedReaderView").contains("android:paddingTop="))
     }
 
     @Test

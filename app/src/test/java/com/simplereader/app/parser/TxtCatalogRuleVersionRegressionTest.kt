@@ -3,6 +3,7 @@ package com.simplereader.app.parser
 import java.io.ByteArrayInputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TxtCatalogRuleVersionRegressionTest {
@@ -13,6 +14,18 @@ class TxtCatalogRuleVersionRegressionTest {
         assertEquals("第十二单元 归途", TxtParser.extractStructuredChapterTitle("第十二单元 归途"))
         assertEquals("卷十二 风起", TxtParser.extractStructuredChapterTitle("卷十二 风起"))
         assertEquals("宝瓶（七）", TxtParser.extractStructuredChapterTitle("宝瓶（七）"))
+        assertEquals("大道之上（1）", TxtParser.extractStructuredChapterTitle("大道之上（1）"))
+        assertEquals("大道之上（一）", TxtParser.extractStructuredChapterTitle("大道之上（一）"))
+        assertEquals("大道之上(12)", TxtParser.extractStructuredChapterTitle("大道之上(12)"))
+        assertEquals("大道之上(十二)", TxtParser.extractStructuredChapterTitle("大道之上(十二)"))
+    }
+
+    @Test
+    fun parentheticalNumberTitleRequiresImmediateChinesePrefix() {
+        assertNull(TxtParser.extractStructuredChapterTitle("Road（1）"))
+        assertNull(TxtParser.extractStructuredChapterTitle("大道 之上（一）"))
+        assertNull(TxtParser.extractStructuredChapterTitle("大道之上（甲）"))
+        assertNull(TxtParser.extractStructuredChapterTitle("这是正文（2026）吗"))
     }
 
     @Test

@@ -22,6 +22,12 @@ class UiRegressionPolicyTest {
         assertTrue(picker.contains("ReaderBackgrounds.Category.COLOR"))
         assertTrue(picker.contains("ReaderBackgrounds.Category.TEXTURE"))
         assertTrue(picker.contains("ReaderBackgrounds.Category.MATERIAL"))
+        assertTrue(background.contains("reader_texture_duokan_blue"))
+        assertTrue(background.contains("reader_texture_duokan_green"))
+        assertTrue(background.contains("reader_texture_duokan_white"))
+        assertTrue(background.contains("reader_texture_duokan_yellow"))
+        assertTrue(background.contains("reader_material_duokan_paper"))
+        assertFalse(background.contains("Random("))
     }
 
     @Test

@@ -1,7 +1,7 @@
 package com.simplereader.app
 
 import android.app.Application
-import com.simplereader.app.data.db.SimpleReaderDatabase
+import com.simplereader.app.crash.CrashLogStore
 
 class App : Application() {
     companion object {
@@ -12,5 +12,6 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashLogStore.install(this)
     }
 }

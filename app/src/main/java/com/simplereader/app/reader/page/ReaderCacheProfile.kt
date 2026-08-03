@@ -11,9 +11,9 @@ object ReaderCacheProfile {
     private const val PREF_VIEWPORT_WIDTH = "cache_viewport_width_px"
     private const val PREF_VIEWPORT_HEIGHT = "cache_viewport_height_px"
 
-    const val TOP_GUARD_DP = 24
+    const val TOP_GUARD_DP = 0
     const val HORIZONTAL_PADDING_DP = 28
-    const val CONTENT_TOP_PADDING_DP = 26
+    const val CONTENT_TOP_PADDING_DP = 50
     const val CONTENT_BOTTOM_PADDING_DP = 0
     const val LINE_SPACING_MULTIPLIER = 1.75f
     const val TITLE_SIZE_DELTA_SP = 2f
