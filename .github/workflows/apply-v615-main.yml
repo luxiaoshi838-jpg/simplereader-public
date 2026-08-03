@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "Applying verified v615 payload"
           git fetch origin agent/v615-reader-stability
           git checkout -B agent/v615-reader-stability origin/agent/v615-reader-stability
           cat .automation/v615-patch.part* | base64 -d | gzip -d > /tmp/v615.patch
