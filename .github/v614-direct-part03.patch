@@ -1,0 +1,133 @@
+com.simplereader.app.ui
+ 
+ import android.content.Context
+ import android.graphics.Bitmap
+-import android.graphics.BitmapFactory
+ import android.graphics.BitmapShader
+ import android.graphics.Canvas
+ import android.graphics.Color
+@@ -17,7 +16,6 @@ import android.graphics.RadialGradient
+ import android.graphics.Rect
+ import android.graphics.Shader
+ import android.graphics.drawable.Drawable
+-import com.simplereader.app.R
+ import kotlin.math.max
+ import kotlin.math.roundToInt
+ 
+@@ -34,7 +32,7 @@ import kotlin.math.roundToInt
+  */
+ object ReaderBackgrounds {
+     const val DEFAULT_COLOR_ID = "solid_ivory"
+-    const val DEFAULT_TEXTURE_ID = "texture_paper_grain"
++    const val DEFAULT_TEXTURE_ID = "texture_duokan_white"
+     const val DEFAULT_MATERIAL_ID = "material_none"
+     const val NONE_TEXTURE_ID = "texture_none"
+     const val NONE_MATERIAL_ID = "material_none"
+@@ -62,7 +60,7 @@ object ReaderBackgrounds {
+         val id: String,
+         val title: String,
+         val effect: TextureEffect,
+-        val drawableRes: Int? = null,
++        val asset: DuokanAssets.Asset? = null,
+         val alpha: Int = 0,
+         val contrast: Float = 1f
+     )
+@@ -77,7 +75,7 @@ object ReaderBackgrounds {
+         val id: String,
+         val title: String,
+         val effect: MaterialEffect,
+-        val drawableRes: Int? = null,
++        val asset: DuokanAssets.Asset? = null,
+         val alpha: Int = 0
+     )
+ 
+@@ -98,34 +96,19 @@ object ReaderBackgrounds {
+ 
+     val textureOptions: List<TextureOption> = listOf(
+         TextureOption(NONE_TEXTURE_ID, "纯净", TextureEffect.NONE),
+-        TextureOption(
+-            id = "texture_paper_grain",
+-            title = "纸张颗粒",
+-            effect = TextureEffect.PAPER_GRAIN,
+-            drawableRes = R.drawable.reader_texture_paper_grain,
+-            alpha = 146,
+-            contrast = 0.54f
+-        ),
+-        TextureOption(
+-            id = "texture_paper_fiber",
+-            title = "宣纸纤维",
+-            effect = TextureEffect.PAPER_FIBER,
+-            drawableRes = R.drawable.reader_texture_paper_fiber,
+-            alpha = 158,
+-            contrast = 0.58f
+-        )
++        TextureOption("texture_duokan_white", "白纸纹理", TextureEffect.PAPER_GRAIN, DuokanAssets.Asset.TEXTURE_WHITE, 150, 0.62f),
++        TextureOption("texture_duokan_blue", "浅蓝纹理", TextureEffect.PAPER_GRAIN, DuokanAssets.Asset.TEXTURE_BLUE, 150, 0.62f),
++        TextureOption("texture_duokan_green", "浅绿纹理", TextureEffect.PAPER_GRAIN, DuokanAssets.Asset.TEXTURE_GREEN, 150, 0.62f),
++        TextureOption("texture_duokan_yellow", "暖黄纹理", TextureEffect.PAPER_GRAIN, DuokanAssets.Asset.TEXTURE_YELLOW, 150, 0.62f)
+     )
+ 
+     val materialOptions: List<MaterialOption> = listOf(
+         MaterialOption(NONE_MATERIAL_ID, "纯净", MaterialEffect.NONE),
+         MaterialOption("material_matte", "柔和哑光", MaterialEffect.MATTE),
+-        MaterialOption(
+-            id = "material_frosted",
+-            title = "雾面",
+-            effect = MaterialEffect.FROSTED,
+-            drawableRes = R.drawable.reader_material_frosted,
+-            alpha = 118
+-        )
++        MaterialOption("material_duokan_white", "白色场景", MaterialEffect.FROSTED, DuokanAssets.Asset.MATERIAL_WHITE, 112),
++        MaterialOption("material_duokan_blue", "蓝色场景", MaterialEffect.FROSTED, DuokanAssets.Asset.MATERIAL_BLUE, 112),
++        MaterialOption("material_duokan_green", "绿色场景", MaterialEffect.FROSTED, DuokanAssets.Asset.MATERIAL_GREEN, 112),
++        MaterialOption("material_duokan_yellow", "黄色场景", MaterialEffect.FROSTED, DuokanAssets.Asset.MATERIAL_YELLOW, 112)
+     )
+ 
+     val quickColorIds: List<String> = listOf(DEFAULT_COLOR_ID, "solid_eye", "solid_white")
+@@ -217,26 +200,25 @@ object ReaderBackgrounds {
+ }
+ 
+ private object ReaderBackgroundBitmapCache {
+-    private data class NeutralKey(val resId: Int, val contrastStep: Int)
++    private data class NeutralKey(val asset: DuokanAssets.Asset, val contrastStep: Int)
+ 
+-    private val originalCache = mutableMapOf<Int, Bitmap>()
++    private val originalCache = mutableMapOf<DuokanAssets.Asset, Bitmap>()
+     private val neutralCache = mutableMapOf<NeutralKey, Bitmap>()
+ 
+-    private fun original(context: Context, resId: Int): Bitmap? = synchronized(originalCache) {
+-        originalCache[resId]
+-            ?: BitmapFactory.decodeResource(context.resources, resId)?.also { originalCache[resId] = it }
++    private fun original(asset: DuokanAssets.Asset): Bitmap? = synchronized(originalCache) {
++        originalCache[asset] ?: DuokanAssets.bitmap(asset)?.also { originalCache[asset] = it }
+     }
+ 
+     /**
+      * 把纹理位图转换成平均值为 128 的中性灰明暗层。
+      * 这样 OVERLAY 只改变局部明暗，不会把纸张、护眼、浅蓝等底色染成另一种颜色。
+      */
+-    fun neutralTexture(context: Context, resId: Int, contrast: Float): Bitmap? {
++    fun neutralTexture(context: Context, asset: DuokanAssets.Asset, contrast: Float): Bitmap? {
+         val safeContrast = contrast.coerceIn(0f, 1f)
+-        val key = NeutralKey(resId, (safeContrast * 1000f).roundToInt())
++        val key = NeutralKey(asset, (safeContrast * 1000f).roundToInt())
+         return synchronized(neutralCache) {
+             neutralCache[key] ?: buildNeutralTexture(
+-                source = original(context, resId) ?: return@synchronized null,
++                source = original(asset) ?: return@synchronized null,
+                 contrast = safeContrast
+             )?.also { neutralCache[key] = it }
+         }
+@@ -284,7 +266,7 @@ private object ReaderBackgroundBitmapCache {
+         return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+     }
+ 
+-    fun bitmap(context: Context, resId: Int): Bitmap? = original(context, resId)
++    fun bitmap(asset: DuokanAssets.Asset): Bitmap? = original(asset)
+ }
+ 
+ private class LayeredReaderBackgroundDrawable(
+@@ -314,22 +296,22 @@ private class LayeredReaderBackgroundDrawable(
+         when (texture.effect) {
+             ReaderBackgrounds.TextureEffect.NONE -> Unit
+             ReaderBackgrounds.TextureEff
