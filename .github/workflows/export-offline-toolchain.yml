@@ -1,4 +1,4 @@
-name: Export Android offline toolchain
+name: Export Android build fix
 
 on:
   push:
@@ -10,86 +10,47 @@ permissions:
   contents: write
 
 concurrency:
-  group: export-offline-toolchain-${{ github.ref }}
+  group: export-android-build-fix-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   export:
-    if: github.event.head_commit.message != 'Record offline toolchain run'
+    if: github.event.head_commit.message != 'Record Android build fix run'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Record run id before long steps
+      - name: Record run id
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .automation
-          printf '%s\n' "$GITHUB_RUN_ID" > .automation/offline-toolchain-run.txt
+          printf '%s\n' "$GITHUB_RUN_ID" > .automation/android-build-fix-run.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .automation/offline-toolchain-run.txt
-          git commit -m 'Record offline toolchain run'
+          git add .automation/android-build-fix-run.txt
+          git commit -m 'Record Android build fix run'
           git push
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Populate Gradle dependencies
-        shell: bash
-        run: |
-          set +e
-          chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/offline-build.log 2>&1
-          code=$?
-          tail -n 200 /tmp/offline-build.log
-          exit $code
-      - name: Pack and split offline toolchain
+      - name: Pack real JDK 17 and Build Tools 33.0.1
         shell: bash
         run: |
           set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          mkdir -p /tmp/offline/android-sdk/build-tools /tmp/offline/android-sdk/platforms /tmp/offline/android-sdk/platform-tools /tmp/offline/android-sdk/licenses
-          cp -a "$build_tools" /tmp/offline/android-sdk/build-tools/
-          cp -a "$ANDROID_HOME/platforms/android-35" /tmp/offline/android-sdk/platforms/
-          cp -a "$ANDROID_HOME/platform-tools/." /tmp/offline/android-sdk/platform-tools/
-          cp -a "$ANDROID_HOME/licenses/." /tmp/offline/android-sdk/licenses/
-          cp -a "$JAVA_HOME" /tmp/offline/jdk17
-          cp -a "$HOME/.gradle" /tmp/offline/gradle-home
-          rm -rf /tmp/offline/gradle-home/daemon /tmp/offline/gradle-home/workers /tmp/offline/gradle-home/notifications
-          tar -C /tmp/offline -czf /tmp/simplereader-offline-toolchain.tar.gz .
-          sha256sum /tmp/simplereader-offline-toolchain.tar.gz > /tmp/simplereader-offline-toolchain.tar.gz.sha256
-          split -b 350M -d -a 2 /tmp/simplereader-offline-toolchain.tar.gz /tmp/simplereader-offline-toolchain.part
-          test -s /tmp/simplereader-offline-toolchain.part00
-          test -s /tmp/simplereader-offline-toolchain.part01
-          test -s /tmp/simplereader-offline-toolchain.part02
+          test -d "$ANDROID_HOME/build-tools/33.0.1"
+          mkdir -p /tmp/build-fix/android-sdk/build-tools
+          cp -a "$ANDROID_HOME/build-tools/33.0.1" /tmp/build-fix/android-sdk/build-tools/
+          cp -aL "$JAVA_HOME" /tmp/build-fix/jdk17
+          tar -C /tmp/build-fix -czf /tmp/simplereader-android-build-fix.tar.gz .
+          sha256sum /tmp/simplereader-android-build-fix.tar.gz > /tmp/simplereader-android-build-fix.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: simplereader-offline-toolchain-part00
-          path: /tmp/simplereader-offline-toolchain.part00
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: simplereader-offline-toolchain-part01
-          path: /tmp/simplereader-offline-toolchain.part01
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: simplereader-offline-toolchain-part02
-          path: /tmp/simplereader-offline-toolchain.part02
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: simplereader-offline-toolchain-metadata
+          name: simplereader-android-build-fix
           path: |
-            /tmp/simplereader-offline-toolchain.tar.gz.sha256
-            /tmp/offline-build.log
+            /tmp/simplereader-android-build-fix.tar.gz
+            /tmp/simplereader-android-build-fix.tar.gz.sha256
           if-no-files-found: error
+          compression-level: 0
           retention-days: 1
