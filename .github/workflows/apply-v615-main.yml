@@ -1,0 +1,49 @@
+name: Apply v615 reader fix from main
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-v615-main.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply v615 to working branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/v615-reader-stability
+          git checkout -B agent/v615-reader-stability origin/agent/v615-reader-stability
+          cat .automation/v615-patch.part* | base64 -d | gzip -d > /tmp/v615.patch
+          git apply --check --exclude=.github/workflows/export-agent-source.yml /tmp/v615.patch
+          git apply --exclude=.github/workflows/export-agent-source.yml /tmp/v615.patch
+          mkdir -p app/src/main/res/drawable-nodpi
+          cat .automation/v615-cover.part* | base64 -d > app/src/main/res/drawable-nodpi/book_cover_default_generic.webp
+          rm -f app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
+          bash tools/verify-ui-policy.sh
+          rm -f .automation/v615-* .github/workflows/apply-v615-reader-fix.yml .github/workflows/apply-v615-through-pr.yml .github/workflows/export-agent-source.yml
+          git add -A
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "v615: stabilize large-book reading and restore supplied textures"
+          git push origin HEAD:agent/v615-reader-stability
+      - name: Remove one-time applicator from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout main
+          rm -f .github/workflows/apply-v615-main.yml
+          git add -A
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Remove completed v615 applicator"
+          git push origin main
