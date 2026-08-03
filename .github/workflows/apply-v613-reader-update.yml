@@ -23,10 +23,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wc -c .github/v613-payload.part*
           cat .github/v613-payload.part* | base64 -d > /tmp/v613-files.tar.gz
-          sha256sum /tmp/v613-files.tar.gz
-          echo '4b58f8ae462e8b5d984d557b9fb41b0e4ed3c25f47c2ebb1e7a9b373c48d258e  /tmp/v613-files.tar.gz' | sha256sum -c -
+          echo 'acf1260db819d6e1c489f736779de124e8c101b38a1abb74be5fab7fdf96840e  /tmp/v613-files.tar.gz' | sha256sum -c -
+          tar -tzf /tmp/v613-files.tar.gz >/tmp/v613-files.list
+          test "$(wc -l </tmp/v613-files.list)" -eq 18
           tar -xzf /tmp/v613-files.tar.gz
           cat .github/v613-mode.patch.part* > /tmp/v613-mode.patch
           echo '96f1ebda7f12feb537485863c090534d57563f955c6a5c5936d9c75fab8c0f73  /tmp/v613-mode.patch' | sha256sum -c -
