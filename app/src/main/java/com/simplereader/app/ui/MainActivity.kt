@@ -36,6 +36,7 @@ import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
 import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.reader.page.PageCacheStore
+import com.simplereader.app.worker.ShelfCacheWorker
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.BookGroup
@@ -989,13 +990,39 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreShelfActions() {
         AlertDialog.Builder(this)
             .setTitle("书架管理")
-            .setItems(arrayOf("批量管理分组", "同步书架")) { _, which ->
+            .setItems(arrayOf("书架目录缓存", "批量管理分组", "同步书架")) { _, which ->
                 when (which) {
-                    0 -> showBatchGroupManagement()
-                    1 -> confirmSyncBookshelf()
+                    0 -> showShelfCacheOptions()
+                    1 -> showBatchGroupManagement()
+                    2 -> confirmSyncBookshelf()
                 }
             }
             .show()
+    }
+
+    private fun showShelfCacheOptions() {
+        AlertDialog.Builder(this)
+            .setTitle("书架目录缓存")
+            .setItems(arrayOf("全书架目录缓存", "全书架无目录书籍缓存")) { _, which ->
+                when (which) {
+                    0 -> startShelfCache(ShelfCacheWorker.MODE_ALL_BOOKS)
+                    1 -> startShelfCache(ShelfCacheWorker.MODE_BOOKS_WITHOUT_CATALOG)
+                }
+            }
+            .show()
+    }
+
+    private fun startShelfCache(mode: String) {
+        ShelfCacheWorker.enqueue(this, mode)
+        val scope = when (mode) {
+            ShelfCacheWorker.MODE_BOOKS_WITHOUT_CATALOG -> "全书架无目录书籍"
+            else -> "全书架"
+        }
+        Toast.makeText(
+            this,
+            "已开始${scope}目录缓存；可继续阅读或切换到其他应用",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun showBookActionsV2(book: ShelfBookItem) {

@@ -296,8 +296,8 @@ class ReadiumEpubActivity :
                 return@launch
             }
 
-            title = selected.title
-            supportActionBar?.title = selected.title
+            title = ""
+            supportActionBar?.title = ""
             loadingText.text = "正在打开 EPUB..."
 
             val result = runCatching {
@@ -534,6 +534,9 @@ class ReadiumEpubActivity :
             fun render() {
                 catalogButton.isEnabled = !showingCatalog
                 bookmarkButton.isEnabled = showingCatalog
+                dialog?.setTitle(
+                    if (showingCatalog) "目录　${book?.title.orEmpty()}" else "书签"
+                )
                 if (showingCatalog) {
                     val toc = flatToc(publication?.tableOfContents.orEmpty())
                     val currentHref = currentLocator?.href.orEmpty()
@@ -588,6 +591,7 @@ class ReadiumEpubActivity :
             }
             render()
             dialog = AlertDialog.Builder(this@ReadiumEpubActivity)
+                .setTitle(if (showingCatalog) "目录　${book?.title.orEmpty()}" else "书签")
                 .setView(container)
                 .create()
             dialog.setCanceledOnTouchOutside(true)

@@ -47,27 +47,38 @@ data class TxtTranscodeResult(
 )
 
 object TxtParser {
+    /** Bump this whenever TXT catalog recognition rules change. */
+    const val CATALOG_RULE_VERSION = 2
+
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
     private const val WINDOW_LINE_CONTEXT_BYTES = 16 * 1024
-    private val standaloneChapterPatterns by lazy {
+    private const val CHAPTER_NUMBER =
+        "[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+"
+    private const val CHAPTER_STRUCTURE = "(?:单元|章|节|篇|部|卷|回|集)"
+
+    /**
+     * Explicit rules are safe enough to mix in the same book. They cover normal
+     * "第X章" titles, catalog-number prefixes such as "770.第767章 宝瓶",
+     * structural headings and numbered headings.
+     */
+    private val structuredChapterPatterns by lazy {
         listOf(
-            Regex("^[\\p{L}\\p{N}]{2,39}篇$"),
-            Regex("^[\\p{L}\\p{N}]{1,20}之[\\p{L}\\p{N}]{1,20}$")
-        )
-    }
-    private val chapterPrefixPatterns by lazy {
-        listOf(
-            Regex("^\\s*[【\\[]?第\\s*[0-9零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[章节卷回部集篇].*"),
-            Regex("^\\s*[卷部篇]\\s*[0-9零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+.*"),
-            Regex("^\\s*[（(【\\[]?[0-9]{1,5}[）)】\\]]?\\s*[、.．:：—-]\\s*\\S+.*"),
-            Regex("^\\s*[（(【\\[][0-9]{1,5}[）)】\\]]\\s+\\S+.*"),
-            Regex("^\\s*[0-9]{1,5}\\s+(?![年月日点时分秒个次米])\\S.{0,100}$"),
-            Regex("^\\s*[一二三四五六七八九十百千万]+\\s*[、.．:：—-]\\s*\\S+.*"),
-            Regex("^\\s*[（(【\\[]\\s*[零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[）)】\\]]\\s*[章篇](?:\\s*\\S.*)?$"),
-            Regex("^\\s*[零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*[章篇](?:\\s*\\S.*)?$"),
-            Regex("^\\s*(Chapter|CHAPTER|chapter)\\s+[0-9IVXLCDMivxlcdm]+\\b.*"),
-            Regex("^\\s*(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇).*"),
+            Regex("""^\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
+            Regex("""^\s*$CHAPTER_NUMBER\s*[.、．:：—-]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
+            Regex("""^\s*[^\s，。！？；;]{1,20}\s*[：:—-]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
+            Regex("""^\s*[^\s，。！？；;]{1,16}\s+第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
+            Regex("""^\s*[卷部篇单元]\s*$CHAPTER_NUMBER(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
+            Regex("""^\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
+            Regex("""^\s*[上中下前后终]\s*[卷部篇](?:\s+\S.*)?$"""),
+            Regex("""^\s*[（(【\[]?\s*$CHAPTER_NUMBER\s*[）)】\]]?\s*[、.．:：—-]\s*\S+.*$"""),
+            Regex("""^\s*[（(【\[]\s*$CHAPTER_NUMBER\s*[）)】\]]\s+\S+.*$"""),
+            Regex("""^\s*[0-9０-９]{1,6}\s+(?![年月日点时分秒个次米])\S.{0,100}$"""),
+            Regex("""^\s*[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\s*[、.．:：—-]\s*\S+.*$"""),
+            Regex("""^\s*[^\s，。！？；;:：]{1,40}[（(]\s*$CHAPTER_NUMBER\s*[）)]\s*$"""),
+            Regex("""^\s*[\p{L}\p{N}]{2,39}(?:单元|章|节|篇|部|卷|回|集)$"""),
+            Regex("""^\s*(?:Chapter|CHAPTER|chapter)\s+[0-9IVXLCDMivxlcdm]+\b.*$"""),
+            Regex("""^\s*(?:正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇)(?:\s+\S.*)?$""")
         )
     }
 
@@ -119,17 +130,23 @@ object TxtParser {
             ?: Charsets.UTF_8
         val combined = SequenceInputStream(ByteArrayInputStream(sample), inputStream)
         val counting = CountingOutputStream(outputStream)
-        val chapters = mutableListOf<TxtChapterHit>()
+        val structuredChapters = mutableListOf<TxtChapterHit>()
+        val fallbackChapters = mutableListOf<TxtChapterHit>()
+
+        fun collectChapter(line: String, start: Long) {
+            val structured = extractStructuredChapterTitle(line)
+            val target = if (structured != null) structuredChapters else fallbackChapters
+            val title = structured ?: extractFallbackChapterTitle(line) ?: return
+            val last = target.lastOrNull()
+            if (last == null || start - last.byteOffset > 80L) {
+                target += TxtChapterHit(title, start)
+            }
+        }
 
         fun writeLine(textValue: String, appendNewline: Boolean) {
             val text = textValue.removePrefix("\uFEFF").trimEnd('\r')
             val start = counting.count
-            extractChapterTitle(text.trim())?.let { title ->
-                val last = chapters.lastOrNull()
-                if (last == null || start - last.byteOffset > 80L) {
-                    chapters += TxtChapterHit(title, start)
-                }
-            }
+            collectChapter(text.trim(), start)
             val rendered = if (appendNewline) "$text\n" else text
             counting.write(rendered.toByteArray(Charsets.UTF_8))
         }
@@ -178,7 +195,7 @@ object TxtParser {
         counting.flush()
         return TxtTranscodeResult(
             sourceCharsetName = detected.name(),
-            chapters = chapters,
+            chapters = structuredChapters.ifEmpty { fallbackChapters },
             outputBytes = counting.count
         )
     }
@@ -391,36 +408,41 @@ object TxtParser {
         maxScanBytes: Long = Long.MAX_VALUE
     ): List<TxtChapterHit> {
         val charset = Charset.forName(normalizeCharsetName(charsetName))
-        val chapters = mutableListOf<TxtChapterHit>()
+        val structured = mutableListOf<TxtChapterHit>()
+        val fallback = mutableListOf<TxtChapterHit>()
+
+        fun collect(line: String, lineStartOffset: Long) {
+            val structuredTitle = extractStructuredChapterTitle(line)
+            val target = if (structuredTitle != null) structured else fallback
+            val title = structuredTitle ?: extractFallbackChapterTitle(line) ?: return
+            if (target.size >= maxChapters) return
+            val last = target.lastOrNull()
+            if (last == null || lineStartOffset - last.byteOffset > 80L) {
+                target += TxtChapterHit(title, lineStartOffset)
+            }
+        }
+
         inputStream.use { stream ->
             val lineBytes = ByteArrayOutputStream()
             var absoluteOffset = 0L
             var lineStartOffset = 0L
-            while (chapters.size < maxChapters && absoluteOffset < maxScanBytes) {
+            while (structured.size < maxChapters && absoluteOffset < maxScanBytes) {
                 val read = stream.read()
                 if (read == -1) {
-                    if (lineBytes.size() > 0 && chapters.size < maxChapters) {
-                        val line = decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim()
-                        val title = extractChapterTitle(line)
-                        if (title != null) {
-                            val last = chapters.lastOrNull()
-                            if (last == null || lineStartOffset - last.byteOffset > 80L) {
-                                chapters += TxtChapterHit(title, lineStartOffset)
-                            }
-                        }
+                    if (lineBytes.size() > 0) {
+                        collect(
+                            decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(),
+                            lineStartOffset
+                        )
                     }
                     break
                 }
                 absoluteOffset += 1L
                 if (read == '\n'.code) {
-                    val line = decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim()
-                    val title = extractChapterTitle(line)
-                    if (title != null) {
-                        val last = chapters.lastOrNull()
-                        if (last == null || lineStartOffset - last.byteOffset > 80L) {
-                            chapters += TxtChapterHit(title, lineStartOffset)
-                        }
-                    }
+                    collect(
+                        decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(),
+                        lineStartOffset
+                    )
                     lineBytes.reset()
                     lineStartOffset = absoluteOffset
                 } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) {
@@ -428,7 +450,7 @@ object TxtParser {
                 }
             }
         }
-        return chapters
+        return structured.ifEmpty { fallback }.take(maxChapters)
     }
 
     fun findTextOffset(
@@ -665,18 +687,47 @@ object TxtParser {
 
     fun isLikelyChapterTitle(line: String): Boolean = extractChapterTitle(line) != null
 
-    fun extractChapterTitle(line: String): String? {
+    fun extractStructuredChapterTitle(line: String): String? {
         val normalized = line.trim()
         if (normalized.length !in 2..120) return null
         if (normalized.contains("http", ignoreCase = true)) return null
-        if (normalized.count { it == '，' || it == ',' || it == '。' || it == '；' || it == ';' } > 2) return null
-        if (chapterPrefixPatterns.any { it.matches(normalized) }) {
-            return normalized.take(80)
+        if (normalized.count { it in "，,。；;！？!?" } > 2) return null
+        return normalized.take(100).takeIf { candidate ->
+            structuredChapterPatterns.any { it.matches(candidate) }
         }
-        if (standaloneChapterPatterns.any { it.matches(normalized) }) {
-            return normalized.take(80)
+    }
+
+    /**
+     * Last-resort rule. Callers that scan a whole book must only use these hits
+     * when no structured chapter heading was found anywhere in that book.
+     */
+    fun extractFallbackChapterTitle(line: String): String? {
+        val normalized = line.trim()
+        if (normalized.length !in 2..40) return null
+        if (normalized.contains("http", ignoreCase = true)) return null
+        if (normalized.all(Char::isDigit)) return null
+        if (normalized.any(::isTitlePunctuation)) return null
+        if (normalized.count(Char::isWhitespace) > 4) return null
+        if (normalized.none { it.isLetterOrDigit() }) return null
+        return normalized.take(80)
+    }
+
+    /** Kept for isolated-line callers and compatibility tests. */
+    fun extractChapterTitle(line: String): String? =
+        extractStructuredChapterTitle(line) ?: extractFallbackChapterTitle(line)
+
+    private fun isTitlePunctuation(character: Char): Boolean {
+        if (character in "，,。；;！？!?：:、.．—-（）()【】[]《》〈〉“”‘’\"'…") return true
+        return when (Character.getType(character)) {
+            Character.CONNECTOR_PUNCTUATION.toInt(),
+            Character.DASH_PUNCTUATION.toInt(),
+            Character.START_PUNCTUATION.toInt(),
+            Character.END_PUNCTUATION.toInt(),
+            Character.INITIAL_QUOTE_PUNCTUATION.toInt(),
+            Character.FINAL_QUOTE_PUNCTUATION.toInt(),
+            Character.OTHER_PUNCTUATION.toInt() -> true
+            else -> false
         }
-        return null
     }
 
     private class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {

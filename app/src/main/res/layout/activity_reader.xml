@@ -2,7 +2,8 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F5E9C8">
+    android:background="#F5E9C8"
+    android:paddingTop="24dp">
 
     <com.simplereader.app.ui.PagedReaderView
         android:id="@+id/pagedReaderView"
