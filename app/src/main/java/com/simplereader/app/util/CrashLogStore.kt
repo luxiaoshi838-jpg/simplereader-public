@@ -35,7 +35,7 @@ object CrashLogStore {
         val trace = StringWriter().also { writer -> error.printStackTrace(PrintWriter(writer)) }.toString()
         val version = runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
-            "${info.versionName} (${if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()})"
+            "${info.versionName} (${if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()})"
         }.getOrDefault("unknown")
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
         val text = buildString {
