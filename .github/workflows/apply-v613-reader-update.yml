@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sha256sum .github/v613-payload.part*
           cat .github/v613-payload.part* | base64 -d > /tmp/v613-files.tar.gz
           echo 'acf1260db819d6e1c489f736779de124e8c101b38a1abb74be5fab7fdf96840e  /tmp/v613-files.tar.gz' | sha256sum -c -
           tar -tzf /tmp/v613-files.tar.gz >/tmp/v613-files.list
