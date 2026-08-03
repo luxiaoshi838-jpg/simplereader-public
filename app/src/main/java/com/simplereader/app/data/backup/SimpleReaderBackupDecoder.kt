@@ -22,7 +22,8 @@ object SimpleReaderBackupDecoder {
         val books: List<JSONObject>,
         val bookmarks: List<JSONObject>,
         val progress: List<JSONObject>,
-        val structuredCache: List<JSONObject>
+        val structuredCache: List<JSONObject>,
+        val pageCache: List<JSONObject>
     )
 
     fun decode(text: String): DecodedBackup {
@@ -53,7 +54,8 @@ object SimpleReaderBackupDecoder {
             books = tables.objectRows("books"),
             bookmarks = tables.objectRows("bookmarks"),
             progress = tables.objectRows("read_progress"),
-            structuredCache = root.objectRows("structuredCache")
+            structuredCache = root.objectRows("structuredCache"),
+            pageCache = root.objectRows("pageCache")
         )
     }
 
