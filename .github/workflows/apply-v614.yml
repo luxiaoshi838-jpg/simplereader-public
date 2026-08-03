@@ -1,0 +1,77 @@
+name: Apply v614 cache cover and crash update
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'v614-cache-cover-crash-log'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout v614 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v614-cache-cover-crash-log
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Restore and verify exact v614 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '1b431aeb40e9a1e227359efcebd2ea24e83ea14bad008ca3e6dcd1c9334d0654  .github/v614-payload.tar.gz' | sha256sum -c -
+          gzip -t .github/v614-payload.tar.gz
+          tar -tzf .github/v614-payload.tar.gz >/tmp/v614-files.list
+          test "$(wc -l </tmp/v614-files.list)" -eq 30
+          tar -xzf .github/v614-payload.tar.gz
+
+          rm -f \
+            app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_grain.png \
+            app/src/main/res/drawable-nodpi/reader_texture_paper_fiber.png \
+            app/src/main/res/drawable-nodpi/reader_material_frosted.png
+
+          grep -q '2098000614' app/build.gradle.kts
+          grep -q 'generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "614"' app/build.gradle.kts
+          grep -q 'arrayOf("全书架目录缓存", "全书架无目录书籍缓存")' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -q 'val text = cached.text' app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
+          ! grep -q 'cached.catalogRuleVersion == TxtParser.CATALOG_RULE_VERSION' app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
+          ! grep -q 'root.optInt("catalogRuleVersion", 0) == identity.catalogRuleVersion' app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
+          grep -Fq '[\p{script=Han}]{1,40}[（(]' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -q 'CrashLogStore.install(this)' app/src/main/java/com/simplereader/app/App.kt
+          grep -q '闪退/崩溃日志' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          test -f app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
+          test -f app/src/main/res/drawable-nodpi/book_cover_default_epub.webp
+          test -f app/src/main/res/drawable-nodpi/reader_texture_duokan_blue.webp
+          test -f app/src/main/res/drawable-nodpi/reader_material_duokan_paper.webp
+          bash tools/verify-ui-policy.sh
+
+      - name: Debug unit tests
+        shell: bash
+        run: timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain
+
+      - name: Commit verified v614 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/v614-payload.tar.gz .github/workflows/apply-v614.yml
+          git add -A
+          git commit -m 'v614: persist catalogs, use supplied covers and backgrounds, and retain crash logs'
+          git push origin HEAD:v614-cache-cover-crash-log
