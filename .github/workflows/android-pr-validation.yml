@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apply-v615:
-    name: Apply verified v615 payload
+  finalize-v615:
+    name: Install supplied base texture and clean temporary files
     if: github.head_ref == 'agent/v615-reader-stability' || github.ref == 'refs/heads/agent/v615-reader-stability'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -28,17 +28,17 @@ jobs:
           ref: agent/v615-reader-stability
           fetch-depth: 0
 
-      - name: Apply source, covers, and supplied full-size textures
+      - name: Install exact full-page texture
         shell: bash
         run: |
           set -euo pipefail
-          cat .automation/v615-patch.z* | base64 -d | gzip -d > /tmp/v615.patch
-          git apply --check --exclude=.github/workflows/export-agent-source.yml /tmp/v615.patch
-          git apply --exclude=.github/workflows/export-agent-source.yml /tmp/v615.patch
+          cat .automation/v615-green.part* | base64 -d > app/src/main/res/drawable-nodpi/reader_texture_duokan_green.webp
+          echo 'fe5d61b13e697d44048fd0b8ca3c74447bba976e6f8037c3358b2be06f60af28  app/src/main/res/drawable-nodpi/reader_texture_duokan_green.webp' | sha256sum -c -
 
-          mkdir -p app/src/main/res/drawable-nodpi
-          cat .automation/v615-cover.z* | base64 -d > app/src/main/res/drawable-nodpi/book_cover_default_generic.webp
-          rm -f app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
+          rm -f \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_blue.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_white.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_yellow.webp
 
           bash tools/verify-ui-policy.sh
 
@@ -52,5 +52,5 @@ jobs:
           git add -A
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "v615: stabilize large-book reading and restore supplied textures"
+          git commit -m "v615: replace circle thumbnails with supplied base texture"
           git push origin HEAD:agent/v615-reader-stability
