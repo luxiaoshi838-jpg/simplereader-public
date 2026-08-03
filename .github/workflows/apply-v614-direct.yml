@@ -1,0 +1,66 @@
+name: Apply v614 direct source
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'v614-direct-final' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout v614 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v614-direct-final
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Apply and verify exact v614 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/v614-direct-part00.patch \
+              .github/v614-direct-part01.patch \
+              .github/v614-direct-part02.patch \
+              .github/v614-direct-part03.patch \
+              .github/v614-direct-part04.patch > /tmp/v614-direct.patch
+          echo '4aea81ee8ca9f5ec8f8fb8100f181f7acb2d36a6115dd78c9e2e585b35a9b41d  /tmp/v614-direct.patch' | sha256sum -c -
+          git apply --check /tmp/v614-direct.patch
+          git apply /tmp/v614-direct.patch
+          sed -i 's/fun neutralTexture(context: Context, asset:/fun neutralTexture(asset:/' app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          bash tools/verify-ui-policy.sh
+          grep -q '2098000614' app/build.gradle.kts
+          grep -q 'android:paddingTop="50dp"' app/src/main/res/layout/activity_reader.xml
+          ! grep -q 'android:paddingTop="24dp"' app/src/main/res/layout/activity_reader.xml
+          grep -Fq '[\p{script=Han}]{1,40}[（(]' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -q 'CrashLogStore.install(this)' app/src/main/java/com/simplereader/app/App.kt
+          grep -q 'val text = cached.text' app/src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt
+
+      - name: Debug tests and APK
+        run: ./gradlew --no-daemon --console=plain testDebugUnitTest assembleDebug
+
+      - name: Commit verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/v614-direct-part*.patch .github/workflows/apply-v614-direct.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'v614: persistent catalog cache, supplied covers and crash log'
+          git push origin HEAD:v614-direct-final
