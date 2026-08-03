@@ -66,6 +66,7 @@ object TxtParser {
         listOf(
             Regex("""^\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*$CHAPTER_NUMBER\s*[.、．:：—-]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
+            Regex("""^\s*[（(【\[]\s*$CHAPTER_NUMBER\s*[）)】\]]\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*[^\s，。！？；;]{1,20}\s*[：:—-]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
             Regex("""^\s*[^\s，。！？；;]{1,16}\s+第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
             Regex("""^\s*[卷部篇单元]\s*$CHAPTER_NUMBER(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
@@ -709,8 +710,15 @@ object TxtParser {
         if (normalized.any(::isTitlePunctuation)) return null
         if (normalized.count(Char::isWhitespace) > 4) return null
         if (normalized.none { it.isLetterOrDigit() }) return null
+        if (fallbackSentenceMarkers.any { marker -> normalized.contains(marker) }) return null
         return normalized.take(80)
     }
+
+    private val fallbackSentenceMarkers = listOf(
+        "这是一", "这是", "那是", "一个", "一种", "普通正文", "正文内容",
+        "我们", "你们", "他们", "因为", "所以", "但是", "然后", "已经", "正在",
+        "可以", "需要", "应该", "如果", "并且", "以及"
+    )
 
     /** Kept for isolated-line callers and compatibility tests. */
     fun extractChapterTitle(line: String): String? =

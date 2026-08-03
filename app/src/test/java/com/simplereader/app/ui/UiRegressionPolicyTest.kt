@@ -37,9 +37,11 @@ class UiRegressionPolicyTest {
     @Test
     fun `vertical mode is one continuous document and pages reserve no bottom gap`() {
         val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
+        val profile = source("src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt")
         val layout = source("src/main/res/layout/activity_reader.xml")
         assertTrue(reader.contains("showContinuousBook"))
-        assertTrue(reader.contains("contentPaddingBottomPx = 0"))
+        assertTrue(profile.contains("contentPaddingBottomPx = 0"))
+        assertTrue(reader.contains("bottomPaddingPx = 0"))
         assertFalse(reader.contains("PagerSnapHelper"))
         assertFalse(reader.contains("RecyclerView"))
         assertTrue(layout.contains("android:paddingBottom=\"0dp\""))
