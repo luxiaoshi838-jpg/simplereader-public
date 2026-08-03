@@ -1,17 +1,16 @@
 name: Apply v613 reader update
 
 on:
-  push:
+  pull_request:
     branches:
-      - v613-reader-update
-    paths:
-      - '.github/v613-apply-trigger.txt'
+      - main
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'v613-reader-update'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout v613 branch
