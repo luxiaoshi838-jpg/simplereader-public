@@ -13,6 +13,7 @@ import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import com.simplereader.app.R
@@ -20,13 +21,12 @@ import com.simplereader.app.R
 /**
  * 阅读背景保持“纯色 + 纹理 + 质感”三层独立组合。
  *
- * v614 起，纯色取自用户提供的阅读背景主色；纹理使用其中明确标注为可平铺的
- * 97×97 底图；质感使用对应的藤蔓/纸张素材。三层仍可分别关闭，不再使用程序
- * 随机生成的纸纤维或旧 CC0 纹理替代这些素材。
+ * 纹理层直接使用用户上传包中的 1080×2340 完整基础纹理图，按阅读区域等比裁切，
+ * 不再把 97×97 选择器缩略图放大平铺，也不再程序生成圆点、纸纤维或纯色替代纹理。
  */
 object ReaderBackgrounds {
     const val DEFAULT_COLOR_ID = "solid_ivory"
-    const val DEFAULT_TEXTURE_ID = "texture_duokan_yellow"
+    const val DEFAULT_TEXTURE_ID = "texture_duokan_green"
     const val DEFAULT_MATERIAL_ID = "material_none"
     const val NONE_TEXTURE_ID = "texture_none"
     const val NONE_MATERIAL_ID = "material_none"
@@ -46,7 +46,7 @@ object ReaderBackgrounds {
 
     enum class TextureEffect {
         NONE,
-        TILED_BITMAP
+        FULL_BITMAP
     }
 
     data class TextureOption(
@@ -56,7 +56,7 @@ object ReaderBackgrounds {
         val drawableRes: Int? = null,
         val alpha: Int = 0,
         val tileDp: Float = 96f,
-        val blendMode: PorterDuff.Mode = PorterDuff.Mode.OVERLAY
+        val blendMode: PorterDuff.Mode = PorterDuff.Mode.SRC_OVER
     )
 
     enum class MaterialEffect {
@@ -80,7 +80,6 @@ object ReaderBackgrounds {
         val materialId: String = DEFAULT_MATERIAL_ID
     )
 
-    /** 主色取自用户上传的 scene blue/green/white/yellow/black 与暖色纸张素材。 */
     val colorOptions: List<ColorOption> = listOf(
         ColorOption("solid_ivory", "米黄", Color.rgb(231, 222, 191), Color.rgb(57, 51, 39)),
         ColorOption("solid_eye", "护眼绿", Color.rgb(203, 224, 205), Color.rgb(42, 57, 43)),
@@ -94,32 +93,11 @@ object ReaderBackgrounds {
     val textureOptions: List<TextureOption> = listOf(
         TextureOption(NONE_TEXTURE_ID, "纯净", TextureEffect.NONE),
         TextureOption(
-            id = "texture_duokan_blue",
-            title = "蓝纸纹理",
-            effect = TextureEffect.TILED_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_blue,
-            alpha = 82
-        ),
-        TextureOption(
             id = "texture_duokan_green",
-            title = "绿纸纹理",
-            effect = TextureEffect.TILED_BITMAP,
+            title = "基础纸张纹理",
+            effect = TextureEffect.FULL_BITMAP,
             drawableRes = R.drawable.reader_texture_duokan_green,
-            alpha = 78
-        ),
-        TextureOption(
-            id = "texture_duokan_white",
-            title = "白纸纹理",
-            effect = TextureEffect.TILED_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_white,
-            alpha = 76
-        ),
-        TextureOption(
-            id = "texture_duokan_yellow",
-            title = "米黄纹理",
-            effect = TextureEffect.TILED_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_yellow,
-            alpha = 84
+            alpha = 255
         )
     )
 
@@ -172,13 +150,17 @@ object ReaderBackgrounds {
     val quickColorIds: List<String> = listOf(DEFAULT_COLOR_ID, "solid_eye", "solid_white")
 
     private val textureAliases = mapOf(
-        "texture_paper_grain" to "texture_duokan_yellow",
-        "texture_paper_fiber" to "texture_duokan_white",
-        "texture_paper" to "texture_duokan_yellow",
-        "texture_linen" to "texture_duokan_yellow",
-        "texture_fiber" to "texture_duokan_white",
+        "texture_paper_grain" to "texture_duokan_green",
+        "texture_paper_fiber" to "texture_duokan_green",
+        "texture_paper" to "texture_duokan_green",
+        "texture_linen" to "texture_duokan_green",
+        "texture_fiber" to "texture_duokan_green",
+        "texture_blue" to "texture_duokan_green",
         "texture_green" to "texture_duokan_green",
-        "texture_grey" to "texture_duokan_white"
+        "texture_grey" to "texture_duokan_green",
+        "texture_duokan_blue" to "texture_duokan_green",
+        "texture_duokan_white" to "texture_duokan_green",
+        "texture_duokan_yellow" to "texture_duokan_green"
     )
 
     private val materialAliases = mapOf(
@@ -221,20 +203,19 @@ object ReaderBackgrounds {
         return colorOptions.minByOrNull { distance(it.backgroundColor) }?.id ?: DEFAULT_COLOR_ID
     }
 
-    /** 将旧版互斥预设迁移到新的三层素材组合。 */
     fun selectionFromLegacy(styleId: String?, paletteBackground: Int): Selection {
         return validated(
             when (styleId) {
                 "solid_ivory", "solid_eye", "solid_white", "solid_mist", "solid_peach", "solid_blue" ->
                     Selection(styleId, NONE_TEXTURE_ID, NONE_MATERIAL_ID)
                 "texture_paper", "texture_linen" ->
-                    Selection("solid_ivory", "texture_duokan_yellow", NONE_MATERIAL_ID)
+                    Selection("solid_ivory", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_fiber" ->
-                    Selection("solid_white", "texture_duokan_white", NONE_MATERIAL_ID)
+                    Selection("solid_white", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_green" ->
                     Selection("solid_eye", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_grey" ->
-                    Selection("solid_mist", "texture_duokan_white", NONE_MATERIAL_ID)
+                    Selection("solid_mist", "texture_duokan_green", NONE_MATERIAL_ID)
                 "material_parchment" ->
                     Selection("solid_ivory", NONE_TEXTURE_ID, "material_duokan_paper")
                 "material_cloud" ->
@@ -304,12 +285,11 @@ private class LayeredReaderBackgroundDrawable(
         val area = bounds
         if (area.isEmpty) return
         canvas.drawRect(area, fillPaint)
-        if (texture.effect == ReaderBackgrounds.TextureEffect.TILED_BITMAP) {
-            drawTiled(
+        if (texture.effect == ReaderBackgrounds.TextureEffect.FULL_BITMAP) {
+            drawFullBitmap(
                 canvas = canvas,
                 area = area,
                 resId = texture.drawableRes ?: return,
-                tileDp = texture.tileDp,
                 alpha = texture.alpha,
                 mode = texture.blendMode
             )
@@ -324,6 +304,34 @@ private class LayeredReaderBackgroundDrawable(
                 mode = material.blendMode
             )
         }
+    }
+
+    private fun drawFullBitmap(
+        canvas: Canvas,
+        area: Rect,
+        resId: Int,
+        alpha: Int,
+        mode: PorterDuff.Mode
+    ) {
+        val bitmap = ReaderBackgroundBitmapCache.bitmap(context, resId) ?: return
+        val source = Rect(0, 0, bitmap.width, bitmap.height)
+        val destination = RectF(area)
+        val bitmapAspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+        val areaAspect = area.width().toFloat() / area.height().coerceAtLeast(1).toFloat()
+        if (bitmapAspect > areaAspect) {
+            val targetWidth = (bitmap.height * areaAspect).toInt().coerceIn(1, bitmap.width)
+            val left = (bitmap.width - targetWidth) / 2
+            source.set(left, 0, left + targetWidth, bitmap.height)
+        } else {
+            val targetHeight = (bitmap.width / areaAspect.coerceAtLeast(0.01f)).toInt().coerceIn(1, bitmap.height)
+            val top = (bitmap.height - targetHeight) / 2
+            source.set(0, top, bitmap.width, top + targetHeight)
+        }
+        bitmapPaint.shader = null
+        bitmapPaint.alpha = (alpha * globalAlpha / 255).coerceIn(0, 255)
+        bitmapPaint.xfermode = PorterDuffXfermode(mode)
+        canvas.drawBitmap(bitmap, source, destination, bitmapPaint)
+        bitmapPaint.xfermode = null
     }
 
     private fun drawTiled(

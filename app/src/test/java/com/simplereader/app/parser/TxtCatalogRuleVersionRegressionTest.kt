@@ -50,4 +50,10 @@ class TxtCatalogRuleVersionRegressionTest {
         assertEquals(listOf("山海之约", "故人之女"), hits.map { it.title })
         assertTrue(TxtParser.CATALOG_RULE_VERSION > 0)
     }
+
+    @Test
+    fun recognizesParenthesizedPrefixBeforeChapterNumber() {
+        assertEquals("（xxxx）第一章", TxtParser.extractStructuredChapterTitle("（xxxx）第一章"))
+        assertEquals("(卷一) 第十二章 开端", TxtParser.extractStructuredChapterTitle("(卷一) 第十二章 开端"))
+    }
 }

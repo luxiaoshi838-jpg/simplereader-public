@@ -7,11 +7,12 @@ import org.junit.Test
 
 class CrashLogAndCoverContractTest {
     @Test
-    fun `txt and epub use supplied defaults while epub real cover still wins`() {
+    fun `plain text uses generic cover without txt badge while epub real cover still wins`() {
         val assets = File("src/main/java/com/simplereader/app/ui/BookCoverAssets.kt").readText()
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val group = File("src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt").readText()
-        assertTrue(assets.contains("book_cover_default_txt"))
+        assertTrue(assets.contains("book_cover_default_generic"))
+        assertFalse(assets.contains("book_cover_default_txt"))
         assertTrue(assets.contains("book_cover_default_epub"))
         assertTrue(main.contains("BookCoverAssets.drawable("))
         assertTrue(group.contains("BookCoverAssets.drawable("))
@@ -25,9 +26,11 @@ class CrashLogAndCoverContractTest {
     @Test
     fun `uncaught crash appears next launch and is removed only after copying`() {
         val app = File("src/main/java/com/simplereader/app/App.kt").readText()
+        val manifest = File("src/main/AndroidManifest.xml").readText()
         val store = File("src/main/java/com/simplereader/app/crash/CrashLogStore.kt").readText()
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         assertTrue(app.contains("CrashLogStore.install(this)"))
+        assertTrue(manifest.contains("android:name=\".App\""))
         assertTrue(store.contains("Thread.setDefaultUncaughtExceptionHandler"))
         assertTrue(store.contains("pending_crash_log.txt"))
         assertTrue(main.contains("闪退/崩溃日志"))

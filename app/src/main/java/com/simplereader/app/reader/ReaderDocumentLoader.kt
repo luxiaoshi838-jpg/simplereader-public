@@ -78,11 +78,12 @@ object ReaderDocumentLoader {
             lastModified = sourceModified
         )?.let { cached ->
             val text = cached.text
-            val chapters = if (!forceCatalogRefresh) {
-                // Reuse the persisted catalog across app restarts and rule changes.
-                // A new recognition pass happens only through an explicit shelf-cache option.
+            val catalogNeedsUpgrade = cached.catalogRuleVersion < TxtParser.CATALOG_RULE_VERSION
+            val chapters = if (!forceCatalogRefresh && !catalogNeedsUpgrade) {
                 cached.chapters
             } else {
+                // Re-run chapter recognition from the persistent UTF-8 cache only once when
+                // recognition rules change. The original large TXT is not decoded again.
                 detectTxtChapters(text).also { refreshed ->
                     PageCacheStore.saveNormalizedTxt(
                         context = context,

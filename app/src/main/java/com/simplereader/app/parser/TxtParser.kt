@@ -48,7 +48,7 @@ data class TxtTranscodeResult(
 
 object TxtParser {
     /** Bump this whenever TXT catalog recognition rules change. */
-    const val CATALOG_RULE_VERSION = 2
+    const val CATALOG_RULE_VERSION = 3
 
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
@@ -69,6 +69,7 @@ object TxtParser {
             Regex("""^\s*[（(【\[]\s*$CHAPTER_NUMBER\s*[）)】\]]\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*[^\s，。！？；;]{1,20}\s*[：:—-]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
             Regex("""^\s*[^\s，。！？；;]{1,16}\s+第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s+\S.*)?$"""),
+            Regex("""^\s*[（(][^（）()\r\n]{1,40}[）)]\s*第\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*[卷部篇单元]\s*$CHAPTER_NUMBER(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*$CHAPTER_NUMBER\s*$CHAPTER_STRUCTURE(?:\s*[:：、.．—-]?\s*\S.*)?$"""),
             Regex("""^\s*[上中下前后终]\s*[卷部篇](?:\s+\S.*)?$"""),

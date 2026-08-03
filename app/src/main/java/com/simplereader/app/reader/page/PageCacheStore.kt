@@ -16,7 +16,9 @@ object PageCacheStore {
     private const val CACHE_VERSION = 3
     private const val MIN_COMPATIBLE_CACHE_VERSION = 2
     private const val ROOT = "reader_page_cache"
-    private const val MANIFEST = "pages.json"
+    private const val LEGACY_MANIFEST = "pages.json"
+    private const val MANIFEST_PREFIX = "pages-"
+    private const val MANIFEST_SUFFIX = ".json"
     private const val TXT_CONTENT = "content.txt"
     private const val TXT_SOURCE = "txt-source.json"
     private const val RECOGNITION = "recognition.json"
@@ -51,7 +53,7 @@ object PageCacheStore {
         fileSize: Long?
     ): Boolean = runCatching {
         val directory = bookDir(context, bookId)
-        require(directory.resolve(MANIFEST).isFile)
+        require(pageManifestFiles(directory).isNotEmpty())
         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
         root.optString("fileName").equals(fileName, ignoreCase = true) &&
             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
@@ -69,7 +71,7 @@ object PageCacheStore {
         fileSize: Long?
     ): Boolean = runCatching {
         val directory = bookDir(context, bookId)
-        require(directory.resolve(MANIFEST).isFile)
+        require(pageManifestFiles(directory).isNotEmpty())
         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
         root.optString("fileName").equals(fileName, ignoreCase = true) &&
             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
@@ -110,51 +112,62 @@ object PageCacheStore {
     }
 
     fun loadPages(context: Context, identity: CacheIdentity, text: String): ReaderBook? {
-        val file = bookDir(context, identity.bookId).resolve(MANIFEST)
-        return runCatching {
-            val root = JSONObject(file.readText(Charsets.UTF_8))
-            val version = root.optInt("cacheVersion")
-            require(version in MIN_COMPATIBLE_CACHE_VERSION..CACHE_VERSION)
-            require(root.optLong("bookId") == identity.bookId)
-            require(root.optString("readerSettingsHash") == identity.settingsHash)
-            // Catalog-rule changes do not invalidate a completed cache automatically.
-            // The user explicitly chooses all-books or books-without-catalog refresh.
+        val directory = bookDir(context, identity.bookId)
+        val candidates = linkedSetOf(
+            manifestFile(directory, identity.settingsHash),
+            directory.resolve(LEGACY_MANIFEST)
+        ).filter(File::isFile)
+        for (file in candidates) {
+            val result = runCatching {
+                val root = JSONObject(file.readText(Charsets.UTF_8))
+                val version = root.optInt("cacheVersion")
+                require(version in MIN_COMPATIBLE_CACHE_VERSION..CACHE_VERSION)
+                require(root.optLong("bookId") == identity.bookId)
+                if (root.optString("readerSettingsHash") != identity.settingsHash) return@runCatching null
+                if (root.optInt("catalogRuleVersion", 0) != identity.catalogRuleVersion) return@runCatching null
 
-            val storedFingerprint = root.optString("textFingerprint")
-            if (storedFingerprint.isNotBlank()) {
-                require(storedFingerprint == identity.textFingerprint)
-            } else {
-                require(root.optString("filePath") == identity.filePath)
-                require(root.optLong("fileSize") == identity.fileSize)
-                require(root.optLong("lastModified") == identity.lastModified)
-            }
+                val storedFingerprint = root.optString("textFingerprint")
+                if (storedFingerprint.isNotBlank()) {
+                    require(storedFingerprint == identity.textFingerprint)
+                } else {
+                    require(root.optString("filePath") == identity.filePath)
+                    require(root.optLong("fileSize") == identity.fileSize)
+                    require(root.optLong("lastModified") == identity.lastModified)
+                }
 
-            val chapters = root.getJSONArray("chapters").toBookChapters(text.length)
-            require(chapters.isNotEmpty())
-            val rawPages = root.getJSONArray("pages")
-            val total = rawPages.length()
-            require(total > 0)
-            val pages = (0 until total).map { index ->
-                val item = rawPages.getJSONObject(index)
-                val chapterIndex = item.getInt("chapterIndex")
-                require(chapterIndex in chapters.indices)
-                ReaderPage(
-                    globalPageIndex = index,
-                    totalPageCount = total,
-                    chapterIndex = chapterIndex,
-                    pageIndexInChapter = item.getInt("pageIndexInChapter"),
-                    chapterPageCount = item.getInt("chapterPageCount"),
-                    startOffset = item.getInt("startOffset").coerceIn(0, text.length),
-                    endOffset = item.getInt("endOffset").coerceIn(0, text.length)
-                )
+                val chapters = root.getJSONArray("chapters").toBookChapters(text.length)
+                require(chapters.isNotEmpty())
+                val rawPages = root.getJSONArray("pages")
+                val total = rawPages.length()
+                require(total > 0)
+                val pages = (0 until total).map { index ->
+                    val item = rawPages.getJSONObject(index)
+                    val chapterIndex = item.getInt("chapterIndex")
+                    require(chapterIndex in chapters.indices)
+                    ReaderPage(
+                        globalPageIndex = index,
+                        totalPageCount = total,
+                        chapterIndex = chapterIndex,
+                        pageIndexInChapter = item.getInt("pageIndexInChapter"),
+                        chapterPageCount = item.getInt("chapterPageCount"),
+                        startOffset = item.getInt("startOffset").coerceIn(0, text.length),
+                        endOffset = item.getInt("endOffset").coerceIn(0, text.length)
+                    )
+                }
+                require(pages.all { it.startOffset <= it.endOffset })
+                require(pages.zipWithNext().all { (a, b) -> a.endOffset <= b.endOffset })
+                ReaderBook(text, chapters, pages, identity.settingsHash)
             }
-            require(pages.all { it.startOffset <= it.endOffset })
-            require(pages.zipWithNext().all { (a, b) -> a.endOffset <= b.endOffset })
-            ReaderBook(text, chapters, pages, identity.settingsHash)
-        }.getOrElse {
-            file.delete()
-            null
+            val value = result.getOrNull()
+            if (value != null) {
+                if (file.name == LEGACY_MANIFEST) {
+                    runCatching { savePages(context, identity, value) }
+                }
+                return value
+            }
+            if (result.isFailure) file.delete()
         }
+        return null
     }
 
     fun savePages(context: Context, identity: CacheIdentity, book: ReaderBook) {
@@ -190,7 +203,7 @@ object PageCacheStore {
             .put("catalogRuleVersion", identity.catalogRuleVersion)
             .put("chapters", chapters)
             .put("pages", pages)
-        atomicWrite(directory.resolve(MANIFEST), root.toString())
+        atomicWrite(manifestFile(directory, identity.settingsHash), root.toString())
     }
 
     fun loadNormalizedTxt(
@@ -274,10 +287,16 @@ object PageCacheStore {
             .forEach { directory ->
                 val bookId = directory.name.toLongOrNull() ?: return@forEach
                 val item = JSONObject().put("bookId", bookId)
-                directory.resolve(MANIFEST).takeIf(File::isFile)?.let { manifest ->
-                    item.put("pageManifestEncoding", EXPORT_ENCODING)
-                    item.put("pageManifestData", encodeCompressed(manifest.readText(Charsets.UTF_8)))
+                val manifests = JSONArray()
+                pageManifestFiles(directory).forEach { manifest ->
+                    manifests.put(
+                        JSONObject()
+                            .put("fileName", manifest.name)
+                            .put("encoding", EXPORT_ENCODING)
+                            .put("data", encodeCompressed(manifest.readText(Charsets.UTF_8)))
+                    )
                 }
+                if (manifests.length() > 0) item.put("pageManifests", manifests)
                 directory.resolve(RECOGNITION).takeIf(File::isFile)?.let { recognition ->
                     item.put("recognitionEncoding", EXPORT_ENCODING)
                     item.put("recognitionData", encodeCompressed(recognition.readText(Charsets.UTF_8)))
@@ -309,13 +328,28 @@ object PageCacheStore {
             var restoredAny = false
 
             runCatching {
-                if (item.optString("pageManifestEncoding") == EXPORT_ENCODING) {
+                val manifestArray = item.optJSONArray("pageManifests")
+                if (manifestArray != null) {
+                    for (index in 0 until manifestArray.length()) {
+                        val saved = manifestArray.getJSONObject(index)
+                        if (saved.optString("encoding") != EXPORT_ENCODING) continue
+                        val encoded = saved.optString("data")
+                        if (encoded.isBlank()) continue
+                        val manifest = JSONObject(decodeCompressed(encoded)).put("bookId", newBookId)
+                        val settingsHash = manifest.optString("readerSettingsHash")
+                        if (settingsHash.isBlank()) continue
+                        atomicWrite(manifestFile(directory, settingsHash), manifest.toString())
+                        restoredAny = true
+                    }
+                } else if (item.optString("pageManifestEncoding") == EXPORT_ENCODING) {
                     val encoded = item.optString("pageManifestData")
                     if (encoded.isNotBlank()) {
-                        val manifest = JSONObject(decodeCompressed(encoded))
-                            .put("bookId", newBookId)
-                        atomicWrite(directory.resolve(MANIFEST), manifest.toString())
-                        restoredAny = true
+                        val manifest = JSONObject(decodeCompressed(encoded)).put("bookId", newBookId)
+                        val settingsHash = manifest.optString("readerSettingsHash")
+                        if (settingsHash.isNotBlank()) {
+                            atomicWrite(manifestFile(directory, settingsHash), manifest.toString())
+                            restoredAny = true
+                        }
                     }
                 }
 
@@ -356,7 +390,7 @@ object PageCacheStore {
     /** Remove layout and recognition results while preserving normalized TXT content. */
     fun clearDerivedCatalogAndPages(context: Context, bookId: Long) {
         val directory = bookDir(context, bookId)
-        directory.resolve(MANIFEST).delete()
+        pageManifestFiles(directory).forEach(File::delete)
         directory.resolve(RECOGNITION).delete()
     }
 
@@ -374,6 +408,17 @@ object PageCacheStore {
                 sourceHref = item.optString("sourceHref").takeIf { it.isNotBlank() && it != "null" },
                 catalogVisible = item.optBoolean("catalogVisible", true)
             )
+        }
+
+    private fun manifestFile(directory: File, settingsHash: String): File {
+        val safeHash = settingsHash.replace(Regex("[^A-Za-z0-9_-]"), "_").take(96)
+        return directory.resolve("$MANIFEST_PREFIX$safeHash$MANIFEST_SUFFIX")
+    }
+
+    private fun pageManifestFiles(directory: File): List<File> =
+        directory.listFiles().orEmpty().filter { file ->
+            file.isFile && (file.name == LEGACY_MANIFEST ||
+                (file.name.startsWith(MANIFEST_PREFIX) && file.name.endsWith(MANIFEST_SUFFIX)))
         }
 
     private fun rootDirectory(context: Context): File = context.filesDir.resolve(ROOT)
