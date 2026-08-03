@@ -1,0 +1,1 @@
+Apply the verified v613 reader, catalog and shelf-cache source payload.
