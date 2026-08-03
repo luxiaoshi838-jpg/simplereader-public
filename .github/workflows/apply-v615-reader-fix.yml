@@ -18,7 +18,7 @@ jobs:
         with:
           ref: agent/v615-reader-stability
           fetch-depth: 0
-      - name: Apply verified patch and assets
+      - name: Apply verified patch and supplied assets
         shell: bash
         run: |
           set -euo pipefail
@@ -27,15 +27,11 @@ jobs:
           git apply /tmp/v615.patch
           mkdir -p app/src/main/res/drawable-nodpi
           cat .automation/v615-cover.part* | base64 -d > app/src/main/res/drawable-nodpi/book_cover_default_generic.webp
-          cat .automation/v615-blue.part* | base64 -d > app/src/main/res/drawable-nodpi/reader_texture_duokan_blue.webp
-          cat .automation/v615-green.part* | base64 -d > app/src/main/res/drawable-nodpi/reader_texture_duokan_green.webp
-          cat .automation/v615-white.part* | base64 -d > app/src/main/res/drawable-nodpi/reader_texture_duokan_white.webp
-          cat .automation/v615-yellow.part* | base64 -d > app/src/main/res/drawable-nodpi/reader_texture_duokan_yellow.webp
           rm -f app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
           bash tools/verify-ui-policy.sh
           rm -f .automation/v615-* .github/workflows/apply-v615-reader-fix.yml .github/workflows/export-agent-source.yml
           git add -A
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "v615: stabilize large-book reading and restore supplied textures [skip ci]"
+          git commit -m "v615: stabilize large-book reading and restore supplied textures"
           git push origin HEAD:agent/v615-reader-stability
