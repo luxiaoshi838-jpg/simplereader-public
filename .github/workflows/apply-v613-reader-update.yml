@@ -23,9 +23,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum .github/v613-payload.part*
-          cat .github/v613-payload.part* | base64 -d > /tmp/v613-files.tar.gz
-          echo 'acf1260db819d6e1c489f736779de124e8c101b38a1abb74be5fab7fdf96840e  /tmp/v613-files.tar.gz' | sha256sum -c -
+          echo '2779c4931223c1dfca2335d85c81900f751db4fc2db28b80088de48a7e4d3863  .github/v613-payload.part03x0' | sha256sum -c -
+          echo '5a9ae2ea53de6b43d6dbbfc99d32798bbad292f476cf35b396995ca72e862629  .github/v613-payload.part03x1' | sha256sum -c -
+          cat \
+            .github/v613-payload.part00 \
+            .github/v613-payload.part01 \
+            .github/v613-payload.part02 \
+            .github/v613-payload.part03x0 \
+            .github/v613-payload.part03x1 \
+            .github/v613-payload.part04 \
+            .github/v613-payload.part05 \
+            .github/v613-payload.part06 \
+            .github/v613-payload.part07 \
+            .github/v613-payload.part08 \
+            .github/v613-payload.part09 \
+            .github/v613-payload.part10 \
+            .github/v613-payload.part11 \
+            .github/v613-payload.part12 \
+            | base64 -d > /tmp/v613-files.tar.gz
+          echo '4b58f8ae462e8b5d984d557b9fb41b0e4ed3c25f47c2ebb1e7a9b373c48d258e  /tmp/v613-files.tar.gz' | sha256sum -c -
+          gzip -t /tmp/v613-files.tar.gz
           tar -tzf /tmp/v613-files.tar.gz >/tmp/v613-files.list
           test "$(wc -l </tmp/v613-files.list)" -eq 18
           tar -xzf /tmp/v613-files.tar.gz
