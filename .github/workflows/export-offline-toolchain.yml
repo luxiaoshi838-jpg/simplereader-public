@@ -45,7 +45,7 @@ jobs:
           code=$?
           tail -n 200 /tmp/offline-build.log
           exit $code
-      - name: Pack offline toolchain
+      - name: Pack and split offline toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -60,11 +60,35 @@ jobs:
           rm -rf /tmp/offline/gradle-home/daemon /tmp/offline/gradle-home/workers /tmp/offline/gradle-home/notifications
           tar -C /tmp/offline -czf /tmp/simplereader-offline-toolchain.tar.gz .
           sha256sum /tmp/simplereader-offline-toolchain.tar.gz > /tmp/simplereader-offline-toolchain.tar.gz.sha256
+          split -b 350M -d -a 2 /tmp/simplereader-offline-toolchain.tar.gz /tmp/simplereader-offline-toolchain.part
+          test -s /tmp/simplereader-offline-toolchain.part00
+          test -s /tmp/simplereader-offline-toolchain.part01
+          test -s /tmp/simplereader-offline-toolchain.part02
       - uses: actions/upload-artifact@v4
         with:
-          name: simplereader-offline-toolchain
+          name: simplereader-offline-toolchain-part00
+          path: /tmp/simplereader-offline-toolchain.part00
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-offline-toolchain-part01
+          path: /tmp/simplereader-offline-toolchain.part01
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-offline-toolchain-part02
+          path: /tmp/simplereader-offline-toolchain.part02
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplereader-offline-toolchain-metadata
           path: |
-            /tmp/simplereader-offline-toolchain.tar.gz
             /tmp/simplereader-offline-toolchain.tar.gz.sha256
             /tmp/offline-build.log
           if-no-files-found: error
