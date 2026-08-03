@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Bitmap
@@ -30,6 +33,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
+import com.simplereader.app.crash.CrashLogStore
 import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
@@ -221,6 +225,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadBooks()
+        mainRoot.post { showPendingCrashLogIfNeeded() }
+    }
+
+    private fun showPendingCrashLogIfNeeded() {
+        val crashLog = CrashLogStore.readPending(this) ?: return
+        val logView = TextView(this).apply {
+            text = crashLog
+            textSize = 12f
+            setTextIsSelectable(true)
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+        }
+        val content = ScrollView(this).apply {
+            isFillViewport = true
+            addView(logView)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("闪退/崩溃日志")
+            .setView(content)
+            .setPositiveButton("复制并清除", null)
+            .setNegativeButton("暂不复制", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("简阅闪退日志", crashLog))
+                CrashLogStore.clear(this)
+                Toast.makeText(this, "日志已复制并清除", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 
     private fun statusBarHeight(): Int {
@@ -433,10 +468,12 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             maxLines = if (compact) 4 else 5
             setPadding(dp(6), dp(8), dp(6), dp(8))
-            background = PaperCoverDrawable(
-                radiusPx = dp(if (compact) 3 else 5).toFloat(),
-                seed = book.id.toInt()
+            background = BookCoverAssets.drawable(
+                context = context,
+                format = book.format,
+                radiusPx = dp(if (compact) 3 else 5).toFloat()
             )
+            setShadowLayer(dp(1).toFloat(), 0f, dp(1).toFloat(), Color.argb(150, 0, 0, 0))
         }
         val image = ImageView(this).apply {
             visibility = View.GONE

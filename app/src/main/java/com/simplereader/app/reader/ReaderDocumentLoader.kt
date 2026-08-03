@@ -77,8 +77,10 @@ object ReaderDocumentLoader {
             fileSize = sourceSize,
             lastModified = sourceModified
         )?.let { cached ->
-            val text = cached.textFile.readText(Charsets.UTF_8)
-            val chapters = if (!forceCatalogRefresh && cached.catalogRuleVersion == TxtParser.CATALOG_RULE_VERSION) {
+            val text = cached.text
+            val chapters = if (!forceCatalogRefresh) {
+                // Reuse the persisted catalog across app restarts and rule changes.
+                // A new recognition pass happens only through an explicit shelf-cache option.
                 cached.chapters
             } else {
                 detectTxtChapters(text).also { refreshed ->

@@ -392,7 +392,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 textSize = 11f
                 setTextColor(Color.rgb(232, 238, 244))
                 setPadding(dp(6), dp(8), dp(6), dp(8))
-                background = PaperCoverDrawable(radiusPx = dp(5).toFloat())
+                background = BookCoverAssets.drawable(context, "TXT", dp(5).toFloat())
             }
             coverImage.apply {
                 visibility = View.GONE
@@ -430,7 +430,11 @@ class GroupBooksActivity : AppCompatActivity() {
         fun bind(book: ShelfBookItem, selectionMode: Boolean, selected: Boolean) {
             boundBookId = book.id
             coverFallback.text = book.title.take(22)
-            coverFallback.background = PaperCoverDrawable(radiusPx = dp(5).toFloat(), seed = book.id.toInt())
+            coverFallback.background = BookCoverAssets.drawable(
+                context = context,
+                format = book.format,
+                radiusPx = dp(5).toFloat()
+            )
             coverFallback.visibility = View.VISIBLE
             coverImage.visibility = View.GONE
             coverImage.setImageDrawable(null)

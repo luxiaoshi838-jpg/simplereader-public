@@ -33,14 +33,17 @@ object PageCacheStore {
     )
 
     data class NormalizedTxt(
-        val textFile: File,
+        val text: String,
         val chapters: List<BookChapter>,
         val charsetName: String,
         val catalogRuleVersion: Int
     )
 
 
-    /** A book is already recognized only when its file name and file size are unchanged. */
+    /**
+     * A book is already recognized when its file name and size are unchanged.
+     * Rule-version changes are recorded for diagnostics but never trigger an automatic refresh.
+     */
     fun isRecognitionCurrent(
         context: Context,
         bookId: Long,
@@ -52,11 +55,13 @@ object PageCacheStore {
         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
         root.optString("fileName").equals(fileName, ignoreCase = true) &&
             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
-            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
             root.optBoolean("completed", false)
     }.getOrDefault(false)
 
-    /** True only when the unchanged current file already has at least one visible catalog entry. */
+    /**
+     * True when the unchanged current file already has a visible catalog.
+     * This intentionally ignores rule-version changes; cache scope is chosen by the user.
+     */
     fun hasCurrentCatalog(
         context: Context,
         bookId: Long,
@@ -68,7 +73,6 @@ object PageCacheStore {
         val root = JSONObject(directory.resolve(RECOGNITION).readText(Charsets.UTF_8))
         root.optString("fileName").equals(fileName, ignoreCase = true) &&
             root.optLong("fileSize", Long.MIN_VALUE) == (fileSize ?: Long.MIN_VALUE) &&
-            root.optInt("catalogRuleVersion", 0) == TxtParser.CATALOG_RULE_VERSION &&
             root.optBoolean("completed", false) &&
             root.optInt("chapterCount", 0) > 0
     }.getOrDefault(false)
@@ -113,7 +117,8 @@ object PageCacheStore {
             require(version in MIN_COMPATIBLE_CACHE_VERSION..CACHE_VERSION)
             require(root.optLong("bookId") == identity.bookId)
             require(root.optString("readerSettingsHash") == identity.settingsHash)
-            require(root.optInt("catalogRuleVersion", 0) == identity.catalogRuleVersion)
+            // Catalog-rule changes do not invalidate a completed cache automatically.
+            // The user explicitly chooses all-books or books-without-catalog refresh.
 
             val storedFingerprint = root.optString("textFingerprint")
             if (storedFingerprint.isNotBlank()) {
@@ -214,7 +219,7 @@ object PageCacheStore {
                 }
             }
             NormalizedTxt(
-                textFile = content,
+                text = normalizedText,
                 chapters = root.getJSONArray("chapters").toBookChapters(normalizedText.length),
                 charsetName = root.optString("charsetName", Charsets.UTF_8.name()),
                 catalogRuleVersion = root.optInt("catalogRuleVersion", 0)
@@ -257,7 +262,7 @@ object PageCacheStore {
                 .put("chapters", chapterJson)
                 .toString()
         )
-        return NormalizedTxt(content, chapters, charsetName, TxtParser.CATALOG_RULE_VERSION)
+        return NormalizedTxt(normalizedText, chapters, charsetName, TxtParser.CATALOG_RULE_VERSION)
     }
 
     /** Export compact local TXT/chapter and layout page caches for backup/sync. */

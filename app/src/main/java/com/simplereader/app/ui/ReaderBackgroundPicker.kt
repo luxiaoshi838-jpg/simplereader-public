@@ -10,7 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
-/** v585 分层背景选择页：颜色、纹理、质感可自由搭配。 */
+/** 分层背景选择页：用户提供的纯色、纹理、质感素材可自由搭配。 */
 object ReaderBackgroundPicker {
     fun show(
         activity: AppCompatActivity,
@@ -28,7 +28,7 @@ object ReaderBackgroundPicker {
             setPadding(dp(14), dp(8), dp(14), dp(10))
         }
         val explanation = TextView(activity).apply {
-            text = "颜色决定底色；纹理与质感分别叠加，也可各自选择“纯净”关闭。"
+            text = "纯色决定底色；纹理与质感使用已导入素材分别叠加，也可各自选择“纯净”关闭。"
             textSize = 13f
             setTextColor(Color.rgb(94, 86, 73))
             setPadding(dp(4), 0, dp(4), dp(8))

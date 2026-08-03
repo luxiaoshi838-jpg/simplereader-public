@@ -1,6 +1,7 @@
 package com.simplereader.app.ui
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -11,6 +12,7 @@ class ShelfBackgroundCacheContractTest {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val store = File("src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt").readText()
         val manifest = File("src/main/AndroidManifest.xml").readText()
+        val loader = File("src/main/java/com/simplereader/app/reader/ReaderDocumentLoader.kt").readText()
 
         assertTrue(main.contains("arrayOf(\"书架目录缓存\", \"批量管理分组\", \"同步书架\")"))
         assertTrue(main.contains("arrayOf(\"全书架目录缓存\", \"全书架无目录书籍缓存\")"))
@@ -26,6 +28,10 @@ class ShelfBackgroundCacheContractTest {
         assertTrue(store.contains("fileName").and(store.contains("fileSize")))
         assertTrue(store.contains("catalogRuleVersion"))
         assertTrue(worker.contains("TxtParser.CATALOG_RULE_VERSION"))
+        assertTrue(loader.contains("if (!forceCatalogRefresh)"))
+        assertFalse(loader.contains("cached.catalogRuleVersion == TxtParser.CATALOG_RULE_VERSION"))
+        assertFalse(store.contains("root.optInt(\"catalogRuleVersion\", 0) == TxtParser.CATALOG_RULE_VERSION"))
+        assertFalse(store.contains("root.optInt(\"catalogRuleVersion\", 0) == identity.catalogRuleVersion"))
         assertTrue(manifest.contains("android:foregroundServiceType=\"dataSync\""))
     }
 }

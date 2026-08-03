@@ -76,7 +76,7 @@ object TxtParser {
             Regex("""^\s*[（(【\[]\s*$CHAPTER_NUMBER\s*[）)】\]]\s+\S+.*$"""),
             Regex("""^\s*[0-9０-９]{1,6}\s+(?![年月日点时分秒个次米])\S.{0,100}$"""),
             Regex("""^\s*[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\s*[、.．:：—-]\s*\S+.*$"""),
-            Regex("""^\s*[^\s，。！？；;:：]{1,40}[（(]\s*$CHAPTER_NUMBER\s*[）)]\s*$"""),
+            Regex("""^\s*[\p{script=Han}]{1,40}[（(]\s*$CHAPTER_NUMBER\s*[）)]\s*$"""),
             Regex("""^\s*[\p{L}\p{N}]{2,39}(?:单元|章|节|篇|部|卷|回|集)$"""),
             Regex("""^\s*(?:Chapter|CHAPTER|chapter)\s+[0-9IVXLCDMivxlcdm]+\b.*$"""),
             Regex("""^\s*(?:正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇)(?:\s+\S.*)?$""")
