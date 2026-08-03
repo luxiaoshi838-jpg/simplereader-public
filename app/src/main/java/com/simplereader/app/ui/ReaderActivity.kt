@@ -29,6 +29,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import com.simplereader.app.R
@@ -55,6 +58,7 @@ import java.util.Locale
 
 class ReaderActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
+    private lateinit var readerRoot: View
     private lateinit var readerScrollView: NestedScrollView
     private lateinit var continuousTextView: TextView
     private lateinit var pagedReaderView: PagedReaderView
@@ -84,6 +88,8 @@ class ReaderActivity : AppCompatActivity() {
     private var continuousWindowStartOffset = 0
     private var continuousWindowEndOffset = 0
     private var continuousWindowShiftPosted = false
+    private var statusBarInsetPx = 0
+    private var navigationBarInsetPx = 0
     private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
     private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
     private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
@@ -106,11 +112,14 @@ class ReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
+        // Root spans the screen; text starts below the notification bar plus one character.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_reader)
         supportActionBar?.setBackgroundDrawable(ColorDrawable(Color.rgb(72, 67, 58)))
         supportActionBar?.hide()
 
         database = SimpleReaderDatabase.getDatabase(this)
+        readerRoot = findViewById(R.id.readerRoot)
         readerScrollView = findViewById(R.id.readerScrollView)
         continuousTextView = findViewById(R.id.contentView)
         pagedReaderView = findViewById(R.id.pagedReaderView)
@@ -121,6 +130,8 @@ class ReaderActivity : AppCompatActivity() {
         bookId = intent.getLongExtra("bookId", 0L)
 
         loadPreferences()
+        bindReaderInsets()
+        applyReaderContentPadding()
         bindPagedReader()
         bindContinuousReader()
         bindControls()
@@ -382,7 +393,8 @@ class ReaderActivity : AppCompatActivity() {
             viewportHeightPx = pagedReaderView.height,
             contentPaddingLeftPx = continuousTextView.paddingLeft,
             contentPaddingTopPx = continuousTextView.paddingTop,
-            contentPaddingRightPx = continuousTextView.paddingRight
+            contentPaddingRightPx = continuousTextView.paddingRight,
+            contentPaddingBottomPx = continuousTextView.paddingBottom
         )
     }
 
@@ -861,6 +873,7 @@ class ReaderActivity : AppCompatActivity() {
     private fun changeTextSize(delta: Float) {
         val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
         readerTextSizeSp = (readerTextSizeSp + delta).coerceIn(12f, 36f)
+        applyReaderContentPadding()
         savePreferences()
         updateSettingsLabels()
         paginateAndDisplay(offset)
@@ -1002,6 +1015,38 @@ class ReaderActivity : AppCompatActivity() {
             R.id.turnModeVerticalButton to TURN_MODE_VERTICAL,
             R.id.turnModeFadeButton to TURN_MODE_FADE
         ).forEach { (id, mode) -> findViewById<TextView>(id).alpha = if (pageTurnMode == mode) 1f else 0.62f }
+    }
+
+    private fun bindReaderInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(readerRoot) { _, insets ->
+            val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            if (statusTop != statusBarInsetPx || navigationBottom != navigationBarInsetPx) {
+                statusBarInsetPx = statusTop
+                navigationBarInsetPx = navigationBottom
+                applyReaderContentPadding()
+                val stableOffset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset
+                if (document != null && readerBook != null) paginateAndDisplay(stableOffset)
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(readerRoot)
+    }
+
+    private fun applyReaderContentPadding() {
+        val oneCharacterPx = (readerTextSizeSp * resources.displayMetrics.scaledDensity + 0.5f)
+            .toInt()
+            .coerceAtLeast(1)
+        // Upper limit = notification/status-bar bottom + one complete text character.
+        // This is intentionally not measured from the physical top edge of the screen.
+        val topPaddingPx = statusBarInsetPx + oneCharacterPx
+        val bottomPaddingPx = navigationBarInsetPx + oneCharacterPx
+        continuousTextView.setPadding(
+            continuousTextView.paddingLeft,
+            topPaddingPx,
+            continuousTextView.paddingRight,
+            bottomPaddingPx
+        )
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()

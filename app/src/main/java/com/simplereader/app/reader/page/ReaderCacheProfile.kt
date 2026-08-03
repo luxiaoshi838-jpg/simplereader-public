@@ -39,7 +39,8 @@ object ReaderCacheProfile {
         viewportHeightPx: Int? = null,
         contentPaddingLeftPx: Int? = null,
         contentPaddingTopPx: Int? = null,
-        contentPaddingRightPx: Int? = null
+        contentPaddingRightPx: Int? = null,
+        contentPaddingBottomPx: Int? = null
     ): ReaderLayoutSettings {
         val metrics = context.resources.displayMetrics
         val prefs = context.getSharedPreferences(READER_PREFS, Context.MODE_PRIVATE)
@@ -57,7 +58,7 @@ object ReaderCacheProfile {
             contentPaddingLeftPx = contentPaddingLeftPx ?: dp(context, HORIZONTAL_PADDING_DP),
             contentPaddingTopPx = contentPaddingTopPx ?: dp(context, CONTENT_TOP_PADDING_DP),
             contentPaddingRightPx = contentPaddingRightPx ?: dp(context, HORIZONTAL_PADDING_DP),
-            contentPaddingBottomPx = dp(context, CONTENT_BOTTOM_PADDING_DP),
+            contentPaddingBottomPx = contentPaddingBottomPx ?: dp(context, CONTENT_BOTTOM_PADDING_DP),
             textSizePx = textPx,
             typefaceKey = "default",
             lineSpacingExtraPx = 0f,
