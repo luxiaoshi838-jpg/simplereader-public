@@ -24,13 +24,15 @@ jobs:
         run: |
           set -euo pipefail
           echo '2779c4931223c1dfca2335d85c81900f751db4fc2db28b80088de48a7e4d3863  .github/v613-payload.part03x0' | sha256sum -c -
-          echo '5a9ae2ea53de6b43d6dbbfc99d32798bbad292f476cf35b396995ca72e862629  .github/v613-payload.part03x1' | sha256sum -c -
+          echo '2270cbfb0d9f846728e10045903564f87bb90cd597e600bebfaa4ee2cd02aa19  .github/v613-payload.part03x1a' | sha256sum -c -
+          echo '1c70bf4302f0bbe814426cc1b8ace2a25e0a8deba00a07db1690a59c4624d438  .github/v613-payload.part03x1b' | sha256sum -c -
           cat \
             .github/v613-payload.part00 \
             .github/v613-payload.part01 \
             .github/v613-payload.part02 \
             .github/v613-payload.part03x0 \
-            .github/v613-payload.part03x1 \
+            .github/v613-payload.part03x1a \
+            .github/v613-payload.part03x1b \
             .github/v613-payload.part04 \
             .github/v613-payload.part05 \
             .github/v613-payload.part06 \
