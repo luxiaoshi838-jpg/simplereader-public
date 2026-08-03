@@ -35,6 +35,7 @@ import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
 import com.simplereader.app.data.backup.SimpleReaderBackupRestorer
 import com.simplereader.app.data.cache.StructuredBookCache
+import com.simplereader.app.reader.page.PageCacheStore
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.BookGroup
@@ -1548,12 +1549,12 @@ class MainActivity : AppCompatActivity() {
                     manifest.put("schemaVersion", BACKUP_SCHEMA_VERSION)
                     manifest.put("minimumCompatibleSchemaVersion", 1)
                     manifest.put("appPackage", packageName)
-                    manifest.put("databaseVersion", 2)
+                    manifest.put("databaseVersion", 3)
                     manifest.put("exportedAtEpochMillis", System.currentTimeMillis())
                     manifest.put("encoding", "UTF-8")
                     manifest.put(
                         "includedData",
-                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress", "structured_cache"))
+                        org.json.JSONArray(listOf("books", "book_groups", "bookmarks", "read_progress", "structured_cache", "reader_page_cache"))
                     )
 
                     relationships.put("books.groupId", "book_groups.id")
@@ -1597,10 +1598,12 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     val structuredCache = StructuredBookCache.exportAll(this@MainActivity)
+                    val pageCache = PageCacheStore.exportAll(this@MainActivity)
                     root.put("manifest", manifest)
                     root.put("relationships", relationships)
                     root.put("tables", tablesJson)
                     root.put("structuredCache", structuredCache)
+                    root.put("pageCache", pageCache)
 
                     val output = contentResolver.openOutputStream(targetUri, "wt")
                         ?: error("无法打开所选保存位置")
@@ -1613,8 +1616,9 @@ class MainActivity : AppCompatActivity() {
                     val bookmarkCount = tablesJson.getJSONArray("bookmarks").length()
                     val progressCount = tablesJson.getJSONArray("read_progress").length()
                     val cacheCount = structuredCache.length()
+                    val pageCacheCount = pageCache.length()
                     val action = if (isSync) "同步" else "导出"
-                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条、可读缓存 $cacheCount 本"
+                    "${action}完成：书籍 $bookCount 本、分组 $groupCount 个、书签 $bookmarkCount 条、阅读进度 $progressCount 条、可读缓存 $cacheCount 本、章节/分页缓存 $pageCacheCount 本"
                 }
             }
 

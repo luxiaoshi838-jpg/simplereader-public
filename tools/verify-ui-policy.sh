@@ -36,6 +36,8 @@ grep -q 'contentPaddingBottomPx = 0' "$reader" || fail "per-page bottom reservat
 grep -q 'bottomPaddingPx = 0' "$reader" || fail "horizontal renderer bottom reservation must be zero"
 ! grep -q 'paddingBottom="118dp"' "$layout" || fail "118dp page gap is forbidden"
 grep -q 'android:paddingBottom="0dp"' "$layout" || fail "continuous document must not add per-page bottom space"
+! grep -q '#33FFFFFF' "$layout" || fail "progress indicator background block is forbidden"
+! grep -A14 '@+id/readerProgressLabel' "$layout" | grep -q 'android:background=' || fail "progress indicator must be plain text without a box"
 
 grep -q 'styledWholeText' "$engine" || fail "whole-book continuous styling missing"
 ! grep -q 'TxtParser.isLikelyChapterTitle' "$engine" || fail "non-chapter title guessing is forbidden"

@@ -11,3 +11,5 @@
 - 章节标题：只根据真实章节起点处理，禁止对正文中的疑似标题再次套用章节标题样式。
 - 章节跳转：跳转后必须立即重新绑定前页、当前页和后页，不得卡住或让标题漂移到其他页。
 - 禁止恢复：`ReaderCatalogSheet`、`ReaderSurfaceDrawable`、`ReaderPageAdapter`、`VerticalPageFlowView`、阅读页 `RecyclerView/PagerSnapHelper`。
+
+- 右下角页码只能显示纯文字，禁止半透明白色方块、底板或卡片背景。

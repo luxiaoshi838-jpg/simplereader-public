@@ -76,7 +76,7 @@ data class ReaderLayoutSettings(
     }
 
     companion object {
-        const val CACHE_MODEL_VERSION = 4
+        const val CACHE_MODEL_VERSION = 5
     }
 }
 
@@ -138,54 +138,21 @@ object PageEngine {
         val chapters = normalizeChapters(text, sourceChapters)
         val draftPages = mutableListOf<DraftPage>()
         chapters.forEachIndexed { chapterIndex, chapter ->
-            val chapterText = text.substring(chapter.startOffset, chapter.endOffset)
-            val styled = styledText(
-                text = chapterText,
+            val chapterPages = paginateChapter(
+                text = text,
+                chapter = chapter,
                 settings = settings,
-                titleStartsAtZero = true,
+                typeface = typeface,
                 imageSpanProvider = imageSpanProvider
             )
-            val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
-                textSize = settings.textSizePx
-                this.typeface = typeface
-            }
-            val layout = StaticLayout.Builder
-                .obtain(styled, 0, styled.length, paint, settings.textWidthPx)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setIncludePad(false)
-                .setLineSpacing(settings.lineSpacingExtraPx, settings.lineSpacingMultiplier)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
-                .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
-                .build()
-
-            val chapterPages = mutableListOf<Pair<Int, Int>>()
-            if (styled.isEmpty() || layout.lineCount == 0) {
-                chapterPages += 0 to 0
-            } else {
-                var firstLine = 0
-                while (firstLine < layout.lineCount) {
-                    val pageTop = layout.getLineTop(firstLine)
-                    var lastLine = firstLine
-                    while (lastLine + 1 < layout.lineCount) {
-                        val candidateBottom = layout.getLineBottom(lastLine + 1)
-                        if (candidateBottom - pageTop > settings.textHeightPx) break
-                        lastLine += 1
-                    }
-                    val localStart = layout.getLineStart(firstLine).coerceIn(0, styled.length)
-                    var localEnd = layout.getLineEnd(lastLine).coerceIn(localStart, styled.length)
-                    if (localEnd == localStart && localEnd < styled.length) localEnd += 1
-                    chapterPages += localStart to localEnd
-                    firstLine = lastLine + 1
-                }
-            }
             val chapterPageCount = chapterPages.size.coerceAtLeast(1)
             chapterPages.forEachIndexed { pageInChapter, range ->
                 draftPages += DraftPage(
                     chapterIndex = chapterIndex,
                     pageIndexInChapter = pageInChapter,
                     chapterPageCount = chapterPageCount,
-                    startOffset = (chapter.startOffset + range.first).coerceIn(chapter.startOffset, chapter.endOffset),
-                    endOffset = (chapter.startOffset + range.second).coerceIn(chapter.startOffset, chapter.endOffset)
+                    startOffset = range.first.coerceIn(chapter.startOffset, chapter.endOffset),
+                    endOffset = range.second.coerceIn(chapter.startOffset, chapter.endOffset)
                 )
             }
         }
@@ -207,6 +174,97 @@ object PageEngine {
             }
         }
         return ReaderBook(text, chapters, pages, settings.stableHash())
+    }
+
+    /**
+     * Lay out a chapter in bounded windows. The final incomplete page of every non-final
+     * window is carried into the next window, so only the real final page of a chapter can
+     * be short. This avoids constructing one giant StaticLayout for an entire long novel.
+     */
+    private fun paginateChapter(
+        text: String,
+        chapter: BookChapter,
+        settings: ReaderLayoutSettings,
+        typeface: Typeface,
+        imageSpanProvider: ImageSpanProvider?
+    ): List<Pair<Int, Int>> {
+        if (chapter.endOffset <= chapter.startOffset) {
+            return listOf(chapter.startOffset to chapter.startOffset)
+        }
+        val output = mutableListOf<Pair<Int, Int>>()
+        var cursor = chapter.startOffset
+        while (cursor < chapter.endOffset) {
+            val windowEnd = chooseWindowEnd(text, cursor, chapter.endOffset)
+            val windowText = text.substring(cursor, windowEnd)
+            val styled = styledText(
+                text = windowText,
+                settings = settings,
+                titleStartsAtZero = cursor == chapter.startOffset,
+                imageSpanProvider = imageSpanProvider
+            )
+            val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
+                textSize = settings.textSizePx
+                this.typeface = typeface
+            }
+            val layout = StaticLayout.Builder
+                .obtain(styled, 0, styled.length, paint, settings.textWidthPx)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .setLineSpacing(settings.lineSpacingExtraPx, settings.lineSpacingMultiplier)
+                .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+                .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+                .build()
+
+            val localPages = mutableListOf<Pair<Int, Int>>()
+            if (styled.isEmpty() || layout.lineCount == 0) {
+                localPages += 0 to 0
+            } else {
+                var firstLine = 0
+                while (firstLine < layout.lineCount) {
+                    val pageTop = layout.getLineTop(firstLine)
+                    var lastLine = firstLine
+                    while (lastLine + 1 < layout.lineCount) {
+                        val candidateBottom = layout.getLineBottom(lastLine + 1)
+                        if (candidateBottom - pageTop > settings.textHeightPx) break
+                        lastLine += 1
+                    }
+                    val localStart = layout.getLineStart(firstLine).coerceIn(0, styled.length)
+                    var localEnd = layout.getLineEnd(lastLine).coerceIn(localStart, styled.length)
+                    if (localEnd == localStart && localEnd < styled.length) localEnd += 1
+                    localPages += localStart to localEnd
+                    firstLine = lastLine + 1
+                }
+            }
+
+            val hasMoreChapterText = windowEnd < chapter.endOffset
+            if (hasMoreChapterText && localPages.size > 1) {
+                localPages.dropLast(1).forEach { range ->
+                    output += (cursor + range.first) to (cursor + range.second)
+                }
+                val nextCursor = cursor + localPages.last().first
+                if (nextCursor <= cursor) {
+                    output += cursor to windowEnd
+                    cursor = windowEnd
+                } else {
+                    cursor = nextCursor
+                }
+            } else {
+                localPages.forEach { range ->
+                    output += (cursor + range.first) to (cursor + range.second)
+                }
+                cursor = windowEnd
+            }
+        }
+        return output.ifEmpty { listOf(chapter.startOffset to chapter.endOffset) }
+    }
+
+    private fun chooseWindowEnd(text: String, start: Int, chapterEnd: Int): Int {
+        if (chapterEnd - start <= MAX_LAYOUT_WINDOW_CHARS) return chapterEnd
+        var end = (start + MAX_LAYOUT_WINDOW_CHARS).coerceAtMost(chapterEnd)
+        val newline = text.lastIndexOf('\n', end - 1)
+        if (newline >= start + MIN_LAYOUT_WINDOW_CHARS) end = newline + 1
+        if (end > start && end < text.length && Character.isHighSurrogate(text[end - 1])) end -= 1
+        return end.coerceAtLeast(start + 1)
     }
 
     fun styledText(
@@ -345,6 +403,9 @@ object PageEngine {
             fm.top -= extraTopPx
         }
     }
+
+    private const val MAX_LAYOUT_WINDOW_CHARS = 160_000
+    private const val MIN_LAYOUT_WINDOW_CHARS = 80_000
 
     private data class DraftPage(
         val chapterIndex: Int,

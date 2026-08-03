@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.simplereader.app.data.backup.BackupFileMatcher.BackupBookIdentity
 import com.simplereader.app.data.backup.LocalLibraryScanner.LocalBookFile
 import com.simplereader.app.data.cache.StructuredBookCache
+import com.simplereader.app.reader.page.PageCacheStore
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.model.PermissionStatus
 import org.json.JSONObject
@@ -32,12 +33,13 @@ class SimpleReaderBackupRestorer(
         val missingBooks: Int,
         val restoredBookmarks: Int,
         val restoredProgress: Int,
-        val restoredStructuredCaches: Int
+        val restoredStructuredCaches: Int,
+        val restoredPageCaches: Int
     ) {
         fun message(): String = buildString {
             append("恢复完成：书籍 ${insertedBooks + mergedBooks} 本、分组 $insertedGroups 个、")
             append("书签 $restoredBookmarks 条、阅读进度 $restoredProgress 条、")
-            append("可读缓存 $restoredStructuredCaches 本。")
+            append("可读缓存 $restoredStructuredCaches 本、章节/分页缓存 $restoredPageCaches 本。")
             append("\n扫描原书文件 $scannedFiles 个，成功关联 $linkedBooks 本。")
             if (missingBooks > 0) {
                 append("\n有 $missingBooks 本暂时不可直接读取；原始位置、分组、书签和进度仍已保留。")
@@ -281,8 +283,9 @@ class SimpleReaderBackupRestorer(
                         """
                         INSERT OR REPLACE INTO read_progress
                         (bookId, position, locatorType, txtCharOffset, txtTotalLength, epubSpineIndex,
-                         epubChapterHref, epubChapterOffset, epubProgressFraction, updateTime)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         epubChapterHref, epubChapterOffset, epubProgressFraction, globalPageIndex,
+                         chapterIndex, pageIndexInChapter, startOffset, updateTime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """.trimIndent(),
                         arrayOf(
                             mappedBookId,
@@ -294,6 +297,10 @@ class SimpleReaderBackupRestorer(
                             row.stringOrNull("epubChapterHref"),
                             row.longOrNull("epubChapterOffset"),
                             row.doubleOrNull("epubProgressFraction"),
+                            row.longOrNull("globalPageIndex"),
+                            row.longOrNull("chapterIndex"),
+                            row.longOrNull("pageIndexInChapter"),
+                            row.longOrNull("startOffset") ?: row.longOrNull("txtCharOffset") ?: row.stringOrNull("position")?.toLongOrNull(),
                             backupUpdateTime
                         )
                     )
@@ -312,11 +319,20 @@ class SimpleReaderBackupRestorer(
                 )
                 if (existingBookmark == null) {
                     db.execSQL(
-                        "INSERT INTO bookmarks (bookId, position, content, createTime) VALUES (?, ?, ?, ?)",
+                        """
+                        INSERT INTO bookmarks
+                        (bookId, position, content, globalPageIndex, chapterIndex,
+                         pageIndexInChapter, startOffset, createTime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
                         arrayOf(
                             mappedBookId,
                             position,
                             content,
+                            row.longOrNull("globalPageIndex"),
+                            row.longOrNull("chapterIndex"),
+                            row.longOrNull("pageIndexInChapter"),
+                            row.longOrNull("startOffset") ?: position.toLongOrNull(),
                             row.optLong("createTime", System.currentTimeMillis())
                         )
                     )
@@ -330,6 +346,11 @@ class SimpleReaderBackupRestorer(
             entries = backup.structuredCache,
             bookIdMap = bookIdMap
         )
+        val restoredPageCaches = PageCacheStore.restoreAll(
+            context = appContext,
+            entries = backup.pageCache,
+            bookIdMap = bookIdMap
+        )
 
         return RestoreSummary(
             scannedFiles = scannedFiles.size,
@@ -340,7 +361,8 @@ class SimpleReaderBackupRestorer(
             missingBooks = missingBooks,
             restoredBookmarks = restoredBookmarks,
             restoredProgress = restoredProgress,
-            restoredStructuredCaches = restoredStructuredCaches
+            restoredStructuredCaches = restoredStructuredCaches,
+            restoredPageCaches = restoredPageCaches
         )
     }
 

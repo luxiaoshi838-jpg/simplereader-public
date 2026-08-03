@@ -7,6 +7,7 @@ import com.simplereader.app.data.cache.StructuredBookCache
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.parser.TxtParser
 import com.simplereader.app.reader.page.BookChapter
+import com.simplereader.app.reader.page.PageCacheStore
 import java.io.File
 
 data class ReaderDocument(
@@ -25,7 +26,7 @@ object ReaderDocumentLoader {
         require(format == "TXT" || format == "EPUB") { "当前仅支持 TXT 与 EPUB" }
         val source = resolveDocument(context, book)
         return when (format) {
-            "TXT" -> loadTxt(context, book, source ?: error("书籍文件不存在或权限已失效"))
+            "TXT" -> loadTxt(context, book, source)
             else -> loadEpub(context, book, source)
         }
     }
@@ -61,16 +62,48 @@ object ReaderDocumentLoader {
         return runCatching { current.findFile(fileName) }.getOrNull()?.takeIf { it.isFile && it.exists() }
     }
 
-    private fun loadTxt(context: Context, book: Book, source: DocumentFile): ReaderDocument {
-        val result = context.contentResolver.openInputStream(source.uri)?.use { input ->
+    private fun loadTxt(context: Context, book: Book, source: DocumentFile?): ReaderDocument {
+        val sourceSize = source?.length()?.takeIf { it >= 0L } ?: book.fileSize ?: -1L
+        val sourceModified = source?.lastModified()?.takeIf { it > 0L } ?: book.lastModified ?: 0L
+        PageCacheStore.loadNormalizedTxt(
+            context = context,
+            bookId = book.id,
+            filePath = book.filePath,
+            fileSize = sourceSize,
+            lastModified = sourceModified
+        )?.let { cached ->
+            val text = cached.textFile.readText(Charsets.UTF_8)
+            return ReaderDocument(
+                text = text,
+                chapters = cached.chapters,
+                sourceSize = sourceSize.takeIf { it >= 0L } ?: text.length.toLong(),
+                sourceModified = sourceModified,
+                charsetName = cached.charsetName,
+                fromCacheOnly = source == null
+            )
+        }
+
+        val readableSource = source ?: error("TXT 原文件不存在，且没有可恢复缓存")
+        val result = context.contentResolver.openInputStream(readableSource.uri)?.use { input ->
             TxtParser.readText(input, book.txtCharset)
         } ?: error("无法读取 TXT 文件")
         val text = result.text.replace("\r\n", "\n").replace('\r', '\n')
+        val chapters = detectTxtChapters(text)
+        PageCacheStore.saveNormalizedTxt(
+            context = context,
+            bookId = book.id,
+            filePath = book.filePath,
+            fileSize = sourceSize.takeIf { it >= 0L } ?: text.length.toLong(),
+            lastModified = sourceModified,
+            normalizedText = text,
+            chapters = chapters,
+            charsetName = result.charsetName
+        )
         return ReaderDocument(
             text = text,
-            chapters = detectTxtChapters(text),
-            sourceSize = source.length().takeIf { it >= 0L } ?: book.fileSize ?: text.length.toLong(),
-            sourceModified = source.lastModified().takeIf { it > 0L } ?: book.lastModified ?: 0L,
+            chapters = chapters,
+            sourceSize = sourceSize.takeIf { it >= 0L } ?: text.length.toLong(),
+            sourceModified = sourceModified,
             charsetName = result.charsetName
         )
     }

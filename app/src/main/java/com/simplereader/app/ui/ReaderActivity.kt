@@ -292,7 +292,7 @@ class ReaderActivity : AppCompatActivity() {
                 }
                 paginateAndDisplay(null)
                 if (loaded.fromCacheOnly) {
-                    Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用 EPUB 可读缓存", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
                 }
             } catch (error: Throwable) {
                 showFatal(error.message ?: "打开书籍失败")
@@ -318,28 +318,38 @@ class ReaderActivity : AppCompatActivity() {
                     selectedBook.filePath,
                     loaded.sourceSize,
                     loaded.sourceModified,
-                    settings.stableHash()
+                    settings.stableHash(),
+                    PageCacheStore.textFingerprint(loaded.text)
                 )
-                val paged = withContext(Dispatchers.Default) {
+                val cached = withContext(Dispatchers.IO) {
                     PageCacheStore.loadPages(this@ReaderActivity, identity, loaded.text)
-                        ?: PageEngine.paginate(
-                            loaded.text,
-                            loaded.chapters,
-                            settings,
-                            Typeface.DEFAULT
-                        ) { href, width, height -> imageRepository?.span(href, width, height) }
-                            .also { PageCacheStore.savePages(this@ReaderActivity, identity, it) }
+                }
+                val paged = cached ?: withContext(Dispatchers.Default) {
+                    PageEngine.paginate(
+                        loaded.text,
+                        loaded.chapters,
+                        settings,
+                        Typeface.DEFAULT
+                    ) { href, width, height -> imageRepository?.span(href, width, height) }
                 }
                 readerBook = paged
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
+                val stableOffset = preserveOffset
+                    ?: progress?.startOffset
+                    ?: progress?.txtCharOffset
+                    ?: progress?.position?.toIntOrNull()
                 val target = when {
-                    preserveOffset != null -> paged.pageForOffset(preserveOffset).globalPageIndex
+                    stableOffset != null -> paged.pageForOffset(stableOffset).globalPageIndex
                     progress?.globalPageIndex != null && progress.globalPageIndex in paged.pages.indices -> progress.globalPageIndex
-                    progress?.startOffset != null -> paged.pageForOffset(progress.startOffset).globalPageIndex
-                    else -> paged.pageForOffset(progress?.position?.toIntOrNull() ?: 0).globalPageIndex
+                    else -> 0
                 }
                 currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
                 showActiveReader()
+                if (cached == null) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        runCatching { PageCacheStore.savePages(this@ReaderActivity, identity, paged) }
+                    }
+                }
             } catch (error: Throwable) {
                 showContinuousFallback(error.message ?: "分页失败")
             }
@@ -366,9 +376,9 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showHorizontalBook() {
         readerScrollView.visibility = View.GONE
-        pagedReaderView.visibility = View.VISIBLE
         configurePagedReaderStyle()
         bindHorizontalPages()
+        pagedReaderView.visibility = View.VISIBLE
     }
 
     private fun configurePagedReaderStyle() {
