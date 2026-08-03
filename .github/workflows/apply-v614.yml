@@ -34,10 +34,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '1b431aeb40e9a1e227359efcebd2ea24e83ea14bad008ca3e6dcd1c9334d0654  .github/v614-payload.tar.gz' | sha256sum -c -
+          sha256sum .github/v614-payload.tar.gz
           gzip -t .github/v614-payload.tar.gz
           tar -tzf .github/v614-payload.tar.gz >/tmp/v614-files.list
+          cat /tmp/v614-files.list
           test "$(wc -l </tmp/v614-files.list)" -eq 30
+          echo '1b431aeb40e9a1e227359efcebd2ea24e83ea14bad008ca3e6dcd1c9334d0654  .github/v614-payload.tar.gz' | sha256sum -c -
           tar -xzf .github/v614-payload.tar.gz
 
           rm -f \
