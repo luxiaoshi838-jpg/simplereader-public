@@ -1,0 +1,183 @@
+name: Build final v615 APK
+
+on:
+  push:
+    branches:
+      - agent/v615-reader-stability
+    paths:
+      - .github/workflows/build-final-v615.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event.head_commit.message != 'Record final v615 run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          printf '%s\n' "$GITHUB_RUN_ID" > .automation/final-v615-run.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .automation/final-v615-run.txt
+          git commit -m 'Record final v615 run'
+          git push
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Enforce notification-bar and bottom reader boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          reader = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          text = reader.read_text()
+          if 'import androidx.core.view.WindowCompat' not in text:
+              text = text.replace(
+                  'import androidx.appcompat.app.AppCompatActivity\n',
+                  'import androidx.appcompat.app.AppCompatActivity\n'
+                  'import androidx.core.view.ViewCompat\n'
+                  'import androidx.core.view.WindowCompat\n'
+                  'import androidx.core.view.WindowInsetsCompat\n'
+              )
+          text = text.replace(
+              '    private lateinit var database: SimpleReaderDatabase\n'
+              '    private lateinit var readerScrollView: NestedScrollView',
+              '    private lateinit var database: SimpleReaderDatabase\n'
+              '    private lateinit var readerRoot: View\n'
+              '    private lateinit var readerScrollView: NestedScrollView'
+          )
+          text = text.replace(
+              '    private var continuousWindowShiftPosted = false\n'
+              '    private var backgroundColorId: String',
+              '    private var continuousWindowShiftPosted = false\n'
+              '    private var statusBarInsetPx = 0\n'
+              '    private var navigationBarInsetPx = 0\n'
+              '    private var backgroundColorId: String'
+          )
+          text = text.replace(
+              '        AppTheme.apply(this)\n'
+              '        super.onCreate(savedInstanceState)\n'
+              '        setContentView(R.layout.activity_reader)',
+              '        AppTheme.apply(this)\n'
+              '        super.onCreate(savedInstanceState)\n'
+              '        // The root spans the screen; reading starts below the status bar plus one character.\n'
+              '        WindowCompat.setDecorFitsSystemWindows(window, false)\n'
+              '        setContentView(R.layout.activity_reader)'
+          )
+          text = text.replace(
+              '        database = SimpleReaderDatabase.getDatabase(this)\n'
+              '        readerScrollView = findViewById(R.id.readerScrollView)',
+              '        database = SimpleReaderDatabase.getDatabase(this)\n'
+              '        readerRoot = findViewById(R.id.readerRoot)\n'
+              '        readerScrollView = findViewById(R.id.readerScrollView)'
+          )
+          text = text.replace(
+              '        loadPreferences()\n'
+              '        bindPagedReader()',
+              '        loadPreferences()\n'
+              '        bindReaderInsets()\n'
+              '        applyReaderContentPadding()\n'
+              '        bindPagedReader()'
+          )
+          old = '''    private fun applyReaderContentPadding() {
+              val guardPx = (readerTextSizeSp * resources.displayMetrics.scaledDensity + 0.5f).toInt().coerceAtLeast(1)
+              continuousTextView.setPadding(
+                  continuousTextView.paddingLeft,
+                  guardPx,
+                  continuousTextView.paddingRight,
+                  guardPx
+              )
+          }'''
+          new = '''    private fun bindReaderInsets() {
+              ViewCompat.setOnApplyWindowInsetsListener(readerRoot) { _, insets ->
+                  val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                  val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+                  if (statusTop != statusBarInsetPx || navigationBottom != navigationBarInsetPx) {
+                      statusBarInsetPx = statusTop
+                      navigationBarInsetPx = navigationBottom
+                      applyReaderContentPadding()
+                  }
+                  insets
+              }
+              ViewCompat.requestApplyInsets(readerRoot)
+          }
+
+          private fun applyReaderContentPadding() {
+              val oneCharacterPx = (readerTextSizeSp * resources.displayMetrics.scaledDensity + 0.5f)
+                  .toInt()
+                  .coerceAtLeast(1)
+              // First clear the notification/status bar, then leave one full text character.
+              val topPaddingPx = statusBarInsetPx + oneCharacterPx
+              val bottomPaddingPx = navigationBarInsetPx + oneCharacterPx
+              continuousTextView.setPadding(
+                  continuousTextView.paddingLeft,
+                  topPaddingPx,
+                  continuousTextView.paddingRight,
+                  bottomPaddingPx
+              )
+          }'''
+          if old not in text:
+              raise SystemExit('Reader padding block not found')
+          reader.write_text(text.replace(old, new))
+
+          layout = Path('app/src/main/res/layout/activity_reader.xml')
+          xml = layout.read_text()
+          if 'android:id="@+id/readerRoot"' not in xml:
+              xml = xml.replace(
+                  '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"\n',
+                  '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"\n'
+                  '    android:id="@+id/readerRoot"\n'
+              )
+          xml = xml.replace('android:paddingTop="24dp"', 'android:paddingTop="0dp"')
+          xml = xml.replace('android:paddingBottom="0dp"', 'android:paddingBottom="0dp"')
+          layout.write_text(xml)
+
+          policy = Path('tools/verify-ui-policy.sh')
+          sh = policy.read_text()
+          sh = sh.replace(
+              'grep -q \'android:paddingTop="24dp"\' "$layout" || fail "reader text top guard must be one character"',
+              'grep -q \'android:paddingTop="0dp"\' "$layout" || fail "reader XML padding must defer to system-bar runtime insets"\n'
+              'grep -q \'WindowCompat.setDecorFitsSystemWindows(window, false)\' "$reader" || fail "reader root must be edge-to-edge before applying system insets"\n'
+              'grep -q \'statusBarInsetPx + oneCharacterPx\' "$reader" || fail "reader upper limit must be status-bar bottom plus one character"\n'
+              'grep -q \'navigationBarInsetPx + oneCharacterPx\' "$reader" || fail "reader lower limit must leave one character above navigation bar"'
+          )
+          policy.write_text(sh)
+          PY
+          git diff --check
+          bash tools/verify-ui-policy.sh
+          grep -n 'WindowCompat.setDecorFitsSystemWindows\|statusBarInsetPx + oneCharacterPx\|navigationBarInsetPx + oneCharacterPx' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          test ! -e app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
+      - name: Build final release
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=INT 5m ./gradlew clean assembleRelease --stacktrace --console=plain
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v615-final-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+      - name: Commit verified source and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .automation/final-v615-run.txt .github/workflows/build-final-v615.yml
+          git add -A
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'v615: enforce notification-bar reader bounds and build final APK'
+          git push
