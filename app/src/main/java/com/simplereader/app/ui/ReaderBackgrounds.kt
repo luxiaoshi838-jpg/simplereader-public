@@ -26,7 +26,7 @@ import com.simplereader.app.R
  */
 object ReaderBackgrounds {
     const val DEFAULT_COLOR_ID = "solid_ivory"
-    const val DEFAULT_TEXTURE_ID = "texture_duokan_yellow"
+    const val DEFAULT_TEXTURE_ID = "texture_duokan_green"
     const val DEFAULT_MATERIAL_ID = "material_none"
     const val NONE_TEXTURE_ID = "texture_none"
     const val NONE_MATERIAL_ID = "material_none"
@@ -80,7 +80,6 @@ object ReaderBackgrounds {
         val materialId: String = DEFAULT_MATERIAL_ID
     )
 
-    /** 主色取自用户上传的 scene blue/green/white/yellow/black 与暖色纸张素材。 */
     val colorOptions: List<ColorOption> = listOf(
         ColorOption("solid_ivory", "米黄", Color.rgb(231, 222, 191), Color.rgb(57, 51, 39)),
         ColorOption("solid_eye", "护眼绿", Color.rgb(203, 224, 205), Color.rgb(42, 57, 43)),
@@ -94,31 +93,10 @@ object ReaderBackgrounds {
     val textureOptions: List<TextureOption> = listOf(
         TextureOption(NONE_TEXTURE_ID, "纯净", TextureEffect.NONE),
         TextureOption(
-            id = "texture_duokan_blue",
-            title = "蓝纸纹理",
-            effect = TextureEffect.FULL_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_blue,
-            alpha = 255
-        ),
-        TextureOption(
             id = "texture_duokan_green",
-            title = "绿纸纹理",
+            title = "基础纸张纹理",
             effect = TextureEffect.FULL_BITMAP,
             drawableRes = R.drawable.reader_texture_duokan_green,
-            alpha = 255
-        ),
-        TextureOption(
-            id = "texture_duokan_white",
-            title = "白纸纹理",
-            effect = TextureEffect.FULL_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_white,
-            alpha = 255
-        ),
-        TextureOption(
-            id = "texture_duokan_yellow",
-            title = "米黄纹理",
-            effect = TextureEffect.FULL_BITMAP,
-            drawableRes = R.drawable.reader_texture_duokan_yellow,
             alpha = 255
         )
     )
@@ -172,13 +150,17 @@ object ReaderBackgrounds {
     val quickColorIds: List<String> = listOf(DEFAULT_COLOR_ID, "solid_eye", "solid_white")
 
     private val textureAliases = mapOf(
-        "texture_paper_grain" to "texture_duokan_yellow",
-        "texture_paper_fiber" to "texture_duokan_white",
-        "texture_paper" to "texture_duokan_yellow",
-        "texture_linen" to "texture_duokan_yellow",
-        "texture_fiber" to "texture_duokan_white",
+        "texture_paper_grain" to "texture_duokan_green",
+        "texture_paper_fiber" to "texture_duokan_green",
+        "texture_paper" to "texture_duokan_green",
+        "texture_linen" to "texture_duokan_green",
+        "texture_fiber" to "texture_duokan_green",
+        "texture_blue" to "texture_duokan_green",
         "texture_green" to "texture_duokan_green",
-        "texture_grey" to "texture_duokan_white"
+        "texture_grey" to "texture_duokan_green",
+        "texture_duokan_blue" to "texture_duokan_green",
+        "texture_duokan_white" to "texture_duokan_green",
+        "texture_duokan_yellow" to "texture_duokan_green"
     )
 
     private val materialAliases = mapOf(
@@ -221,20 +203,19 @@ object ReaderBackgrounds {
         return colorOptions.minByOrNull { distance(it.backgroundColor) }?.id ?: DEFAULT_COLOR_ID
     }
 
-    /** 将旧版互斥预设迁移到新的三层素材组合。 */
     fun selectionFromLegacy(styleId: String?, paletteBackground: Int): Selection {
         return validated(
             when (styleId) {
                 "solid_ivory", "solid_eye", "solid_white", "solid_mist", "solid_peach", "solid_blue" ->
                     Selection(styleId, NONE_TEXTURE_ID, NONE_MATERIAL_ID)
                 "texture_paper", "texture_linen" ->
-                    Selection("solid_ivory", "texture_duokan_yellow", NONE_MATERIAL_ID)
+                    Selection("solid_ivory", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_fiber" ->
-                    Selection("solid_white", "texture_duokan_white", NONE_MATERIAL_ID)
+                    Selection("solid_white", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_green" ->
                     Selection("solid_eye", "texture_duokan_green", NONE_MATERIAL_ID)
                 "texture_grey" ->
-                    Selection("solid_mist", "texture_duokan_white", NONE_MATERIAL_ID)
+                    Selection("solid_mist", "texture_duokan_green", NONE_MATERIAL_ID)
                 "material_parchment" ->
                     Selection("solid_ivory", NONE_TEXTURE_ID, "material_duokan_paper")
                 "material_cloud" ->
@@ -324,7 +305,6 @@ private class LayeredReaderBackgroundDrawable(
             )
         }
     }
-
 
     private fun drawFullBitmap(
         canvas: Canvas,
