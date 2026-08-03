@@ -44,7 +44,7 @@ jobs:
           bash tools/verify-ui-policy.sh
           grep -n 'WindowCompat.setDecorFitsSystemWindows\|statusBarInsetPx + oneCharacterPx\|navigationBarInsetPx + oneCharacterPx' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           test ! -e app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
-          grep -q '（(][^（）()' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -Fq '[^（）()\r\n]{1,40}[）)]\s*第' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
           grep -q 'renderContinuousWindow' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -q 'MANIFEST_PREFIX' app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
           grep -q 'CrashLogStore' app/src/main/java/com/simplereader/app/App.kt
