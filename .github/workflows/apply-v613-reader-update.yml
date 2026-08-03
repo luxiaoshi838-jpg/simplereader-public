@@ -1,0 +1,46 @@
+name: Apply v613 reader update
+
+on:
+  push:
+    branches:
+      - v613-reader-update
+    paths:
+      - '.github/v613-apply-trigger.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout v613 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v613-reader-update
+          fetch-depth: 0
+
+      - name: Restore and verify exact v613 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/v613-payload.part* | base64 -d > /tmp/v613-files.tar.gz
+          echo '4b58f8ae462e8b5d984d557b9fb41b0e4ed3c25f47c2ebb1e7a9b373c48d258e  /tmp/v613-files.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v613-files.tar.gz
+          test "$(grep -c 'CATALOG_RULE_VERSION = 2' app/src/main/java/com/simplereader/app/parser/TxtParser.kt)" -eq 1
+          grep -q '书架目录缓存' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -q 'TITLE_SIZE_DELTA_SP = 2f' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt
+          grep -q 'TOP_GUARD_DP = 24' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt
+          grep -q '2098000613' app/build.gradle.kts
+          bash tools/verify-ui-policy.sh
+
+      - name: Commit verified v613 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/v613-payload.part* .github/workflows/apply-v613-reader-update.yml .github/v613-apply-trigger.txt
+          git add -A
+          git commit -m 'v613: reader titles, catalog rules and shelf catalog cache'
+          git push origin HEAD:v613-reader-update
