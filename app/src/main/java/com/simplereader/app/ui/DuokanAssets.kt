@@ -27,9 +27,9 @@ object DuokanAssets {
         Asset.TEXTURE_BLUE -> DuokanTextureData.BLUE
         Asset.TEXTURE_GREEN -> DuokanTextureData.GREEN
         Asset.TEXTURE_YELLOW -> DuokanTextureData.YELLOW
-        Asset.MATERIAL_WHITE -> DuokanMaterialDataA.WHITE
-        Asset.MATERIAL_BLUE -> DuokanMaterialDataA.BLUE
-        Asset.MATERIAL_GREEN -> DuokanMaterialDataB.GREEN
-        Asset.MATERIAL_YELLOW -> DuokanMaterialDataB.YELLOW
+        Asset.MATERIAL_WHITE -> DuokanTextureData.WHITE
+        Asset.MATERIAL_BLUE -> DuokanTextureData.BLUE
+        Asset.MATERIAL_GREEN -> DuokanTextureData.GREEN
+        Asset.MATERIAL_YELLOW -> DuokanTextureData.YELLOW
     }
 }
