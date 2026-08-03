@@ -34,13 +34,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum .github/v614-payload.tar.gz
-          gzip -t .github/v614-payload.tar.gz
-          tar -tzf .github/v614-payload.tar.gz >/tmp/v614-files.list
-          cat /tmp/v614-files.list
-          test "$(wc -l </tmp/v614-files.list)" -eq 30
-          echo '1b431aeb40e9a1e227359efcebd2ea24e83ea14bad008ca3e6dcd1c9334d0654  .github/v614-payload.tar.gz' | sha256sum -c -
-          tar -xzf .github/v614-payload.tar.gz
+          cat > /tmp/v614-chunks.sha256 <<'EOF'
+          6a8c8dcecfd8a491b79e18079c71d09d3d02957491db1a02cf11bbfbacca7f07  .github/v614-payload.part00
+          b77869409a45753ae34c810d54bd406d9c71da587b78488dcb90efeddd2cff05  .github/v614-payload.part01
+          4ef48397e1f9805dbfac5a99ebb8d181b59b20f54f3ce0bd5376050cd1809667  .github/v614-payload.part02
+          d2803efd3dce1384cc3a0085fd362e763cb19d6447f2c27d341fe208f4ac2bc4  .github/v614-payload.part03
+          7018e71739bcda349debf774b8d2d885a5c87ff9dbd8ccc66024a67fa15dfbf3  .github/v614-payload.part04
+          2c6412a2630dea71d77c5da967794f621105b32f09a063fd06e8dee99e563c13  .github/v614-payload.part05
+          d53cb5f40729fcd0f2f417fb9c1d5c223f777d21c0a54b1f1e52b709cacf15ec  .github/v614-payload.part06
+          474b4439937ab88a75eb539faa993dbcbe49a2586e67509ed1dd400897f4c11b  .github/v614-payload.part07
+          8ca9602749863f446085d15d87fdc9eef0e454d2adfd528ccc11ef05560865fe  .github/v614-payload.part08
+          fc52f4a96dc936430a57c6346556043f8ee8e61742ce0141039add9574c706b8  .github/v614-payload.part09
+          EOF
+          sha256sum -c /tmp/v614-chunks.sha256
+          cat .github/v614-payload.part{00..09} > /tmp/v614-payload.tar.xz
+          echo '7d8bb59d1b7875f97f42f7c40cf2b9f41448487be9b9ac8a9cd7f1548b0a3fbe  /tmp/v614-payload.tar.xz' | sha256sum -c -
+          xz -t /tmp/v614-payload.tar.xz
+          tar -tJf /tmp/v614-payload.tar.xz > /tmp/v614-files.list
+          test "$(wc -l < /tmp/v614-files.list)" -eq 34
+          tar -xJf /tmp/v614-payload.tar.xz
 
           rm -f \
             app/src/main/java/com/simplereader/app/ui/PaperCoverDrawable.kt \
@@ -57,10 +69,20 @@ jobs:
           grep -Fq '[\p{script=Han}]{1,40}[（(]' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
           grep -q 'CrashLogStore.install(this)' app/src/main/java/com/simplereader/app/App.kt
           grep -q '闪退/崩溃日志' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          grep -q 'const val TOP_GUARD_DP = 0' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt
+          grep -q 'const val CONTENT_TOP_PADDING_DP = 50' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt
           test -f app/src/main/res/drawable-nodpi/book_cover_default_txt.webp
           test -f app/src/main/res/drawable-nodpi/book_cover_default_epub.webp
           test -f app/src/main/res/drawable-nodpi/reader_texture_duokan_blue.webp
           test -f app/src/main/res/drawable-nodpi/reader_material_duokan_paper.webp
+          python3 - <<'PY'
+          from pathlib import Path
+          layout = Path('app/src/main/res/layout/activity_reader.xml').read_text()
+          root = layout.split('>', 1)[0]
+          assert 'android:paddingTop' not in root, root
+          content = layout.split('@+id/contentView', 1)[1].split('/>', 1)[0]
+          assert 'android:paddingTop="50dp"' in content, content
+          PY
           bash tools/verify-ui-policy.sh
 
       - name: Debug unit tests
@@ -73,7 +95,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm -f .github/v614-payload.tar.gz .github/workflows/apply-v614.yml
+          rm -f .github/v614-payload.tar.gz .github/v614-payload.part{00..09} .github/workflows/apply-v614.yml
           git add -A
           git commit -m 'v614: persist catalogs, use supplied covers and backgrounds, and retain crash logs'
           git push origin HEAD:v614-cache-cover-crash-log
