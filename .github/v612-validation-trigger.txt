@@ -1,0 +1,1 @@
+Validate v612 persistent cache, stable progress restore, bounded pagination, and plain page indicator.
