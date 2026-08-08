@@ -8,9 +8,9 @@ SimpleReader 是一个极简 Android 本地小说阅读器，主要面向 TXT、
 
 当前源码版本：
 
-- 版本：v615
-- versionCode：`2098000615`
-- versionName：`615`
+- 版本：v630
+- versionCode：`2098000630`
+- versionName：`630`
 - 包名：`com.simplereader.app`
 - 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
 

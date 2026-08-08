@@ -2,10 +2,10 @@
 
 ## 当前永久签名
 
-- 当前最新产出：v610
-- 版本号：`2098000610`
-- 版本名：`610`
-- APK SHA-256：`dd33f10d252ae44bb46199a23a98e292a24da32d81be473513cadf6364386ff8`
+- 当前最新产出：v630
+- 版本号：`2098000630`
+- 版本名：`630`
+- APK SHA-256：`E30DA73CA1EB6486271A0E45653989C74C401FA42C74F1B5D24CA240B1ED828D`
 - 签名名称：简阅 Public V1 本地签名
 - 证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`
 - 包名：`com.simplereader.app`
@@ -28,7 +28,7 @@
 
 1. 包名继续为 `com.simplereader.app`。
 2. 证书继续为 `315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
-3. `versionCode` 必须大于当前最新正式版 `2098000610`。
+3. `versionCode` 必须大于当前最新正式版 `2098000630`。
 4. `versionName` 必须保留清晰序列号，便于确认新版本能覆盖旧版本。
 5. APK 输出放在 `E:\脚本\小说阅读\apk-output`，旧版归档到 `E:\脚本\小说阅读\apk-output\旧版`。
 6. 版本号比较必须使用 Android 的整数 `versionCode`，不能只比较文件名或 versionName。
