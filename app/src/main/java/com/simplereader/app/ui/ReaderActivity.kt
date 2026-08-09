@@ -19,6 +19,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
@@ -90,6 +91,7 @@ class ReaderActivity : AppCompatActivity() {
     private var continuousWindowShiftPosted = false
     private var statusBarInsetPx = 0
     private var navigationBarInsetPx = 0
+    private var readerInsetsApplied = false
     private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
     private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
     private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
@@ -114,6 +116,7 @@ class ReaderActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // Root spans the screen; text starts below the notification bar plus one character.
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        supportRequestWindowFeature(Window.FEATURE_ACTION_BAR_OVERLAY)
         setContentView(R.layout.activity_reader)
         supportActionBar?.setBackgroundDrawable(ColorDrawable(Color.rgb(72, 67, 58)))
         supportActionBar?.hide()
@@ -969,7 +972,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun setReaderChromeVisible(visible: Boolean) {
         chromeVisible = visible
-        readerControls.visibility = if (visible) View.VISIBLE else View.GONE
+        readerControls.visibility = if (visible) View.VISIBLE else View.INVISIBLE
         progressLabel.visibility = if (visible) View.GONE else View.VISIBLE
         if (!visible) readerSettingsPanel.visibility = View.GONE
         if (visible) {
@@ -1019,14 +1022,11 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun bindReaderInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(readerRoot) { _, insets ->
-            val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-            val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            if (statusTop != statusBarInsetPx || navigationBottom != navigationBarInsetPx) {
-                statusBarInsetPx = statusTop
-                navigationBarInsetPx = navigationBottom
+            if (!readerInsetsApplied) {
+                readerInsetsApplied = true
+                statusBarInsetPx = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                navigationBarInsetPx = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
                 applyReaderContentPadding()
-                val stableOffset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset
-                if (document != null && readerBook != null) paginateAndDisplay(stableOffset)
             }
             insets
         }
