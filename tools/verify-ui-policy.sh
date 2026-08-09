@@ -26,8 +26,8 @@ grep -q 'android:name=".App"' app/src/main/AndroidManifest.xml || fail "App cras
 # Exact confirmed reader structures.
 grep -q 'showCatalogBookmarkPanelV600' "$reader" || fail "v600 catalog/bookmark panel missing"
 grep -q 'window.setGravity(Gravity.START or Gravity.CENTER_VERTICAL)' "$reader" || fail "v600 side panel placement missing"
-grep -q 'ReaderBackgroundPicker.show' "$reader" || fail "layered background picker missing"
-grep -q 'ReaderBackgrounds.Selection' "$reader" || fail "colour-texture-material selection missing"
+grep -q 'ReaderBackgroundPicker.show' "$reader" || fail "v625 single-background picker missing"
+grep -q 'ReaderBackgrounds.Selection' "$reader" || fail "v625 single-background selection missing"
 grep -q 'PagedReaderView.TurnMode.OVERLAP' "$reader" || fail "overlap mode missing"
 grep -q 'PagedReaderView.TurnMode.SIMULATE' "$reader" || fail "simulation mode missing"
 grep -q 'PagedReaderView.TurnMode.SLIDE' "$reader" || fail "slide mode missing"
@@ -48,8 +48,8 @@ grep -q 'renderContinuousWindow' "$reader" || fail "bounded continuous window mi
 grep -q 'CONTINUOUS_PAGES_AFTER' "$reader" || fail "bounded continuous window size missing"
 ! grep -q 'TxtParser.isLikelyChapterTitle' "$engine" || fail "non-chapter title guessing is forbidden"
 
-test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "confirmed layered background source missing"
-test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt || fail "confirmed background picker missing"
+test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "confirmed v625 background source missing"
+test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt || fail "confirmed v625 background picker missing"
 test -e app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt || fail "confirmed horizontal renderer missing"
 
 grep -q 'android:paddingTop="0dp"' "$layout" || fail "reader XML padding must defer to runtime system-bar insets"
