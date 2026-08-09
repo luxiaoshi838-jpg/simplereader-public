@@ -63,6 +63,8 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var progressLabel: TextView
     private lateinit var readerTopBar: LinearLayout
     private lateinit var readerTopTitle: TextView
+    private lateinit var readerTopBar: LinearLayout
+    private lateinit var readerTopTitle: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
@@ -202,6 +204,8 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindControls() {
+        findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
+        findViewById<TextView>(R.id.readerTopBookmarkButton).setOnClickListener { addBookmark() }
         findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
         findViewById<TextView>(R.id.readerTopBookmarkButton).setOnClickListener { addBookmark() }
         findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarkPanelV600() }
@@ -1001,7 +1005,7 @@ class ReaderActivity : AppCompatActivity() {
         ViewCompat.requestApplyInsets(readerRoot)
     }
 
-    /** Overlay-only chrome: margins move only the bars, never the reader content. */
+    /** Reader chrome is overlay-only. These margins move only the bars themselves. */
     private fun applyReaderChromeInsets() {
         (readerTopBar.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
             if (params.topMargin != statusBarInsetPx) {
