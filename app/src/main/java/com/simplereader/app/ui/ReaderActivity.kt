@@ -65,6 +65,8 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var readerTopTitle: TextView
     private lateinit var readerTopBar: LinearLayout
     private lateinit var readerTopTitle: TextView
+    private lateinit var readerTopBar: LinearLayout
+    private lateinit var readerTopTitle: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
@@ -1005,7 +1007,7 @@ class ReaderActivity : AppCompatActivity() {
         ViewCompat.requestApplyInsets(readerRoot)
     }
 
-    /** Reader chrome is overlay-only. These margins move only the bars themselves. */
+    /** Overlay-only chrome: margins move only the bars, never the reader content. */
     private fun applyReaderChromeInsets() {
         (readerTopBar.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
             if (params.topMargin != statusBarInsetPx) {
