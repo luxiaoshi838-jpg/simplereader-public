@@ -1,55 +1,67 @@
-# 简阅：永久禁止恢复的阅读页错误实现
+# 简阅：永久禁止恢复的错误实现
 
-本文件用于阻止后续版本再次从错误历史实现中恢复已否决行为。
+本规则针对**实现本身**，不是针对某个版本号。只要实现具有下面任一行为，无论来自旧提交、历史分支、PR、构建产物、备份、文档还是重新编写，都必须删除，不能作为后续版本功能来源或回退方案。
 
-## 永久禁止
+## 1. 禁止上下栏压缩阅读页
 
-1. **禁止无封面实现**
-   - TXT/普通文本必须保留已确认的通用默认封面。
-   - EPUB 必须保留真实封面读取；无真实封面时使用已确认的 EPUB 默认封面。
-   - 禁止以“纯文字卡片”“空白卡片”“无封面占位”替代确认封面。
+- 顶部 ActionBar 必须使用 overlay 模式。
+- 底部 `readerControls` 必须作为覆盖层；隐藏使用 `INVISIBLE`，禁止 `GONE ↔ VISIBLE` 改变阅读区尺寸。
+- 上下栏显示/隐藏不得修改正文 height、width、margin、padding、分页参数或 scrollY。
+- 上下栏显示/隐藏不得触发 `requestLayout()`、重新分页、页面起点重算或位置补偿。
+- WindowInsets 只允许首次建立固定状态栏/导航栏安全边界；之后栏位变化不得重新改变阅读区几何尺寸。
 
-2. **禁止错误 v626 阅读页实现**
-   - 禁止恢复提交 `85e297ffff699b26a512c6212aacc02b42849ab6` 中新增的阅读页实现。
-   - 禁止使用由该错误实现生成的 APK、源码快照、构建分支或工作流作为后续版本基线。
-   - `agent/remove-reader-chrome-compression` 与 `build/v626-local-sign` 不得作为功能来源。
+## 2. 禁止无封面实现
 
-3. **禁止正文无上下边界**
-   - 阅读正文顶部和底部必须保留已确认的固定安全边界；不得贴住状态栏、导航栏或屏幕边缘。
-   - 上下栏显示/隐藏不得通过把正文扩展到系统栏后方来实现“覆盖”。
-   - 不允许为了避免栏压缩而删除正文原本的上下安全边界。
+- EPUB 优先读取真实 EPUB 封面；没有真实封面时使用确认的 EPUB 默认封面。
+- TXT 及其他非 EPUB 使用真实 v625 中确认的 `book_cover_default_txt.webp`。
+- 禁止无封面、空白卡片、纯文字卡片、临时占位封面、`book_cover_default_generic.webp` 或其它空白/通用替代方案。
+- 禁止程序绘制“TXT”文字、交叉线或几何图形来伪造默认封面。
 
-4. **禁止错误背景实现**
-   - 阅读背景只能沿用已确认的颜色、纹理、质感三层实现及已确认素材。
-   - 禁止以临时纯色、程序生成纹理、缩略图放大、错误平铺或错误 v626 的背景效果替换确认背景。
-   - 修改阅读栏布局不得顺带修改背景选择、背景素材、背景绘制或书架封面逻辑。
+## 3. 禁止无上下安全边界的全屏正文
 
-5. **版本基线规则**
-   - v626 及其后续修复必须以用户确认的真实 v625 成品/对应真实源码为基线，仅做明确要求的最小改动。
-   - 禁止从旧 `main`、v615-era 阅读页、错误 v626 构建产物逆向恢复其它功能。
-   - 封面、自动阅读、分页、背景、书架、目录、搜索、书签等未被明确要求修改的功能必须保持 v625 行为。
+- 正文顶部必须位于状态栏/通知栏下方并保留一个完整字符高度。
+- 正文底部必须位于导航栏/屏幕底边上方并保留一个完整字符高度。
+- 禁止为了让上下栏覆盖正文而删除这些固定安全边界。
+- 禁止正文进入状态栏、导航栏或屏幕物理边缘区域。
 
-6. **构建执行规则**
-   - 任一单独构建、测试、反编译、打包或签名步骤运行达到 5 分钟仍未完成，必须立即检查是否卡住；不得无检查继续等待。
+## 4. 禁止旧垃圾背景实现
 
-## 当前安全回退点
+允许的背景模型只有真实 v625 的单选择结构：`ReaderBackgrounds.Selection(category, optionId)`。
 
-错误 v626 清理后的公开库安全点以 `18c19ce4cecd51e551354bce2d9507c3b92402a8` 为基础；它不是 v626 功能基线，只用于确保错误 v626 实现不再留在公开库当前分支。真正 v626 必须从用户确认的真实 v625 继续。
+永久禁止：
 
-### 上下栏不得改变阅读区几何尺寸
-- 顶部 ActionBar 必须使用 overlay 模式；显示/隐藏不得压缩或扩张正文区域。
-- `readerControls` 隐藏必须使用 `INVISIBLE`，不得用 `GONE ↔ VISIBLE` 触发布局尺寸变化。
-- WindowInsets 只允许首次建立状态栏/导航栏固定安全边界；后续上下栏显示/隐藏不得再次修改正文 padding/margin/height，不得 `requestLayout()`，不得重新分页或补偿 scrollY。
-- 禁止恢复任何“上下栏出现时缩短阅读页、消失时再放大阅读页”的实现。
+- 颜色 + 纹理 + 质感三层同时自由组合或叠加；
+- `LayeredReaderBackgroundDrawable`；
+- `BitmapShader`、`TILED_BITMAP`、`TileMode.REPEAT` 等平铺实现；
+- 放大选择器缩略图当阅读背景；
+- 程序生成圆点、纸纤维、噪点等伪纹理；
+- 用一个纹理映射/冒充多个背景选项；
+- 缺少真实素材时自动退回纯色、临时背景或旧背景实现。
 
+“纯色 / 纹理 / 质感”只能作为互斥类别，每次只选择一个完整背景位图，并按阅读区域等比中心裁切。
 
-## Implementation-wide purge rule
+## 5. 真实素材硬门禁
 
-These rules apply to every active branch, workflow, source path and future version. They are not scoped to v626.
+- 只允许使用 `REAL_V625_ASSET_ALLOWLIST.md` 列出的真实 v625 封面与背景素材。
+- 文件缺失、大小不符或 SHA-256 不符时，构建/发布必须失败。
+- “为了先能构建”不是恢复旧封面、旧背景或临时素材的理由。
 
-- Any implementation where top/bottom reader chrome changes page height, margin, padding, pagination or scroll position is forbidden.
-- Any no-cover, blank-card or generic-empty fallback is forbidden. TXT/non-EPUB uses the confirmed v625 TXT/default cover; EPUB keeps real-cover loading and the confirmed EPUB fallback.
-- Any reading body that removes the fixed status/navigation safe bounds and extends text into system bars is forbidden.
-- Any layered/tiled/generated background system is forbidden, including color+texture+material stacking, BitmapShader tiling, thumbnail enlargement, procedural texture generation, and substituting one texture for many options.
-- Only the confirmed v625 single-selection full-page background model and exact assets listed in REAL_V625_ASSET_ALLOWLIST.md may be used.
-- If an exact confirmed asset is unavailable, build/release must fail. Falling back to a rejected implementation is forbidden.
+## 6. 活动仓库范围
+
+上述规则必须同时适用于：
+
+- `main`；
+- 所有活动分支；
+- GitHub Actions 构建/发布工作流；
+- 校验脚本；
+- 后续新建分支和 PR。
+
+历史提交和已关闭 PR 可以作为审计记录存在，但不得重新设为活动分支、构建基线、功能来源或 cherry-pick 来源。
+
+原始失败实现中的提交 `85e297ffff699b26a512c6212aacc02b42849ab6` 只是已知例子，不代表规则范围仅限该版本或该提交。
+
+## 7. 构建执行规则
+
+任一单独构建、测试、反编译、打包或签名步骤运行达到 5 分钟仍未完成，必须立即检查是否卡住；不得无检查继续等待。
+
+所有后续修改必须先通过 `tools/verify-rejected-reader-implementations.sh`。发现任一禁止实现时直接失败。
