@@ -1,0 +1,48 @@
+name: Finalize reader purge refs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/finalize-reader-purge-refs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove one-shot workflow and align every active branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/finalize-reader-purge-refs.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'Finalize reader purge active refs'
+          git push origin HEAD:main
+          for branch in \
+            agent/complete-backup-group-fix \
+            agent/export-official-apksigner \
+            agent/export-reader-search-apk-402 \
+            agent/mihon-style-backup-local-library \
+            agent/remove-reader-chrome-compression \
+            agent/v615-reader-stability \
+            agent/v617-cover-background-cache \
+            agent/v618-build-tools \
+            agent/v622-gradle-export \
+            build/v626-local-sign \
+            fix/v611-reader-first-load \
+            fix/v612-cache-stability \
+            v613-reader-update \
+            v614-cache-cover-crash-log \
+            v614-direct-final \
+            verify/v614-release; do
+            git push --force origin HEAD:"refs/heads/$branch"
+          done
