@@ -13,13 +13,13 @@ import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import com.simplereader.app.R
 
-/** User-supplied fallback covers. Plain-text books use the generic cover without a TXT badge. */
+/** v625 fallback covers: EPUB uses EPUB default; all other book formats use the confirmed TXT/default cover. */
 object BookCoverAssets {
     fun defaultCoverRes(format: String): Int =
         if (format.equals("EPUB", ignoreCase = true)) {
             R.drawable.book_cover_default_epub
         } else {
-            R.drawable.book_cover_default_generic
+            R.drawable.book_cover_default_txt
         }
 
     fun drawable(context: Context, format: String, radiusPx: Float): Drawable =

@@ -1,0 +1,248 @@
+name: Purge rejected reader implementations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/purge-rejected-reader-implementations.yml
+
+permissions:
+  contents: write
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove rejected implementations from active source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          s = p.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'missing ReaderActivity block: {label}')
+              s = s.replace(old, new, 1)
+
+          replace_once(
+          '''    private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
+              private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
+              private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
+          ''',
+          '''    private var backgroundSelection: ReaderBackgrounds.Selection = ReaderBackgrounds.Selection()
+          ''', 'background fields')
+
+          replace_once(
+          '''        findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("solid_ivory") }
+                  findViewById<TextView>(R.id.themeEyeButton).setOnClickListener { selectQuickColor("solid_eye") }
+                  findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener { selectQuickColor("solid_white") }
+          ''',
+          '''        findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("scene_yellow") }
+                  findViewById<TextView>(R.id.themeEyeButton).setOnClickListener { selectQuickColor("scene_green") }
+                  findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener { selectQuickColor("scene_white") }
+          ''', 'quick backgrounds')
+
+          replace_once(
+          '''        findViewById<TextView>(R.id.themeMoreButton).setOnClickListener {
+                      ReaderBackgroundPicker.show(this, currentBackgroundSelection()) { selection ->
+                          backgroundColorId = selection.colorId
+                          backgroundTextureId = selection.textureId
+                          backgroundMaterialId = selection.materialId
+                          ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+                          savePreferences()
+                          applyReaderAppearance(rebindPages = true)
+                      }
+                  }
+          ''',
+          '''        findViewById<TextView>(R.id.themeMoreButton).setOnClickListener {
+                      ReaderBackgroundPicker.show(this, currentBackgroundSelection()) { selection ->
+                          backgroundSelection = ReaderBackgrounds.validated(selection)
+                          ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+                          savePreferences()
+                          applyReaderAppearance(rebindPages = true)
+                      }
+                  }
+          ''', 'background picker callback')
+
+          replace_once(
+          '''    private fun selectQuickColor(colorId: String) {
+                  backgroundColorId = colorId
+                  ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+                  savePreferences()
+                  applyReaderAppearance(rebindPages = true)
+              }
+
+              private fun currentBackgroundSelection() = ReaderBackgrounds.validated(
+                  ReaderBackgrounds.Selection(backgroundColorId, backgroundTextureId, backgroundMaterialId)
+              )
+
+              private fun activePalette(): ReaderAppearance.Palette = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
+                  ReaderAppearance.palette(this)
+              } else {
+                  val color = ReaderBackgrounds.color(backgroundColorId)
+                  ReaderAppearance.Palette(color.backgroundColor, color.textColor)
+              }
+          ''',
+          '''    private fun selectQuickColor(colorId: String) {
+                  backgroundSelection = ReaderBackgrounds.selection(ReaderBackgrounds.Category.COLOR, colorId)
+                  ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
+                  savePreferences()
+                  applyReaderAppearance(rebindPages = true)
+              }
+
+              private fun currentBackgroundSelection() = ReaderBackgrounds.validated(backgroundSelection)
+
+              private fun activePalette(): ReaderAppearance.Palette = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
+                  ReaderAppearance.palette(this)
+              } else {
+                  val selection = currentBackgroundSelection()
+                  ReaderAppearance.Palette(
+                      ReaderBackgrounds.representativeColor(selection),
+                      ReaderBackgrounds.textColor(selection)
+                  )
+              }
+          ''', 'background selection helpers')
+
+          replace_once(
+          '''    private fun updateThemePreviews() {
+                  mapOf(
+                      R.id.themePaperButton to "solid_ivory",
+                      R.id.themeEyeButton to "solid_eye",
+                      R.id.themeWhiteButton to "solid_white"
+                  ).forEach { (id, colorId) ->
+                      findViewById<TextView>(id).background = ReaderBackgrounds.previewDrawable(
+                          this,
+                          currentBackgroundSelection().copy(colorId = colorId),
+                          backgroundColorId == colorId && ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_DAY
+                      )
+                  }
+              }
+          ''',
+          '''    private fun updateThemePreviews() {
+                  mapOf(
+                      R.id.themePaperButton to "scene_yellow",
+                      R.id.themeEyeButton to "scene_green",
+                      R.id.themeWhiteButton to "scene_white"
+                  ).forEach { (id, colorId) ->
+                      val preview = ReaderBackgrounds.selection(ReaderBackgrounds.Category.COLOR, colorId)
+                      findViewById<TextView>(id).background = ReaderBackgrounds.previewDrawable(
+                          this,
+                          preview,
+                          currentBackgroundSelection() == preview && ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_DAY
+                      )
+                  }
+              }
+          ''', 'background previews')
+
+          replace_once(
+          '''        backgroundColorId = prefs.getString(PREF_BACKGROUND_COLOR, ReaderBackgrounds.DEFAULT_COLOR_ID) ?: ReaderBackgrounds.DEFAULT_COLOR_ID
+                  backgroundTextureId = prefs.getString(PREF_BACKGROUND_TEXTURE, ReaderBackgrounds.DEFAULT_TEXTURE_ID) ?: ReaderBackgrounds.DEFAULT_TEXTURE_ID
+                  backgroundMaterialId = prefs.getString(PREF_BACKGROUND_MATERIAL, ReaderBackgrounds.DEFAULT_MATERIAL_ID) ?: ReaderBackgrounds.DEFAULT_MATERIAL_ID
+                  val safe = currentBackgroundSelection()
+                  backgroundColorId = safe.colorId
+                  backgroundTextureId = safe.textureId
+                  backgroundMaterialId = safe.materialId
+          ''',
+          '''        val category = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
+                      ?.let { runCatching { ReaderBackgrounds.Category.valueOf(it) }.getOrNull() }
+                      ?: ReaderBackgrounds.Category.COLOR
+                  val optionId = prefs.getString(PREF_BACKGROUND_OPTION, null)
+                      ?: ReaderBackgrounds.DEFAULT_COLOR_ID
+                  backgroundSelection = ReaderBackgrounds.validated(ReaderBackgrounds.Selection(category, optionId))
+          ''', 'load background preferences')
+
+          replace_once(
+          '''            .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+                      .putString(PREF_BACKGROUND_COLOR, backgroundColorId)
+                      .putString(PREF_BACKGROUND_TEXTURE, backgroundTextureId)
+                      .putString(PREF_BACKGROUND_MATERIAL, backgroundMaterialId)
+                      .apply()
+          ''',
+          '''            .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+                      .putString(PREF_BACKGROUND_CATEGORY, currentBackgroundSelection().category.name)
+                      .putString(PREF_BACKGROUND_OPTION, currentBackgroundSelection().optionId)
+                      .apply()
+          ''', 'save background preferences')
+
+          replace_once(
+          '''        private const val PREF_BACKGROUND_COLOR = "reader_background_color_id"
+                  private const val PREF_BACKGROUND_TEXTURE = "reader_background_texture_id"
+                  private const val PREF_BACKGROUND_MATERIAL = "reader_background_material_id"
+          ''',
+          '''        private const val PREF_BACKGROUND_CATEGORY = "reader_background_category"
+                  private const val PREF_BACKGROUND_OPTION = "reader_background_option"
+          ''', 'background preference constants')
+
+          p.write_text(s, encoding='utf-8')
+
+          policy = Path('tools/verify-ui-policy.sh')
+          lines = policy.read_text(encoding='utf-8').splitlines()
+          filtered = []
+          for line in lines:
+              if "book_cover_default_txt" in line:
+                  continue
+              if "generic default cover missing" in line:
+                  continue
+              filtered.append(line)
+          insert_at = next((i for i, line in enumerate(filtered) if 'App crash logger is not registered' in line), len(filtered))
+          filtered.insert(insert_at, 'test -e app/src/main/res/drawable-nodpi/book_cover_default_txt.webp || fail "confirmed TXT/default cover missing"')
+          policy.write_text('\n'.join(filtered) + '\n', encoding='utf-8')
+
+          guard = Path('READER_FORBIDDEN_REGRESSIONS.md')
+          g = guard.read_text(encoding='utf-8')
+          marker = '## Implementation-wide purge rule'
+          if marker not in g:
+              g += '''\n\n## Implementation-wide purge rule\n\nThese rules apply to every active branch, workflow, source path and future version. They are not scoped to v626.\n\n- Any implementation where top/bottom reader chrome changes page height, margin, padding, pagination or scroll position is forbidden.\n- Any no-cover, blank-card or generic-empty fallback is forbidden. TXT/non-EPUB uses the confirmed v625 TXT/default cover; EPUB keeps real-cover loading and the confirmed EPUB fallback.\n- Any reading body that removes the fixed status/navigation safe bounds and extends text into system bars is forbidden.\n- Any layered/tiled/generated background system is forbidden, including color+texture+material stacking, BitmapShader tiling, thumbnail enlargement, procedural texture generation, and substituting one texture for many options.\n- Only the confirmed v625 single-selection full-page background model and exact assets listed in REAL_V625_ASSET_ALLOWLIST.md may be used.\n- If an exact confirmed asset is unavailable, build/release must fail. Falling back to a rejected implementation is forbidden.\n'''
+              guard.write_text(g, encoding='utf-8')
+          PY
+
+          rm -f \
+            app/src/main/res/drawable-nodpi/book_cover_default_generic.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_dark.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_green.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_grey.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_paper.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_warm.webp \
+            app/src/main/res/drawable-nodpi/reader_material_duokan_white.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_blue.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_green.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_white.webp \
+            app/src/main/res/drawable-nodpi/reader_texture_duokan_yellow.webp
+
+      - name: Verify rejected implementation patterns are gone
+        shell: bash
+        run: |
+          set -euo pipefail
+          reader=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          backgrounds=app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt
+          picker=app/src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt
+          covers=app/src/main/java/com/simplereader/app/ui/BookCoverAssets.kt
+          ! grep -R -n -E 'LayeredReaderBackgroundDrawable|TILED_BITMAP|BitmapShader|TileMode\.REPEAT|自由搭配|纯色决定底色|纹理与质感.*叠加' app/src/main/java app/src/main/res
+          ! grep -E 'backgroundColorId|backgroundTextureId|backgroundMaterialId|solid_ivory|solid_eye|solid_white|texture_duokan_green|material_duokan_|material_none|texture_none' "$reader" "$backgrounds" "$picker"
+          grep -Fq 'FullPageReaderBackgroundDrawable' "$backgrounds"
+          grep -Fq 'R.drawable.book_cover_default_txt' "$covers"
+          ! grep -Fq 'book_cover_default_generic' "$covers"
+          grep -Fq 'supportRequestWindowFeature(Window.FEATURE_ACTION_BAR_OVERLAY)' "$reader"
+          grep -Fq 'readerControls.visibility = if (visible) View.VISIBLE else View.INVISIBLE' "$reader"
+          ! grep -A14 'private fun bindReaderInsets' "$reader" | grep -Eq 'paginateAndDisplay|requestLayout|scrollTo|scrollY|layoutParams'
+
+      - name: Commit purge and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/purge-rejected-reader-implementations.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'Purge rejected reader implementations from active source'
+          git push origin HEAD:main

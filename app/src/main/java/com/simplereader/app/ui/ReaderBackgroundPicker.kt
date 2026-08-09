@@ -10,7 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
-/** 分层背景选择页：用户提供的纯色、纹理、质感素材可自由搭配。 */
+/** v625 picker: one complete background is selected; categories are alternatives, never stacked. */
 object ReaderBackgroundPicker {
     fun show(
         activity: AppCompatActivity,
@@ -21,14 +21,14 @@ object ReaderBackgroundPicker {
         fun dp(value: Int): Int = (value * density + 0.5f).toInt()
 
         var currentSelection = ReaderBackgrounds.validated(selected)
-        var activeCategory = ReaderBackgrounds.Category.COLOR
+        var activeCategory = currentSelection.category
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(8), dp(14), dp(10))
         }
         val explanation = TextView(activity).apply {
-            text = "纯色决定底色；纹理与质感使用已导入素材分别叠加，也可各自选择“纯净”关闭。"
+            text = "每次选择一种完整背景。纯色、纹理、质感互为独立方案，不叠加、不平铺。"
             textSize = 13f
             setTextColor(Color.rgb(94, 86, 73))
             setPadding(dp(4), 0, dp(4), dp(8))
@@ -63,16 +63,13 @@ object ReaderBackgroundPicker {
         )
 
         val tabViews = linkedMapOf<ReaderBackgrounds.Category, TextView>()
-
         fun tabBackground(selectedTab: Boolean) = GradientDrawable().apply {
             cornerRadius = dp(17).toFloat()
             setColor(if (selectedTab) Color.rgb(239, 122, 40) else Color.rgb(233, 230, 220))
         }
-
         fun renderSummary() {
             summary.text = "当前：${ReaderBackgrounds.summary(currentSelection)}"
         }
-
         fun renderTabs() {
             tabViews.forEach { (category, view) ->
                 val active = category == activeCategory
@@ -80,30 +77,12 @@ object ReaderBackgroundPicker {
                 view.setTextColor(if (active) Color.WHITE else Color.rgb(66, 62, 54))
             }
         }
-
-        fun isSelected(category: ReaderBackgrounds.Category, id: String): Boolean = when (category) {
-            ReaderBackgrounds.Category.COLOR -> currentSelection.colorId == id
-            ReaderBackgrounds.Category.TEXTURE -> currentSelection.textureId == id
-            ReaderBackgrounds.Category.MATERIAL -> currentSelection.materialId == id
-        }
-
-        fun previewSelection(category: ReaderBackgrounds.Category, id: String): ReaderBackgrounds.Selection =
-            when (category) {
-                ReaderBackgrounds.Category.COLOR -> currentSelection.copy(colorId = id)
-                ReaderBackgrounds.Category.TEXTURE -> currentSelection.copy(textureId = id)
-                ReaderBackgrounds.Category.MATERIAL -> currentSelection.copy(materialId = id)
-            }
-
-        fun optionPairs(): List<Pair<String, String>> = when (activeCategory) {
-            ReaderBackgrounds.Category.COLOR -> ReaderBackgrounds.colorOptions.map { it.id to it.title }
-            ReaderBackgrounds.Category.TEXTURE -> ReaderBackgrounds.textureOptions.map { it.id to it.title }
-            ReaderBackgrounds.Category.MATERIAL -> ReaderBackgrounds.materialOptions.map { it.id to it.title }
-        }
+        fun isSelected(category: ReaderBackgrounds.Category, id: String): Boolean =
+            currentSelection.category == category && currentSelection.optionId == id
 
         var renderGrid: () -> Unit = {}
-
         fun selectOption(category: ReaderBackgrounds.Category, id: String) {
-            currentSelection = ReaderBackgrounds.validated(previewSelection(category, id))
+            currentSelection = ReaderBackgrounds.selection(category, id)
             onSelectionChanged(currentSelection)
             renderSummary()
             renderTabs()
@@ -112,14 +91,14 @@ object ReaderBackgroundPicker {
 
         renderGrid = {
             grid.removeAllViews()
-            optionPairs().chunked(3).forEach { chunk ->
+            ReaderBackgrounds.options(activeCategory).chunked(3).forEach { chunk ->
                 val row = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.TOP
                 }
-                chunk.forEach { (id, title) ->
-                    val selectedOption = isSelected(activeCategory, id)
-                    val previewValue = previewSelection(activeCategory, id)
+                chunk.forEach { option ->
+                    val selectedOption = isSelected(activeCategory, option.id)
+                    val previewSelection = ReaderBackgrounds.selection(activeCategory, option.id)
                     val card = LinearLayout(activity).apply {
                         orientation = LinearLayout.VERTICAL
                         gravity = Gravity.CENTER
@@ -131,29 +110,19 @@ object ReaderBackgroundPicker {
                         text = if (selectedOption) "✓" else "Aa"
                         gravity = Gravity.CENTER
                         textSize = if (selectedOption) 22f else 19f
-                        setTextColor(ReaderBackgrounds.color(previewValue.colorId).textColor)
-                        background = ReaderBackgrounds.previewDrawable(
-                            context = activity,
-                            selection = previewValue,
-                            selected = selectedOption
-                        )
+                        setTextColor(option.textColor)
+                        background = ReaderBackgrounds.previewDrawable(activity, previewSelection, selectedOption)
                     }
                     val label = TextView(activity).apply {
-                        text = title
+                        text = option.title
                         gravity = Gravity.CENTER
                         textSize = 13f
                         setTextColor(Color.rgb(62, 58, 51))
                         setPadding(0, dp(5), 0, 0)
                     }
-                    card.addView(
-                        preview,
-                        LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            dp(76)
-                        )
-                    )
+                    card.addView(preview, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(76)))
                     card.addView(label)
-                    card.setOnClickListener { selectOption(activeCategory, id) }
+                    card.setOnClickListener { selectOption(activeCategory, option.id) }
                     row.addView(
                         card,
                         LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -195,7 +164,7 @@ object ReaderBackgroundPicker {
         renderTabs()
         renderGrid()
         AlertDialog.Builder(activity)
-            .setTitle("阅读背景 · 自由搭配")
+            .setTitle("阅读背景")
             .setView(root)
             .setPositiveButton("完成", null)
             .show()

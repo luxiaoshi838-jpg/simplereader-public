@@ -20,6 +20,10 @@ jobs:
       - name: Checkout current source
         uses: actions/checkout@v4
 
+      - name: Block rejected reader implementations
+        shell: bash
+        run: bash tools/verify-rejected-reader-implementations.sh
+
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
 
