@@ -15,8 +15,6 @@ import android.text.style.StyleSpan
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.Menu
-import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -63,6 +61,8 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var continuousTextView: TextView
     private lateinit var pagedReaderView: PagedReaderView
     private lateinit var progressLabel: TextView
+    private lateinit var readerTopBar: LinearLayout
+    private lateinit var readerTopTitle: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
@@ -115,8 +115,6 @@ class ReaderActivity : AppCompatActivity() {
         // Root spans the screen; text starts below the notification bar plus one character.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_reader)
-        supportActionBar?.setBackgroundDrawable(ColorDrawable(Color.rgb(72, 67, 58)))
-        supportActionBar?.hide()
 
         database = SimpleReaderDatabase.getDatabase(this)
         readerRoot = findViewById(R.id.readerRoot)
@@ -124,6 +122,8 @@ class ReaderActivity : AppCompatActivity() {
         continuousTextView = findViewById(R.id.contentView)
         pagedReaderView = findViewById(R.id.pagedReaderView)
         progressLabel = findViewById(R.id.readerProgressLabel)
+        readerTopBar = findViewById(R.id.readerTopBar)
+        readerTopTitle = findViewById(R.id.readerTopTitle)
         readerControls = findViewById(R.id.readerControls)
         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
         progressSeekBar = findViewById(R.id.fontSizeSeekBar)
@@ -149,34 +149,6 @@ class ReaderActivity : AppCompatActivity() {
         continuousRenderJob?.cancel()
         pagedReaderView.cancelNavigation()
         super.onDestroy()
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(Menu.NONE, MENU_SEARCH, Menu.NONE, "搜索")
-            .setIcon(android.R.drawable.ic_menu_search)
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
-        addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        addItem.actionView = TextView(this).apply {
-            text = "添"
-            gravity = Gravity.CENTER
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            contentDescription = "添加书签"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(239, 122, 40))
-            }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
-            setOnClickListener { addBookmark() }
-        }
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        MENU_SEARCH -> { showContentSearch(); true }
-        MENU_ADD_BOOKMARK -> { addBookmark(); true }
-        else -> super.onOptionsItemSelected(item)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -230,6 +202,8 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindControls() {
+        findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
+        findViewById<TextView>(R.id.readerTopBookmarkButton).setOnClickListener { addBookmark() }
         findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarkPanelV600() }
         findViewById<TextView>(R.id.readerSearchButton).setOnClickListener {
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -297,7 +271,6 @@ class ReaderActivity : AppCompatActivity() {
                     ?: error("书籍记录不存在")
                 book = selected
                 title = ""
-                supportActionBar?.title = ""
                 if (selected.format.equals("CHM", ignoreCase = true)) {
                     error("当前版本已停止支持 CHM：请改用 TXT 或 EPUB")
                 }
@@ -963,21 +936,17 @@ class ReaderActivity : AppCompatActivity() {
             ?: rawTitle.replace(Regex("^\\s*\\d+[.、．]\\s*"), ""))
             .trim()
             .ifBlank { book?.title.orEmpty() }
-        title = chapterTitle
-        supportActionBar?.title = chapterTitle
+        title = ""
+        readerTopTitle.text = chapterTitle
     }
 
     private fun setReaderChromeVisible(visible: Boolean) {
         chromeVisible = visible
+        readerTopBar.visibility = if (visible) View.VISIBLE else View.GONE
         readerControls.visibility = if (visible) View.VISIBLE else View.GONE
         progressLabel.visibility = if (visible) View.GONE else View.VISIBLE
         if (!visible) readerSettingsPanel.visibility = View.GONE
-        if (visible) {
-            updateCurrentChapterTitle()
-            supportActionBar?.show()
-        } else {
-            supportActionBar?.hide()
-        }
+        if (visible) updateCurrentChapterTitle()
     }
 
     private fun loadPreferences() {
@@ -1025,12 +994,27 @@ class ReaderActivity : AppCompatActivity() {
                 statusBarInsetPx = statusTop
                 navigationBarInsetPx = navigationBottom
                 applyReaderContentPadding()
-                val stableOffset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset
-                if (document != null && readerBook != null) paginateAndDisplay(stableOffset)
+                applyReaderChromeInsets()
             }
             insets
         }
         ViewCompat.requestApplyInsets(readerRoot)
+    }
+
+    /** Overlay-only chrome: margins move only the bars, never the reader content. */
+    private fun applyReaderChromeInsets() {
+        (readerTopBar.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+            if (params.topMargin != statusBarInsetPx) {
+                params.topMargin = statusBarInsetPx
+                readerTopBar.layoutParams = params
+            }
+        }
+        (readerControls.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+            if (params.bottomMargin != navigationBarInsetPx) {
+                params.bottomMargin = navigationBarInsetPx
+                readerControls.layoutParams = params
+            }
+        }
     }
 
     private fun applyReaderContentPadding() {

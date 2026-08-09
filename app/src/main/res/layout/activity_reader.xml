@@ -36,6 +36,50 @@
             android:textSize="20sp" />
     </androidx.core.widget.NestedScrollView>
 
+    <LinearLayout
+        android:id="@+id/readerTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="top"
+        android:background="#302F2A"
+        android:clickable="true"
+        android:elevation="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/readerTopTitle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:textColor="#EEE9DD"
+            android:textSize="17sp" />
+
+        <TextView
+            android:id="@+id/readerTopSearchButton"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="⌕"
+            android:textColor="#EEE9DD"
+            android:textSize="26sp" />
+
+        <TextView
+            android:id="@+id/readerTopBookmarkButton"
+            android:layout_width="48dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:text="添"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/readerProgressLabel"
         android:layout_width="wrap_content"

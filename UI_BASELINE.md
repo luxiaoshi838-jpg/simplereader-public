@@ -28,3 +28,7 @@
 
 - 大文件上下阅读：禁止把整本正文一次性放入单个 TextView/StaticLayout；必须使用有限页窗口并在接近上下边界时换窗。
 - 分页缓存：同一本书不同版式分别保存，任何版式不允许覆盖或删除其他版式的有效缓存。
+
+- 阅读上下栏覆盖规则（永久）：上栏、下栏都必须是 `readerRoot`/`FrameLayout` 内的覆盖层，显示或隐藏时禁止改变 `readerRoot`、`readerScrollView`、`pagedReaderView` 的高度、padding、margin 或布局测量结果。
+- 阅读上下栏禁止恢复（永久）：`ReaderActivity` 禁止使用 `supportActionBar.show()/hide()` 作为阅读上栏；禁止因阅读上下栏显示/隐藏或其 inset 变化调用 `paginateAndDisplay()`、`renderContinuousWindow()`、`scrollTo()`、`jumpToPage()` 做位置补偿。
+- 系统栏 inset 只允许用于正文固定安全边距，以及覆盖式上栏/下栏自身的 topMargin/bottomMargin；不得通过 inset 改变阅读正文容器尺寸。

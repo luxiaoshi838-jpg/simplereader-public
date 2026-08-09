@@ -8,4 +8,8 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#302F2A</item>
     </style>
+    <style name="Theme.SimpleReader.Reader" parent="Theme.SimpleReader">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
 </resources>
