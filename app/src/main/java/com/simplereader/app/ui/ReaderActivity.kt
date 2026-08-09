@@ -92,9 +92,7 @@ class ReaderActivity : AppCompatActivity() {
     private var statusBarInsetPx = 0
     private var navigationBarInsetPx = 0
     private var readerInsetsApplied = false
-    private var backgroundColorId: String = ReaderBackgrounds.DEFAULT_COLOR_ID
-    private var backgroundTextureId: String = ReaderBackgrounds.DEFAULT_TEXTURE_ID
-    private var backgroundMaterialId: String = ReaderBackgrounds.DEFAULT_MATERIAL_ID
+    private var backgroundSelection: ReaderBackgrounds.Selection = ReaderBackgrounds.Selection()
 
     private val continuousGesture by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -250,18 +248,16 @@ class ReaderActivity : AppCompatActivity() {
             savePreferences()
             updateSettingsLabels()
         }
-        findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("solid_ivory") }
-        findViewById<TextView>(R.id.themeEyeButton).setOnClickListener { selectQuickColor("solid_eye") }
-        findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener { selectQuickColor("solid_white") }
+        findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("scene_yellow") }
+        findViewById<TextView>(R.id.themeEyeButton).setOnClickListener { selectQuickColor("scene_green") }
+        findViewById<TextView>(R.id.themeWhiteButton).setOnClickListener { selectQuickColor("scene_white") }
         findViewById<TextView>(R.id.themeNightButton).setOnClickListener {
             ReaderAppearance.setMode(this, ReaderAppearance.MODE_NIGHT)
             applyReaderAppearance(rebindPages = true)
         }
         findViewById<TextView>(R.id.themeMoreButton).setOnClickListener {
             ReaderBackgroundPicker.show(this, currentBackgroundSelection()) { selection ->
-                backgroundColorId = selection.colorId
-                backgroundTextureId = selection.textureId
-                backgroundMaterialId = selection.materialId
+                backgroundSelection = ReaderBackgrounds.validated(selection)
                 ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
                 savePreferences()
                 applyReaderAppearance(rebindPages = true)
@@ -894,21 +890,22 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun selectQuickColor(colorId: String) {
-        backgroundColorId = colorId
+        backgroundSelection = ReaderBackgrounds.selection(ReaderBackgrounds.Category.COLOR, colorId)
         ReaderAppearance.setMode(this, ReaderAppearance.MODE_DAY)
         savePreferences()
         applyReaderAppearance(rebindPages = true)
     }
 
-    private fun currentBackgroundSelection() = ReaderBackgrounds.validated(
-        ReaderBackgrounds.Selection(backgroundColorId, backgroundTextureId, backgroundMaterialId)
-    )
+    private fun currentBackgroundSelection() = ReaderBackgrounds.validated(backgroundSelection)
 
     private fun activePalette(): ReaderAppearance.Palette = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
         ReaderAppearance.palette(this)
     } else {
-        val color = ReaderBackgrounds.color(backgroundColorId)
-        ReaderAppearance.Palette(color.backgroundColor, color.textColor)
+        val selection = currentBackgroundSelection()
+        ReaderAppearance.Palette(
+            ReaderBackgrounds.representativeColor(selection),
+            ReaderBackgrounds.textColor(selection)
+        )
     }
 
     private fun activeBackgroundDrawable() = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
@@ -934,14 +931,15 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun updateThemePreviews() {
         mapOf(
-            R.id.themePaperButton to "solid_ivory",
-            R.id.themeEyeButton to "solid_eye",
-            R.id.themeWhiteButton to "solid_white"
+            R.id.themePaperButton to "scene_yellow",
+            R.id.themeEyeButton to "scene_green",
+            R.id.themeWhiteButton to "scene_white"
         ).forEach { (id, colorId) ->
+            val preview = ReaderBackgrounds.selection(ReaderBackgrounds.Category.COLOR, colorId)
             findViewById<TextView>(id).background = ReaderBackgrounds.previewDrawable(
                 this,
-                currentBackgroundSelection().copy(colorId = colorId),
-                backgroundColorId == colorId && ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_DAY
+                preview,
+                currentBackgroundSelection() == preview && ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_DAY
             )
         }
     }
@@ -988,13 +986,12 @@ class ReaderActivity : AppCompatActivity() {
         readerTextSizeSp = prefs.getFloat(PREF_TEXT_SIZE, ReaderAppearance.textSize(this))
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
-        backgroundColorId = prefs.getString(PREF_BACKGROUND_COLOR, ReaderBackgrounds.DEFAULT_COLOR_ID) ?: ReaderBackgrounds.DEFAULT_COLOR_ID
-        backgroundTextureId = prefs.getString(PREF_BACKGROUND_TEXTURE, ReaderBackgrounds.DEFAULT_TEXTURE_ID) ?: ReaderBackgrounds.DEFAULT_TEXTURE_ID
-        backgroundMaterialId = prefs.getString(PREF_BACKGROUND_MATERIAL, ReaderBackgrounds.DEFAULT_MATERIAL_ID) ?: ReaderBackgrounds.DEFAULT_MATERIAL_ID
-        val safe = currentBackgroundSelection()
-        backgroundColorId = safe.colorId
-        backgroundTextureId = safe.textureId
-        backgroundMaterialId = safe.materialId
+        val category = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
+            ?.let { runCatching { ReaderBackgrounds.Category.valueOf(it) }.getOrNull() }
+            ?: ReaderBackgrounds.Category.COLOR
+        val optionId = prefs.getString(PREF_BACKGROUND_OPTION, null)
+            ?: ReaderBackgrounds.DEFAULT_COLOR_ID
+        backgroundSelection = ReaderBackgrounds.validated(ReaderBackgrounds.Selection(category, optionId))
     }
 
     private fun savePreferences() {
@@ -1002,9 +999,8 @@ class ReaderActivity : AppCompatActivity() {
             .putFloat(PREF_TEXT_SIZE, readerTextSizeSp)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
-            .putString(PREF_BACKGROUND_COLOR, backgroundColorId)
-            .putString(PREF_BACKGROUND_TEXTURE, backgroundTextureId)
-            .putString(PREF_BACKGROUND_MATERIAL, backgroundMaterialId)
+            .putString(PREF_BACKGROUND_CATEGORY, currentBackgroundSelection().category.name)
+            .putString(PREF_BACKGROUND_OPTION, currentBackgroundSelection().optionId)
             .apply()
     }
 
@@ -1065,9 +1061,8 @@ class ReaderActivity : AppCompatActivity() {
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key_turn"
-        private const val PREF_BACKGROUND_COLOR = "reader_background_color_id"
-        private const val PREF_BACKGROUND_TEXTURE = "reader_background_texture_id"
-        private const val PREF_BACKGROUND_MATERIAL = "reader_background_material_id"
+        private const val PREF_BACKGROUND_CATEGORY = "reader_background_category"
+        private const val PREF_BACKGROUND_OPTION = "reader_background_option"
         private const val TURN_MODE_OVERLAP = "overlap"
         private const val TURN_MODE_SIMULATE = "simulate"
         private const val TURN_MODE_HORIZONTAL = "horizontal"

@@ -41,3 +41,15 @@
 - `readerControls` 隐藏必须使用 `INVISIBLE`，不得用 `GONE ↔ VISIBLE` 触发布局尺寸变化。
 - WindowInsets 只允许首次建立状态栏/导航栏固定安全边界；后续上下栏显示/隐藏不得再次修改正文 padding/margin/height，不得 `requestLayout()`，不得重新分页或补偿 scrollY。
 - 禁止恢复任何“上下栏出现时缩短阅读页、消失时再放大阅读页”的实现。
+
+
+## Implementation-wide purge rule
+
+These rules apply to every active branch, workflow, source path and future version. They are not scoped to v626.
+
+- Any implementation where top/bottom reader chrome changes page height, margin, padding, pagination or scroll position is forbidden.
+- Any no-cover, blank-card or generic-empty fallback is forbidden. TXT/non-EPUB uses the confirmed v625 TXT/default cover; EPUB keeps real-cover loading and the confirmed EPUB fallback.
+- Any reading body that removes the fixed status/navigation safe bounds and extends text into system bars is forbidden.
+- Any layered/tiled/generated background system is forbidden, including color+texture+material stacking, BitmapShader tiling, thumbnail enlargement, procedural texture generation, and substituting one texture for many options.
+- Only the confirmed v625 single-selection full-page background model and exact assets listed in REAL_V625_ASSET_ALLOWLIST.md may be used.
+- If an exact confirmed asset is unavailable, build/release must fail. Falling back to a rejected implementation is forbidden.

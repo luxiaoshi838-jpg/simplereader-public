@@ -20,8 +20,7 @@ done
 grep -R --line-number --fixed-strings 'drawText("TXT"' app/src/main/java && fail "TXT cover text is forbidden" || true
 grep -R --line-number --fixed-strings 'txtPaint' app/src/main/java && fail "TXT cover paint is forbidden" || true
 
-grep -R --line-number --fixed-strings 'book_cover_default_txt' app/src/main && fail "TXT badge cover resource/reference is forbidden" || true
-test -e app/src/main/res/drawable-nodpi/book_cover_default_generic.webp || fail "generic default cover missing"
+test -e app/src/main/res/drawable-nodpi/book_cover_default_txt.webp || fail "confirmed TXT/default cover missing"
 grep -q 'android:name=".App"' app/src/main/AndroidManifest.xml || fail "App crash logger is not registered"
 
 # Exact confirmed reader structures.
