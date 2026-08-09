@@ -69,6 +69,8 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var readerTopTitle: TextView
     private lateinit var readerTopBar: LinearLayout
     private lateinit var readerTopTitle: TextView
+    private lateinit var readerTopBar: LinearLayout
+    private lateinit var readerTopTitle: TextView
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
@@ -208,6 +210,8 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindControls() {
+        findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
+        findViewById<TextView>(R.id.readerTopBookmarkButton).setOnClickListener { addBookmark() }
         findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
         findViewById<TextView>(R.id.readerTopBookmarkButton).setOnClickListener { addBookmark() }
         findViewById<TextView>(R.id.readerTopSearchButton).setOnClickListener { showContentSearch() }
