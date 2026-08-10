@@ -89,7 +89,8 @@ class ReaderActivity : AppCompatActivity() {
     private var continuousWindowStartOffset = 0
     private var continuousWindowEndOffset = 0
     private var continuousWindowShiftPosted = false
-    private var continuousScrollGeneration = 0L
+    private var continuousTouchActive = false
+    private var continuousLastScrollUptime = 0L
     private var statusBarInsetPx = 0
     private var navigationBarInsetPx = 0
     private var readerInsetsApplied = false
@@ -220,12 +221,19 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun bindContinuousReader() {
         readerScrollView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> continuousTouchActive = true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    continuousTouchActive = false
+                    scheduleContinuousWindowShift(readerScrollView.scrollY)
+                }
+            }
             continuousGesture.onTouchEvent(event)
             false
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
-            continuousScrollGeneration += 1L
+            continuousLastScrollUptime = android.os.SystemClock.uptimeMillis()
             clearSearchHighlight()
             updateContinuousPosition(scrollY)
             scheduleContinuousWindowShift(scrollY)
@@ -564,22 +572,21 @@ class ReaderActivity : AppCompatActivity() {
     private fun scheduleContinuousWindowShift(scrollY: Int) {
         val paged = readerBook ?: return
         if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
-        val threshold = readerScrollView.height
+        val threshold = readerScrollView.height * 4
         val nearTop = scrollY < threshold && continuousWindowStartOffset > 0
         val nearBottom = scrollY + readerScrollView.height > continuousTextView.height - threshold &&
             continuousWindowEndOffset < paged.text.length
         if (!nearTop && !nearBottom) return
 
         continuousWindowShiftPosted = true
-        val generationAtSchedule = continuousScrollGeneration
         readerScrollView.postDelayed({
             continuousWindowShiftPosted = false
-            if (pageTurnMode != TURN_MODE_VERTICAL) return@postDelayed
-            if (generationAtSchedule != continuousScrollGeneration) {
+            if (pageTurnMode != TURN_MODE_VERTICAL || continuousTouchActive) return@postDelayed
+            val idleMs = android.os.SystemClock.uptimeMillis() - continuousLastScrollUptime
+            if (idleMs < CONTINUOUS_SHIFT_IDLE_MS) {
                 scheduleContinuousWindowShift(readerScrollView.scrollY)
                 return@postDelayed
             }
-
             val stableScrollY = readerScrollView.scrollY
             val anchorOffset = sourceOffsetAtScroll(stableScrollY)
             val anchorViewportOffsetPx = viewportOffsetForSourceOffset(anchorOffset, stableScrollY)
@@ -1104,7 +1111,8 @@ class ReaderActivity : AppCompatActivity() {
         private const val MENU_SEARCH = 5
         private const val CONTINUOUS_PAGES_BEFORE = 24
         private const val CONTINUOUS_PAGES_AFTER = 48
-        private const val CONTINUOUS_SHIFT_DELAY_MS = 180L
+        private const val CONTINUOUS_SHIFT_DELAY_MS = 200L
+        private const val CONTINUOUS_SHIFT_IDLE_MS = 180L
         private const val CONTINUOUS_FALLBACK_CHARS = 240_000
     }
 }

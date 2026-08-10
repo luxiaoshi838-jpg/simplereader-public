@@ -20,8 +20,11 @@ fi
 grep -A14 'android:id="@+id/readerControls"' "$layout" | grep -Fq 'android:visibility="invisible"' || fail 'readerControls XML must start INVISIBLE'
 
 # 1b) Bounded vertical-window shifts must not jump during drag/fling.
-grep -Fq 'continuousScrollGeneration += 1L' "$reader" || fail 'vertical scrolling must track active scroll generations'
-grep -Fq 'generationAtSchedule != continuousScrollGeneration' "$reader" || fail 'window shift must wait until scrolling settles'
+grep -Fq 'continuousTouchActive = true' "$reader" || fail 'vertical shift must know when a finger is touching the reader'
+grep -Fq 'continuousLastScrollUptime = android.os.SystemClock.uptimeMillis()' "$reader" || fail 'vertical shift must track the last real scroll time'
+grep -Fq 'val threshold = readerScrollView.height * 4' "$reader" || fail 'vertical shift must start four viewports before the bounded-window edge'
+grep -Fq 'pageTurnMode != TURN_MODE_VERTICAL || continuousTouchActive' "$reader" || fail 'vertical shift must never swap the window under an active finger'
+grep -Fq 'idleMs < CONTINUOUS_SHIFT_IDLE_MS' "$reader" || fail 'vertical shift must wait for fling settling without starvation'
 grep -Fq 'viewportOffsetForSourceOffset' "$reader" || fail 'vertical window shift must preserve viewport pixel anchor'
 grep -Fq 'renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)' "$reader" || fail 'window shift must restore character and pixel anchor together'
 grep -Fq 'absoluteLineTop - anchorViewportOffsetPx' "$reader" || fail 'window shift must restore exact on-screen line position'
