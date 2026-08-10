@@ -2,14 +2,14 @@ name: Fix vertical scroll bounce
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -20,62 +20,67 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then
+            exit 0
+          fi
           python3 - <<'PY'
           from pathlib import Path
 
           p = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
           s = p.read_text()
 
-          old = '''    private var continuousWindowEndOffset = 0
+          old = """    private var continuousWindowEndOffset = 0
     private var continuousWindowShiftPosted = false
     private var statusBarInsetPx = 0
-'''
-          new = '''    private var continuousWindowEndOffset = 0
+"""
+          new = """    private var continuousWindowEndOffset = 0
     private var continuousWindowShiftPosted = false
     private var continuousScrollGeneration = 0L
     private var statusBarInsetPx = 0
-'''
+"""
           assert old in s
           s = s.replace(old, new, 1)
 
-          old = '''        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+          old = """        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
             clearSearchHighlight()
             updateContinuousPosition(scrollY)
             scheduleContinuousWindowShift(scrollY)
         }
-'''
-          new = '''        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+"""
+          new = """        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
             continuousScrollGeneration += 1L
             clearSearchHighlight()
             updateContinuousPosition(scrollY)
             scheduleContinuousWindowShift(scrollY)
         }
-'''
+"""
           assert old in s
           s = s.replace(old, new, 1)
 
-          s = s.replace('    private fun renderContinuousWindow(targetOffset: Int) {',
-                        '    private fun renderContinuousWindow(targetOffset: Int, anchorViewportOffsetPx: Int? = null) {', 1)
+          old_sig = '    private fun renderContinuousWindow(targetOffset: Int) {'
+          new_sig = '    private fun renderContinuousWindow(targetOffset: Int, anchorViewportOffsetPx: Int? = null) {'
+          assert old_sig in s
+          s = s.replace(old_sig, new_sig, 1)
 
-          old = '''            continuousWindowStartOffset = startOffset
+          old = """            continuousWindowStartOffset = startOffset
             continuousWindowEndOffset = endOffset
             continuousTextView.setText(styled, TextView.BufferType.SPANNABLE)
             applyContinuousHighlight()
             scrollContinuousToOffset(targetOffset)
-'''
-          new = '''            continuousWindowStartOffset = startOffset
+"""
+          new = """            continuousWindowStartOffset = startOffset
             continuousWindowEndOffset = endOffset
             suppressContinuousScroll = true
             continuousTextView.setText(styled, TextView.BufferType.SPANNABLE)
             applyContinuousHighlight()
             scrollContinuousToOffset(targetOffset, anchorViewportOffsetPx)
-'''
+"""
           assert old in s
           s = s.replace(old, new, 1)
 
-          old = '''    private fun scheduleContinuousWindowShift(scrollY: Int) {
+          old = """    private fun scheduleContinuousWindowShift(scrollY: Int) {
         val paged = readerBook ?: return
         if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
         val threshold = readerScrollView.height
@@ -101,8 +106,8 @@ jobs:
             readerScrollView.post { suppressContinuousScroll = false }
         }
     }
-'''
-          new = '''    private fun scheduleContinuousWindowShift(scrollY: Int) {
+"""
+          new = """    private fun scheduleContinuousWindowShift(scrollY: Int) {
         val paged = readerBook ?: return
         if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
         val threshold = readerScrollView.height
@@ -111,8 +116,6 @@ jobs:
             continuousWindowEndOffset < paged.text.length
         if (!nearTop && !nearBottom) return
 
-        // Never rebuild the bounded text window while a drag/fling is still producing scroll events.
-        // A new scroll generation defers the shift until the viewport has actually settled.
         continuousWindowShiftPosted = true
         val generationAtSchedule = continuousScrollGeneration
         readerScrollView.postDelayed({
@@ -159,17 +162,25 @@ jobs:
             readerScrollView.post { suppressContinuousScroll = false }
         }
     }
-'''
+"""
           assert old in s
           s = s.replace(old, new, 1)
-          s = s.replace('private const val CONTINUOUS_SHIFT_DELAY_MS = 120L',
-                        'private const val CONTINUOUS_SHIFT_DELAY_MS = 180L', 1)
+          assert 'private const val CONTINUOUS_SHIFT_DELAY_MS = 120L' in s
+          s = s.replace('private const val CONTINUOUS_SHIFT_DELAY_MS = 120L', 'private const val CONTINUOUS_SHIFT_DELAY_MS = 180L', 1)
           p.write_text(s)
 
           guard = Path('tools/verify-rejected-reader-implementations.sh')
           g = guard.read_text()
           marker = "# 2) No-cover / blank-cover implementation is forbidden.\n"
-          insert = '''# 1b) Bounded vertical-window shifts must not jump during drag/fling.\ngrep -Fq 'continuousScrollGeneration += 1L' "$reader" || fail 'vertical scrolling must track active scroll generations'\ngrep -Fq 'generationAtSchedule != continuousScrollGeneration' "$reader" || fail 'window shift must wait until scrolling settles'\ngrep -Fq 'viewportOffsetForSourceOffset' "$reader" || fail 'vertical window shift must preserve viewport pixel anchor'\ngrep -Fq 'renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)' "$reader" || fail 'window shift must restore character and pixel anchor together'\ngrep -Fq 'absoluteLineTop - anchorViewportOffsetPx' "$reader" || fail 'window shift must restore exact on-screen line position'\nif grep -Fq 'renderContinuousWindow(anchorOffset)' "$reader"; then fail 'character-only vertical window repositioning is forbidden'; fi\n\n'''
+          insert = """# 1b) Bounded vertical-window shifts must not jump during drag/fling.
+grep -Fq 'continuousScrollGeneration += 1L' "$reader" || fail 'vertical scrolling must track active scroll generations'
+grep -Fq 'generationAtSchedule != continuousScrollGeneration' "$reader" || fail 'window shift must wait until scrolling settles'
+grep -Fq 'viewportOffsetForSourceOffset' "$reader" || fail 'vertical window shift must preserve viewport pixel anchor'
+grep -Fq 'renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)' "$reader" || fail 'window shift must restore character and pixel anchor together'
+grep -Fq 'absoluteLineTop - anchorViewportOffsetPx' "$reader" || fail 'window shift must restore exact on-screen line position'
+if grep -Fq 'renderContinuousWindow(anchorOffset)' "$reader"; then fail 'character-only vertical window repositioning is forbidden'; fi
+
+"""
           assert marker in g
           g = g.replace(marker, insert + marker, 1)
           guard.write_text(g)
@@ -177,7 +188,14 @@ jobs:
           doc = Path('READER_FORBIDDEN_REGRESSIONS.md')
           d = doc.read_text()
           marker = '## 2. 禁止无封面实现\n'
-          insert = '''### 纵向连续阅读换窗不得弹跳\n\n- 有限窗口换窗不得在手指拖动或惯性滚动仍进行时执行；必须等待滚动事件稳定后再换窗。\n- 换窗前必须同时记录当前源码字符位置和该行相对屏幕顶部的像素偏移。\n- 换窗后必须同时恢复字符位置与像素偏移；禁止只按字符/行首重新 `scrollTo`。\n- `setText()` 和内部定位期间必须屏蔽内部 scroll 回调，禁止换窗自身再次触发换窗或进度跳动。\n\n'''
+          insert = """### 纵向连续阅读换窗不得弹跳
+
+- 有限窗口换窗不得在手指拖动或惯性滚动仍进行时执行；必须等待滚动事件稳定后再换窗。
+- 换窗前必须同时记录当前源码字符位置和该行相对屏幕顶部的像素偏移。
+- 换窗后必须同时恢复字符位置与像素偏移；禁止只按字符/行首重新 `scrollTo`。
+- `setText()` 和内部定位期间必须屏蔽内部 scroll 回调，禁止换窗自身再次触发换窗或进度跳动。
+
+"""
           assert marker in d
           d = d.replace(marker, insert + marker, 1)
           doc.write_text(d)
