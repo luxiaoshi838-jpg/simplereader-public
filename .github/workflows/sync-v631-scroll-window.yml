@@ -1,0 +1,124 @@
+name: Sync v631 vertical window behavior
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sync-v631-scroll-window.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Replace starvation-prone vertical shift logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          s=p.read_text()
+          s=s.replace('    private var continuousScrollGeneration = 0L\n', '    private var continuousTouchActive = false\n    private var continuousLastScrollUptime = 0L\n', 1)
+          old='''    private fun bindContinuousReader() {
+        readerScrollView.setOnTouchListener { _, event ->
+            continuousGesture.onTouchEvent(event)
+            false
+        }
+        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
+            continuousScrollGeneration += 1L
+            clearSearchHighlight()
+            updateContinuousPosition(scrollY)
+            scheduleContinuousWindowShift(scrollY)
+        }
+    }
+'''
+          new='''    private fun bindContinuousReader() {
+        readerScrollView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> continuousTouchActive = true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    continuousTouchActive = false
+                    scheduleContinuousWindowShift(readerScrollView.scrollY)
+                }
+            }
+            continuousGesture.onTouchEvent(event)
+            false
+        }
+        readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
+            continuousLastScrollUptime = android.os.SystemClock.uptimeMillis()
+            clearSearchHighlight()
+            updateContinuousPosition(scrollY)
+            scheduleContinuousWindowShift(scrollY)
+        }
+    }
+'''
+          assert old in s
+          s=s.replace(old,new,1)
+          start=s.index('    private fun scheduleContinuousWindowShift(scrollY: Int) {')
+          end=s.index('    private fun viewportOffsetForSourceOffset', start)
+          replacement='''    private fun scheduleContinuousWindowShift(scrollY: Int) {
+        val paged = readerBook ?: return
+        if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
+        val threshold = readerScrollView.height * 4
+        val nearTop = scrollY < threshold && continuousWindowStartOffset > 0
+        val nearBottom = scrollY + readerScrollView.height > continuousTextView.height - threshold &&
+            continuousWindowEndOffset < paged.text.length
+        if (!nearTop && !nearBottom) return
+
+        continuousWindowShiftPosted = true
+        readerScrollView.postDelayed({
+            continuousWindowShiftPosted = false
+            if (pageTurnMode != TURN_MODE_VERTICAL || continuousTouchActive) return@postDelayed
+            val idleMs = android.os.SystemClock.uptimeMillis() - continuousLastScrollUptime
+            if (idleMs < CONTINUOUS_SHIFT_IDLE_MS) {
+                scheduleContinuousWindowShift(readerScrollView.scrollY)
+                return@postDelayed
+            }
+            val stableScrollY = readerScrollView.scrollY
+            val anchorOffset = sourceOffsetAtScroll(stableScrollY)
+            val anchorViewportOffsetPx = viewportOffsetForSourceOffset(anchorOffset, stableScrollY)
+            renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)
+        }, CONTINUOUS_SHIFT_DELAY_MS)
+    }
+
+'''
+          s=s[:start]+replacement+s[end:]
+          s=s.replace('private const val CONTINUOUS_SHIFT_DELAY_MS = 180L', 'private const val CONTINUOUS_SHIFT_DELAY_MS = 200L\n        private const val CONTINUOUS_SHIFT_IDLE_MS = 180L', 1)
+          p.write_text(s)
+
+          g=Path('tools/verify-rejected-reader-implementations.sh')
+          t=g.read_text()
+          old='''grep -Fq 'continuousScrollGeneration += 1L' "$reader" || fail 'vertical scrolling must track active scroll generations'
+grep -Fq 'generationAtSchedule != continuousScrollGeneration' "$reader" || fail 'window shift must wait until scrolling settles'
+'''
+          new='''grep -Fq 'continuousTouchActive = true' "$reader" || fail 'vertical shift must know when a finger is touching the reader'
+grep -Fq 'continuousLastScrollUptime = android.os.SystemClock.uptimeMillis()' "$reader" || fail 'vertical shift must track the last real scroll time'
+grep -Fq 'val threshold = readerScrollView.height * 4' "$reader" || fail 'vertical shift must start four viewports before the bounded-window edge'
+grep -Fq 'pageTurnMode != TURN_MODE_VERTICAL || continuousTouchActive' "$reader" || fail 'vertical shift must never swap the window under an active finger'
+grep -Fq 'idleMs < CONTINUOUS_SHIFT_IDLE_MS' "$reader" || fail 'vertical shift must wait for fling settling without starvation'
+'''
+          assert old in t
+          g.write_text(t.replace(old,new,1))
+          PY
+          grep -Fq 'val threshold = readerScrollView.height * 4' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'continuousTouchActive' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'CONTINUOUS_SHIFT_IDLE_MS' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+      - name: Commit source sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/sync-v631-scroll-window.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt tools/verify-rejected-reader-implementations.sh .github/workflows/sync-v631-scroll-window.yml
+          git commit -m 'Fix vertical window shift starvation and edge stalls'
+          git push origin HEAD:main
