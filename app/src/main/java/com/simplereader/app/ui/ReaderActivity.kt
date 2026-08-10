@@ -89,6 +89,7 @@ class ReaderActivity : AppCompatActivity() {
     private var continuousWindowStartOffset = 0
     private var continuousWindowEndOffset = 0
     private var continuousWindowShiftPosted = false
+    private var continuousScrollGeneration = 0L
     private var statusBarInsetPx = 0
     private var navigationBarInsetPx = 0
     private var readerInsetsApplied = false
@@ -224,6 +225,7 @@ class ReaderActivity : AppCompatActivity() {
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
+            continuousScrollGeneration += 1L
             clearSearchHighlight()
             updateContinuousPosition(scrollY)
             scheduleContinuousWindowShift(scrollY)
@@ -492,7 +494,7 @@ class ReaderActivity : AppCompatActivity() {
      * Vertical mode renders only a bounded page neighborhood. A multi-megabyte novel is never
      * assigned to one TextView/StaticLayout, preventing blank jumps, frozen scrolling and OOM exits.
      */
-    private fun renderContinuousWindow(targetOffset: Int) {
+    private fun renderContinuousWindow(targetOffset: Int, anchorViewportOffsetPx: Int? = null) {
         val paged = readerBook ?: return
         val settings = layoutSettings ?: return
         if (paged.pages.isEmpty()) return
@@ -520,9 +522,10 @@ class ReaderActivity : AppCompatActivity() {
             }
             continuousWindowStartOffset = startOffset
             continuousWindowEndOffset = endOffset
+            suppressContinuousScroll = true
             continuousTextView.setText(styled, TextView.BufferType.SPANNABLE)
             applyContinuousHighlight()
-            scrollContinuousToOffset(targetOffset)
+            scrollContinuousToOffset(targetOffset, anchorViewportOffsetPx)
         }
     }
 
@@ -566,21 +569,50 @@ class ReaderActivity : AppCompatActivity() {
         val nearBottom = scrollY + readerScrollView.height > continuousTextView.height - threshold &&
             continuousWindowEndOffset < paged.text.length
         if (!nearTop && !nearBottom) return
-        val anchorOffset = sourceOffsetAtScroll(scrollY)
+
         continuousWindowShiftPosted = true
+        val generationAtSchedule = continuousScrollGeneration
         readerScrollView.postDelayed({
             continuousWindowShiftPosted = false
-            if (pageTurnMode == TURN_MODE_VERTICAL) renderContinuousWindow(anchorOffset)
+            if (pageTurnMode != TURN_MODE_VERTICAL) return@postDelayed
+            if (generationAtSchedule != continuousScrollGeneration) {
+                scheduleContinuousWindowShift(readerScrollView.scrollY)
+                return@postDelayed
+            }
+
+            val stableScrollY = readerScrollView.scrollY
+            val anchorOffset = sourceOffsetAtScroll(stableScrollY)
+            val anchorViewportOffsetPx = viewportOffsetForSourceOffset(anchorOffset, stableScrollY)
+            renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)
         }, CONTINUOUS_SHIFT_DELAY_MS)
     }
 
-    private fun scrollContinuousToOffset(offset: Int) {
+    private fun viewportOffsetForSourceOffset(offset: Int, scrollY: Int): Int {
+        val layout = continuousTextView.layout ?: return 0
+        if (layout.lineCount <= 0) return 0
+        val localOffset = (offset - continuousWindowStartOffset).coerceIn(0, continuousTextView.text.length)
+        val line = layout.getLineForOffset(localOffset)
+        val absoluteLineTop = continuousTextView.top + layout.getLineTop(line)
+        return absoluteLineTop - scrollY
+    }
+
+    private fun scrollContinuousToOffset(offset: Int, anchorViewportOffsetPx: Int? = null) {
+        suppressContinuousScroll = true
         continuousTextView.post {
-            val layout = continuousTextView.layout ?: return@post
+            val layout = continuousTextView.layout
+            if (layout == null) {
+                suppressContinuousScroll = false
+                return@post
+            }
             val localOffset = (offset - continuousWindowStartOffset).coerceIn(0, continuousTextView.text.length)
             val line = layout.getLineForOffset(localOffset)
-            suppressContinuousScroll = true
-            readerScrollView.scrollTo(0, layout.getLineTop(line).coerceAtLeast(0))
+            val absoluteLineTop = continuousTextView.top + layout.getLineTop(line)
+            val targetScrollY = if (anchorViewportOffsetPx == null) {
+                absoluteLineTop
+            } else {
+                absoluteLineTop - anchorViewportOffsetPx
+            }
+            readerScrollView.scrollTo(0, targetScrollY.coerceAtLeast(0))
             readerScrollView.post { suppressContinuousScroll = false }
         }
     }
@@ -1072,7 +1104,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val MENU_SEARCH = 5
         private const val CONTINUOUS_PAGES_BEFORE = 24
         private const val CONTINUOUS_PAGES_AFTER = 48
-        private const val CONTINUOUS_SHIFT_DELAY_MS = 120L
+        private const val CONTINUOUS_SHIFT_DELAY_MS = 180L
         private const val CONTINUOUS_FALLBACK_CHARS = 240_000
     }
 }

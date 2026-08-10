@@ -19,6 +19,14 @@ if grep -A14 'private fun bindReaderInsets' "$reader" | grep -Eq 'paginateAndDis
 fi
 grep -A14 'android:id="@+id/readerControls"' "$layout" | grep -Fq 'android:visibility="invisible"' || fail 'readerControls XML must start INVISIBLE'
 
+# 1b) Bounded vertical-window shifts must not jump during drag/fling.
+grep -Fq 'continuousScrollGeneration += 1L' "$reader" || fail 'vertical scrolling must track active scroll generations'
+grep -Fq 'generationAtSchedule != continuousScrollGeneration' "$reader" || fail 'window shift must wait until scrolling settles'
+grep -Fq 'viewportOffsetForSourceOffset' "$reader" || fail 'vertical window shift must preserve viewport pixel anchor'
+grep -Fq 'renderContinuousWindow(anchorOffset, anchorViewportOffsetPx)' "$reader" || fail 'window shift must restore character and pixel anchor together'
+grep -Fq 'absoluteLineTop - anchorViewportOffsetPx' "$reader" || fail 'window shift must restore exact on-screen line position'
+if grep -Fq 'renderContinuousWindow(anchorOffset)' "$reader"; then fail 'character-only vertical window repositioning is forbidden'; fi
+
 # 2) No-cover / blank-cover implementation is forbidden.
 grep -Fq 'R.drawable.book_cover_default_txt' "$covers" || fail 'confirmed TXT/default cover is not wired'
 grep -Fq 'R.drawable.book_cover_default_epub' "$covers" || fail 'confirmed EPUB default cover is not wired'
