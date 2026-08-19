@@ -1,87 +1,41 @@
-name: V655 isolated release build
+name: Export Android signing tools only
 
 on:
   workflow_dispatch:
   push:
     branches:
       - agent/v655-unified-catalog-rules
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: read
 
-concurrency:
-  group: v655-isolated-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build:
+  export-tools:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Apply v655 patch
-        run: python3 tools/apply_v655_catalog_rules.py
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Assemble release
-        run: ./gradlew assembleRelease --stacktrace --console=plain
-
-      - name: Verify unsigned package version
+      - name: Export installed Android build tools
         shell: bash
         run: |
           set -euo pipefail
-          apk="$(find app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
-          test -n "$apk"
-          test -s "$apk"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          "$build_tools/aapt2" dump badging "$apk" | tee /tmp/v655-badging.txt
-          grep -Fq "package: name='com.simplereader.app' versionCode='2098000655' versionName='655'" /tmp/v655-badging.txt
-          mkdir -p /tmp/v655-apk /tmp/v655-signing-tools/lib
-          cp "$apk" /tmp/v655-apk/SimpleReader_v655_unsigned.apk
-          cp "$build_tools/apksigner" /tmp/v655-signing-tools/
-          cp "$build_tools/zipalign" /tmp/v655-signing-tools/
-          cp "$build_tools/aapt2" /tmp/v655-signing-tools/
-          cp "$build_tools/lib/apksigner.jar" /tmp/v655-signing-tools/lib/
-          chmod +x /tmp/v655-signing-tools/apksigner /tmp/v655-signing-tools/zipalign /tmp/v655-signing-tools/aapt2
-          sha256sum /tmp/v655-apk/SimpleReader_v655_unsigned.apk | tee /tmp/v655-apk/SHA256.txt
-
-      - name: Upload unsigned v655
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v655-unsigned
-          path: /tmp/v655-apk
-          if-no-files-found: error
-          retention-days: 7
+          test -x "$build_tools/apksigner"
+          test -x "$build_tools/zipalign"
+          test -x "$build_tools/aapt2"
+          test -f "$build_tools/lib/apksigner.jar"
+          mkdir -p /tmp/android-signing-tools/lib
+          cp "$build_tools/apksigner" /tmp/android-signing-tools/
+          cp "$build_tools/zipalign" /tmp/android-signing-tools/
+          cp "$build_tools/aapt2" /tmp/android-signing-tools/
+          cp "$build_tools/lib/apksigner.jar" /tmp/android-signing-tools/lib/
+          chmod +x /tmp/android-signing-tools/apksigner /tmp/android-signing-tools/zipalign /tmp/android-signing-tools/aapt2
+          "$build_tools/apksigner" --version
+          "$build_tools/zipalign" -h >/dev/null 2>&1 || true
 
       - name: Upload Android signing tools
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v655-signing-tools-linux
-          path: /tmp/v655-signing-tools
+          path: /tmp/android-signing-tools
           if-no-files-found: error
-          retention-days: 2
-
-      - name: Upload badging
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v655-build-metadata
-          path: /tmp/v655-badging.txt
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Run focused classifier tests
-        continue-on-error: true
-        run: ./gradlew testDebugUnitTest --tests com.simplereader.app.parser.ChapterPriorityClassifierTest --stacktrace --console=plain
+          retention-days: 1
