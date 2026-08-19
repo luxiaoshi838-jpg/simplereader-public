@@ -17,6 +17,7 @@ jobs:
         run: |
           set -euo pipefail
           d="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          echo "exporting $d"
           mkdir -p /tmp/android-signing-tools/lib
           cp "$d/apksigner" "$d/zipalign" "$d/aapt2" /tmp/android-signing-tools/
           cp "$d/lib/apksigner.jar" /tmp/android-signing-tools/lib/
