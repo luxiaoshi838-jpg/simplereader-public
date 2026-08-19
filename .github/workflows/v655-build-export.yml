@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - agent/v655-unified-catalog-rules
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -30,7 +33,6 @@ jobs:
           cp "$build_tools/lib/apksigner.jar" /tmp/android-signing-tools/lib/
           chmod +x /tmp/android-signing-tools/apksigner /tmp/android-signing-tools/zipalign /tmp/android-signing-tools/aapt2
           "$build_tools/apksigner" --version
-          "$build_tools/zipalign" -h >/dev/null 2>&1 || true
 
       - name: Upload Android signing tools
         uses: actions/upload-artifact@v4
