@@ -1,4 +1,4 @@
-name: Export Android signing tools only
+name: Export Android diagnostic tools
 on:
   workflow_dispatch:
   push:
@@ -18,15 +18,19 @@ jobs:
           set -euo pipefail
           d="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           echo "exporting $d"
-          mkdir -p /tmp/android-signing-tools/lib
-          cp "$d/apksigner" "$d/zipalign" "$d/aapt2" /tmp/android-signing-tools/
-          cp "$d/lib/apksigner.jar" /tmp/android-signing-tools/lib/
-          chmod +x /tmp/android-signing-tools/apksigner /tmp/android-signing-tools/zipalign /tmp/android-signing-tools/aapt2
-          "$d/apksigner" --version
+          mkdir -p /tmp/android-tools/lib /tmp/android-tools/lib64
+          for f in apksigner zipalign aapt2 d8 dexdump; do
+            test -e "$d/$f" && cp "$d/$f" /tmp/android-tools/
+          done
+          test -e "$d/lib/apksigner.jar" && cp "$d/lib/apksigner.jar" /tmp/android-tools/lib/
+          test -e "$d/lib/d8.jar" && cp "$d/lib/d8.jar" /tmp/android-tools/lib/
+          if [ -d "$d/lib64" ]; then cp -a "$d/lib64/." /tmp/android-tools/lib64/; fi
+          chmod +x /tmp/android-tools/apksigner /tmp/android-tools/zipalign /tmp/android-tools/aapt2 /tmp/android-tools/d8 /tmp/android-tools/dexdump || true
+          find /tmp/android-tools -maxdepth 2 -type f -printf '%P %s\n' | sort
       - name: Upload tools
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v655-signing-tools-linux
-          path: /tmp/android-signing-tools
+          name: SimpleReader-v655-android-diagnostic-tools
+          path: /tmp/android-tools
           if-no-files-found: error
           retention-days: 1
