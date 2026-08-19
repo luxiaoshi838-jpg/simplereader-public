@@ -22,6 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          echo "Using Android build tools: $build_tools"
           test -x "$build_tools/apksigner"
           test -x "$build_tools/zipalign"
           test -x "$build_tools/aapt2"
