@@ -26,6 +26,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Apply v655 unified catalog rules
+        shell: bash
+        run: python3 tools/apply_v655_catalog_rules.py
+
       - name: Enforce locked UI policy
         shell: bash
         run: bash tools/verify-ui-policy.sh
@@ -43,6 +47,7 @@ jobs:
         shell: bash
         run: |
           grep -n "generatedVersionCode\|generatedVersionName" app/build.gradle.kts
+          grep -n "CATALOG_RULE_VERSION" app/src/main/java/com/simplereader/app/parser/TxtParser.kt
 
       - name: Debug unit tests
         shell: bash
