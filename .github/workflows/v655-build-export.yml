@@ -1,15 +1,12 @@
 name: Export Android signing tools only
-
 on:
   workflow_dispatch:
   push:
     branches: [agent/v655-unified-catalog-rules]
   pull_request:
     branches: [main]
-
 permissions:
   contents: read
-
 jobs:
   export-tools:
     runs-on: ubuntu-latest
@@ -19,19 +16,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -x "$build_tools/apksigner"
-          test -x "$build_tools/zipalign"
-          test -x "$build_tools/aapt2"
-          test -f "$build_tools/lib/apksigner.jar"
+          d="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           mkdir -p /tmp/android-signing-tools/lib
-          cp "$build_tools/apksigner" /tmp/android-signing-tools/
-          cp "$build_tools/zipalign" /tmp/android-signing-tools/
-          cp "$build_tools/aapt2" /tmp/android-signing-tools/
-          cp "$build_tools/lib/apksigner.jar" /tmp/android-signing-tools/lib/
+          cp "$d/apksigner" "$d/zipalign" "$d/aapt2" /tmp/android-signing-tools/
+          cp "$d/lib/apksigner.jar" /tmp/android-signing-tools/lib/
           chmod +x /tmp/android-signing-tools/apksigner /tmp/android-signing-tools/zipalign /tmp/android-signing-tools/aapt2
-          "$build_tools/apksigner" --version
-      - name: Upload Android signing tools
+          "$d/apksigner" --version
+      - name: Upload tools
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v655-signing-tools-linux
