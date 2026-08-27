@@ -26,12 +26,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build v723 release APK
-        shell: bash
-        run: |
-          chmod +x ./gradlew
-          SIMPLE_READER_VERSION_CODE=2098000723 SIMPLE_READER_VERSION_NAME=723 timeout --signal=INT 12m ./gradlew clean assembleRelease --stacktrace --console=plain
-
       - name: Pack Android signing tools
         shell: bash
         run: |
@@ -39,20 +33,27 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           test -x "$build_tools/apksigner"
           test -x "$build_tools/zipalign"
+          test -x "$build_tools/aapt2"
           tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools-v723.tar.gz "$(basename "$build_tools")"
-
-      - name: Upload v723 unsigned release
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleReader-v723-unsigned
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Upload Android signing tools
         uses: actions/upload-artifact@v4
         with:
           name: Android-build-tools-v723
           path: /tmp/android-build-tools-v723.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build v723 release APK
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          SIMPLE_READER_VERSION_CODE=2098000723 SIMPLE_READER_VERSION_NAME=723 timeout --signal=INT 12m ./gradlew clean assembleRelease --stacktrace --console=plain
+
+      - name: Upload v723 unsigned release
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v723-unsigned
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
