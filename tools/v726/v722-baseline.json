@@ -1,0 +1,30 @@
+{
+  "package": "com.simplereader.app",
+  "versionCode": 2098000722,
+  "versionName": "722",
+  "apkSha256": "a1403b4eeda62ac04c4d9303e32d5a12ff3c3f1a96222c450eaf71bdf489580d",
+  "signerSha256": "315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648",
+  "allowedChangedEntries": [
+    "AndroidManifest.xml",
+    "classes3.dex"
+  ],
+  "allowedAddedEntries": [
+    "classes5.dex"
+  ],
+  "ignoredSigningPrefixes": [
+    "META-INF/"
+  ],
+  "criticalMethods": [
+    "ReaderActivity.applyReaderContentPadding",
+    "ReaderActivity.paginateAndDisplay",
+    "ReaderActivity.createLayoutSettings",
+    "ShelfCacheWorker.doWork",
+    "ShelfCacheWorker.reportProgressNow"
+  ],
+  "directoryCacheContract": "WorkManager background catalog recognition + full pagination + persistent page cache reusable by reader",
+  "readerBoundsContract": {
+    "top": "status bar bottom + 1 current-font character height",
+    "bottom": "navigation bar top - 3 current-font character heights",
+    "bodyVerticalPaddingPx": 0
+  }
+}
