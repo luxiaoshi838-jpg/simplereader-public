@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: simplereader-v725-launch-gate
+  cancel-in-progress: true
+
 jobs:
   build-and-launch:
     if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[v725-tested-source]') }}
@@ -38,28 +42,23 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Compile, unit-test and build v725
+      - name: Unit-test and build debug v725
         env:
           SIMPLE_READER_VERSION_CODE: '2098000725'
           SIMPLE_READER_VERSION_NAME: '725'
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew clean testDebugUnitTest assembleDebug assembleRelease --stacktrace 2>&1 | tee gradle-v725.log
+          ./gradlew clean testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee gradle-v725-debug.log
 
-      - name: Verify expected APKs and package
+      - name: Verify debug package
         shell: bash
         run: |
           set -euo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
-          release_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
-          test -n "$release_apk"
-          test -s "$release_apk"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools/aapt2" dump badging app/build/outputs/apk/debug/app-debug.apk | tee apk-debug-badging.txt
           grep -Fq "package: name='com.simplereader.app' versionCode='2098000725' versionName='725'" apk-debug-badging.txt
-          "$build_tools/aapt2" dump badging "$release_apk" | tee apk-release-badging.txt
-          grep -Fq "package: name='com.simplereader.app' versionCode='2098000725' versionName='725'" apk-release-badging.txt
 
       - name: Enable KVM group access
         run: |
@@ -125,6 +124,26 @@ jobs:
             echo 'V725_EMULATOR_LAUNCH=PASS' | tee emulator-v725-result.txt
             echo 'V725_LEGACY_LOG_PURGE=PASS' | tee -a emulator-v725-result.txt
 
+      - name: Build release only after emulator passes
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000725'
+          SIMPLE_READER_VERSION_NAME: '725'
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-v725-release.log
+
+      - name: Verify release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$release_apk"
+          test -s "$release_apk"
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools/aapt2" dump badging "$release_apk" | tee apk-release-badging.txt
+          grep -Fq "package: name='com.simplereader.app' versionCode='2098000725' versionName='725'" apk-release-badging.txt
+
       - name: Upload v725 tested build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -132,7 +151,8 @@ jobs:
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/app-debug.apk
-            gradle-v725.log
+            gradle-v725-debug.log
+            gradle-v725-release.log
             apk-debug-badging.txt
             apk-release-badging.txt
             emulator-first-start.txt
