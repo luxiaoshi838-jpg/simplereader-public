@@ -42,7 +42,7 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build debug and run v725 feature tests
+      - name: Build debug and run complete v725 feature tests
         env:
           SIMPLE_READER_VERSION_CODE: '2098000725'
           SIMPLE_READER_VERSION_NAME: '725'
@@ -52,6 +52,7 @@ jobs:
           ./gradlew clean assembleDebug testDebugUnitTest \
             --tests 'com.simplereader.app.operation.ShelfCacheStatusTextTest' \
             --tests 'com.simplereader.app.operation.OperationLogStoreTest' \
+            --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
             --stacktrace 2>&1 | tee gradle-v725-debug.log
 
       - name: Verify debug package
@@ -69,7 +70,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Android emulator launch and legacy-log migration test
+      - name: Android emulator launch, migration and feature UI test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -124,10 +125,120 @@ jobs:
               echo 'legacy operation.xml was not physically removed'
               exit 33
             fi
+
+            python3 - <<'PY'
+            import html, json
+            from pathlib import Path
+            body = '\n'.join(f'第{i}行：v725日志滚动功能验证' for i in range(1, 181))
+            entries = [{
+                'id': 'ui-check',
+                'title': 'V725功能验证日志',
+                'body': body,
+                'startedAt': 1787820000000,
+                'updatedAt': 1787820001000,
+            }]
+            raw = json.dumps(entries, ensure_ascii=False, separators=(',', ':'))
+            xml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n<string name=\"entries\">" + html.escape(raw) + "</string>\n</map>\n"
+            Path('/tmp/operation_history.xml').write_text(xml, encoding='utf-8')
+            PY
+            adb shell am force-stop "$pkg"
+            adb shell "run-as $pkg sh -c 'cat > shared_prefs/operation_history.xml'" < /tmp/operation_history.xml
+            adb shell am start -W -n "$component" > /tmp/restart-ui.txt
+            sleep 2
+
+            cat > /tmp/ui_action.py <<'PY'
+            import re, subprocess, sys, time, xml.etree.ElementTree as ET
+
+            def dump():
+                subprocess.run(['adb','shell','uiautomator','dump','/sdcard/window.xml'], check=True, stdout=subprocess.DEVNULL)
+                raw = subprocess.check_output(['adb','exec-out','cat','/sdcard/window.xml'])
+                return ET.fromstring(raw.decode('utf-8', errors='replace'))
+
+            def click_text(text):
+                root = dump()
+                for node in root.iter('node'):
+                    if node.attrib.get('text') == text:
+                        m = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+                        if not m:
+                            continue
+                        x1,y1,x2,y2 = map(int,m.groups())
+                        subprocess.run(['adb','shell','input','tap',str((x1+x2)//2),str((y1+y2)//2)], check=True)
+                        time.sleep(0.7)
+                        return
+                raise SystemExit(f'UI text not found: {text}')
+
+            def assert_text(text, present=True):
+                values=[n.attrib.get('text','') for n in dump().iter('node')]
+                hit=text in values
+                if hit != present:
+                    raise SystemExit(f'UI text expectation failed: {text}, present={present}, values={values}')
+
+            def assert_seekbar():
+                classes=[n.attrib.get('class','') for n in dump().iter('node')]
+                if 'android.widget.SeekBar' not in classes:
+                    raise SystemExit(f'SeekBar missing: {classes}')
+
+            def text_by_resource(resource_id):
+                for n in dump().iter('node'):
+                    if n.attrib.get('resource-id') == resource_id:
+                        return n.attrib.get('text','')
+                raise SystemExit(f'resource missing: {resource_id}')
+
+            if __name__ == '__main__':
+                cmd=sys.argv[1]
+                if cmd=='click': click_text(sys.argv[2])
+                elif cmd=='has': assert_text(sys.argv[2], True)
+                elif cmd=='lacks': assert_text(sys.argv[2], False)
+                elif cmd=='seekbar': assert_seekbar()
+                elif cmd=='resource': print(text_by_resource(sys.argv[2]))
+                else: raise SystemExit(cmd)
+            PY
+
+            python3 /tmp/ui_action.py click '数据导出'
+            python3 /tmp/ui_action.py click '日志'
+            python3 /tmp/ui_action.py click '操作日志'
+            python3 /tmp/ui_action.py has 'V725功能验证日志'
+            python3 /tmp/ui_action.py lacks '复制'
+            python3 /tmp/ui_action.py click 'V725功能验证日志'
+            python3 /tmp/ui_action.py has '复制'
+            python3 /tmp/ui_action.py seekbar
+            python3 /tmp/ui_action.py click '关闭'
+
+            python3 /tmp/ui_action.py click '⋮'
+            python3 /tmp/ui_action.py click '书架目录缓存'
+            python3 /tmp/ui_action.py click '全书架目录缓存'
+
+            status_ok=0
+            for i in $(seq 1 12); do
+              status="$(python3 /tmp/ui_action.py resource 'com.simplereader.app:id/readingStatsTextView' | tr -d '\r')"
+              printf '%s\n' "$status" | tee emulator-cache-status.txt
+              if printf '%s' "$status" | grep -q '成功 ' && printf '%s' "$status" | grep -q '失败 ' && printf '%s' "$status" | grep -q '跳过 ' && printf '%s' "$status" | grep -q ' / '; then
+                status_ok=1
+                break
+              fi
+              sleep 0.25
+            done
+            test "$status_ok" -eq 1
+
+            sleep 4
+            idle="$(python3 /tmp/ui_action.py resource 'com.simplereader.app:id/readingStatsTextView' | tr -d '\r')"
+            printf '%s\n' "$idle" | tee emulator-cache-idle.txt
+            printf '%s' "$idle" | grep -q '^累计导入 '
+
+            adb logcat -d > emulator-feature-logcat.txt
+            if grep -Fq 'Process: com.simplereader.app' emulator-feature-logcat.txt; then
+              echo 'v725 crashed during feature UI checks'
+              exit 34
+            fi
+
             echo 'V725_EMULATOR_LAUNCH=PASS' | tee emulator-v725-result.txt
             echo 'V725_LEGACY_LOG_PURGE=PASS' | tee -a emulator-v725-result.txt
+            echo 'V725_LOG_LIST_DETAIL_UI=PASS' | tee -a emulator-v725-result.txt
+            echo 'V725_LOG_DETAIL_SEEKBAR=PASS' | tee -a emulator-v725-result.txt
+            echo 'V725_CACHE_STATUS_UI=PASS' | tee -a emulator-v725-result.txt
+            echo 'V725_CACHE_IDLE_RESTORE=PASS' | tee -a emulator-v725-result.txt
 
-      - name: Build release only after emulator passes
+      - name: Build release only after all emulator checks pass
         env:
           SIMPLE_READER_VERSION_CODE: '2098000725'
           SIMPLE_READER_VERSION_NAME: '725'
@@ -164,6 +275,9 @@ jobs:
             emulator-legacy-start.txt
             emulator-legacy-activity.txt
             emulator-legacy-logcat.txt
+            emulator-feature-logcat.txt
+            emulator-cache-status.txt
+            emulator-cache-idle.txt
             emulator-v725-result.txt
           if-no-files-found: error
           retention-days: 30
