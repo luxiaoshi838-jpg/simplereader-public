@@ -5,7 +5,6 @@ import android.app.Application
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -18,7 +17,7 @@ import java.util.Locale
 import java.util.WeakHashMap
 
 /**
- * Installs operation-log UI and the live shelf-cache status without changing unrelated shelf UI.
+ * Installs operation-log UI and owns the shelf status box while catalog caching is active.
  */
 object OperationLogUiInstaller {
     @Volatile private var installed = false
@@ -32,8 +31,6 @@ object OperationLogUiInstaller {
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                     if (activity.javaClass.name != "com.simplereader.app.ui.MainActivity") return
                     val main = activity as? AppCompatActivity ?: return
-                    // onActivityCreated is invoked before MainActivity finishes setContentView().
-                    // Both hooks therefore have to be attached from the posted layout callback.
                     main.window.decorView.post {
                         installExportMenu(main)
                         installShelfStatus(main)
@@ -43,8 +40,6 @@ object OperationLogUiInstaller {
                 override fun onActivityStarted(activity: Activity) = Unit
 
                 override fun onActivityResumed(activity: Activity) {
-                    // Defensive retry for OEMs where the first decorView post can run before
-                    // the activity content hierarchy is fully attached.
                     if (activity.javaClass.name != "com.simplereader.app.ui.MainActivity") return
                     val main = activity as? AppCompatActivity ?: return
                     main.window.decorView.post { installShelfStatus(main) }
@@ -79,26 +74,20 @@ object OperationLogUiInstaller {
 
     private fun installShelfStatus(activity: AppCompatActivity) {
         if (statusInstalled[activity] == true) return
-        val stats = activity.findViewById<TextView>(R.id.readingStatsTextView) ?: return
+        val statusBox = activity.findViewById<TextView>(R.id.readingStatsTextView) ?: return
         statusInstalled[activity] = true
 
         val lifecycleOwner = activity as LifecycleOwner
         val handler = Handler(Looper.getMainLooper())
         var desiredText: String? = null
-        var active = false
+        var cacheOwnsStatusBox = false
         var lastWorkId: String? = null
 
-        val originalTextSize = stats.textSize / activity.resources.displayMetrics.scaledDensity
-        val originalMaxLines = stats.maxLines
-        val originalEllipsize = stats.ellipsize
-
-        val keepVisible = object : Runnable {
+        val keepStatusVisible = object : Runnable {
             override fun run() {
-                if (!active || activity.isFinishing || activity.isDestroyed) return
+                if (!cacheOwnsStatusBox || activity.isFinishing || activity.isDestroyed) return
                 desiredText?.let { desired ->
-                    // MainActivity.updateUI() still writes "累计导入 xxxx 本". While the current
-                    // cache task is alive, the task status owns this box and must win that race.
-                    if (stats.text?.toString() != desired) stats.text = desired
+                    if (statusBox.text?.toString() != desired) statusBox.text = desired
                 }
                 handler.postDelayed(this, 200L)
             }
@@ -108,8 +97,11 @@ object OperationLogUiInstaller {
             .getWorkInfosForUniqueWorkLiveData(ShelfCacheWorker.UNIQUE_WORK_NAME)
             .observe(lifecycleOwner) { infos ->
                 val running = infos.lastOrNull {
-                    it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+                    it.state == WorkInfo.State.RUNNING ||
+                        it.state == WorkInfo.State.ENQUEUED ||
+                        it.state == WorkInfo.State.BLOCKED
                 }
+
                 if (running != null) {
                     val progress = running.progress
                     val current = progress.getInt(ShelfCacheWorker.KEY_CURRENT, 0)
@@ -136,24 +128,22 @@ object OperationLogUiInstaller {
                             append(skipped)
                         }
                     } else {
-                        "正在准备全书架目录缓存…\n当前：读取书架信息"
+                        "0 / 0（0.0%）\n当前：《准备中》　成功 0｜失败 0｜跳过 0"
                     }
 
-                    stats.maxLines = 2
-                    stats.ellipsize = TextUtils.TruncateAt.END
-                    stats.text = desiredText
-                    if (!active) {
-                        active = true
-                        handler.removeCallbacks(keepVisible)
-                        handler.post(keepVisible)
+                    statusBox.text = desiredText
+                    if (!cacheOwnsStatusBox) {
+                        cacheOwnsStatusBox = true
+                        handler.removeCallbacks(keepStatusVisible)
+                        handler.post(keepStatusVisible)
                     }
                     lastWorkId = running.id.toString()
                     return@observe
                 }
 
-                if (!active) return@observe
-                active = false
-                handler.removeCallbacks(keepVisible)
+                if (!cacheOwnsStatusBox) return@observe
+                cacheOwnsStatusBox = false
+                handler.removeCallbacks(keepStatusVisible)
 
                 val finished = infos.lastOrNull { it.id.toString() == lastWorkId }
                     ?: infos.lastOrNull { it.state == WorkInfo.State.SUCCEEDED }
@@ -164,13 +154,9 @@ object OperationLogUiInstaller {
                 val failed = output?.getInt(ShelfCacheWorker.KEY_FAILED, 0) ?: 0
                 val skipped = output?.getInt(ShelfCacheWorker.KEY_SKIPPED, 0) ?: 0
 
-                stats.maxLines = 2
-                stats.text = "目录缓存完成：$total / $total（100.0%）\n成功 $completed｜失败 $failed｜跳过 $skipped"
+                statusBox.text = "目录缓存完成：$total / $total（100.0%）\n成功 $completed｜失败 $failed｜跳过 $skipped"
                 handler.postDelayed({
                     if (activity.isFinishing || activity.isDestroyed) return@postDelayed
-                    stats.textSize = originalTextSize
-                    stats.maxLines = originalMaxLines
-                    stats.ellipsize = originalEllipsize
                     invokeNoArg(activity, "updateUI")
                 }, 3000L)
             }
