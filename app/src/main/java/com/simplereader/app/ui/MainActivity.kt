@@ -34,6 +34,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.crash.CrashLogStore
+import com.simplereader.app.operation.OperationLogDialogs
+import com.simplereader.app.operation.ShelfCacheUiController
 import com.simplereader.app.parser.EpubParser
 import com.simplereader.app.data.backup.LocalLibraryScanner
 import com.simplereader.app.data.backup.SimpleReaderBackupDecoder
@@ -175,6 +177,7 @@ class MainActivity : AppCompatActivity() {
         )
         shelfGrid = findViewById(R.id.shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
+        ShelfCacheUiController.attach(this, readingStatsTextView) { updateUI() }
         shelfTabTextView = findViewById(R.id.shelfTabTextView)
 
         shelfTabTextView.apply {
@@ -318,13 +321,17 @@ class MainActivity : AppCompatActivity() {
         if (!showingHistory && selectedGroupId != null) {
             val group = groups.firstOrNull { it.id == selectedGroupId }
             val groupBooks = visibleBooks.filter { it.groupId == selectedGroupId }
-            readingStatsTextView.text = "${group?.displayName?.ifBlank { group.name } ?: "分组"} · ${groupBooks.size} 本"
+            if (!ShelfCacheUiController.isLocked(this)) {
+                readingStatsTextView.text = "${group?.displayName?.ifBlank { group.name } ?: "分组"} · ${groupBooks.size} 本"
+            }
             groupBooks.forEach { addBookCard(it) }
             if (groupBooks.isEmpty()) addEmptyText("该分组暂无书籍")
             return
         }
 
-        readingStatsTextView.text = "累计导入 ${books.size} 本"
+        if (!ShelfCacheUiController.isLocked(this)) {
+            readingStatsTextView.text = "累计导入 ${books.size} 本"
+        }
 
         if (showingHistory) {
             visibleBooks.forEach { addBookCard(it) }
@@ -1050,6 +1057,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startShelfCache(mode: String) {
+        ShelfCacheUiController.showPreparing(this, readingStatsTextView)
         ShelfCacheWorker.enqueue(this, mode)
         val scope = when (mode) {
             ShelfCacheWorker.MODE_BOOKS_WITHOUT_CATALOG -> "全书架无目录书籍"
@@ -1558,10 +1566,11 @@ class MainActivity : AppCompatActivity() {
     private fun showDataExportOptions() {
         AlertDialog.Builder(this)
             .setTitle("数据导出")
-            .setItems(arrayOf("导出", "同步")) { _, which ->
+            .setItems(arrayOf("导出", "同步", "日志")) { _, which ->
                 when (which) {
                     0 -> launchDataExport()
                     1 -> syncDataExport()
+                    2 -> OperationLogDialogs.showLogHub(this)
                 }
             }
             .show()
