@@ -88,8 +88,8 @@ class V725FeatureContractTest {
     @Test
     fun legacyV722OperationXmlIsDeletedDirectlyWithoutParsingIt() {
         val store = File("src/main/java/com/simplereader/app/operation/OperationLogStore.kt").readText()
-        assertTrue(store.contains("File(prefsDir, \"$LEGACY_PREFS.xml\").delete()"))
-        assertTrue(store.contains("File(prefsDir, \"$LEGACY_PREFS.xml.bak\").delete()"))
+        assertTrue(store.contains("File(prefsDir, \"${'$'}LEGACY_PREFS.xml\").delete()"))
+        assertTrue(store.contains("File(prefsDir, \"${'$'}LEGACY_PREFS.xml.bak\").delete()"))
         assertFalse(store.contains("getSharedPreferences(LEGACY_PREFS"))
         assertTrue(store.contains("const val MAX_ENTRIES = 10"))
         assertTrue(store.contains("take(MAX_ENTRIES)"))
