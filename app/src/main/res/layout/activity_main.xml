@@ -64,7 +64,7 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="56dp"
         android:layout_marginTop="7dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
@@ -72,16 +72,20 @@
         <TextView
             android:id="@+id/readingStatsTextView"
             android:layout_width="0dp"
-            android:layout_height="34dp"
+            android:layout_height="52dp"
             android:layout_weight="1"
             android:background="@drawable/bg_shelf_stat"
+            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="1"
+            android:lineSpacingExtra="1dp"
+            android:maxLines="2"
             android:paddingStart="10dp"
+            android:paddingTop="5dp"
             android:paddingEnd="8dp"
+            android:paddingBottom="5dp"
             android:text="累计导入 0 本"
             android:textColor="#77736A"
-            android:textSize="14sp" />
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/exportButton"
