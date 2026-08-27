@@ -29,12 +29,12 @@ object OperationLogStore {
     )
 
     /**
-     * v721/v722 stored every per-book update in SharedPreferences(operation)/log. A large legacy
-     * XML can make merely opening that SharedPreferences expensive. v723 never reads or parses it:
-     * delete the legacy XML (and Android's backup copy) before any code requests those prefs.
+     * v721/v722 stored every per-book update in SharedPreferences(operation)/log. A very large
+     * legacy XML must not be opened or deserialized just to trim it. v724 therefore deletes that
+     * obsolete XML file directly before the new bounded history is first read or written.
      *
-     * New v723 history lives in operation_history/entries, so deleting this legacy file does not
-     * remove v723's bounded task-level history.
+     * This is deliberately NOT called from Application.onCreate(): the normal v722 startup chain
+     * stays untouched, so operation-log migration cannot make the app fail to launch.
      */
     fun purgeLegacyV722StoreBeforeLoad(context: Context) {
         runCatching {
@@ -46,6 +46,7 @@ object OperationLogStore {
 
     @Synchronized
     fun beginShelfCache(context: Context, workId: String, modeTitle: String, total: Int) {
+        purgeLegacyV722StoreBeforeLoad(context)
         val now = System.currentTimeMillis()
         val current = readMutable(context)
         val existing = current.indexOfFirst { it.id == workId }
@@ -80,6 +81,7 @@ object OperationLogStore {
         failed: Int,
         skipped: Int
     ) {
+        purgeLegacyV722StoreBeforeLoad(context)
         val now = System.currentTimeMillis()
         val entries = readMutable(context)
         val index = entries.indexOfFirst { it.id == workId }
@@ -104,9 +106,12 @@ object OperationLogStore {
     }
 
     @Synchronized
-    fun list(context: Context): List<Entry> = readMutable(context)
-        .sortedByDescending { it.startedAt }
-        .take(MAX_ENTRIES)
+    fun list(context: Context): List<Entry> {
+        purgeLegacyV722StoreBeforeLoad(context)
+        return readMutable(context)
+            .sortedByDescending { it.startedAt }
+            .take(MAX_ENTRIES)
+    }
 
     private fun buildShelfBody(
         title: String,
