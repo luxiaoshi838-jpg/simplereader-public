@@ -10,15 +10,15 @@ import java.util.Locale
 
 /**
  * Persistent user-operation history.
- *
- * One user-triggered WorkRequest maps to exactly one Entry id. Progress updates mutate that
- * same entry instead of appending per-book records. Only the newest [MAX_ENTRIES] are kept.
+ * One user-triggered cache WorkRequest maps to one entry; progress mutates that same entry.
  */
 object OperationLogStore {
     private const val PREFS = "operation_history"
     private const val KEY_ENTRIES = "entries"
     private const val LEGACY_PREFS = "operation"
     const val MAX_ENTRIES = 10
+
+    @Volatile private var legacyPurgeAttempted = false
 
     data class Entry(
         val id: String,
@@ -29,14 +29,13 @@ object OperationLogStore {
     )
 
     /**
-     * v721/v722 stored every per-book update in SharedPreferences(operation)/log. A very large
-     * legacy XML must not be opened or deserialized just to trim it. v724 therefore deletes that
-     * obsolete XML file directly before the new bounded history is first read or written.
-     *
-     * This is deliberately NOT called from Application.onCreate(): the normal v722 startup chain
-     * stays untouched, so operation-log migration cannot make the app fail to launch.
+     * v721/v722 may leave a very large shared_prefs/operation.xml. Never open or parse it.
+     * Delete the obsolete XML directly; new v725 history uses operation_history instead.
      */
+    @Synchronized
     fun purgeLegacyV722StoreBeforeLoad(context: Context) {
+        if (legacyPurgeAttempted) return
+        legacyPurgeAttempted = true
         runCatching {
             val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
             File(prefsDir, "$LEGACY_PREFS.xml").delete()
@@ -51,19 +50,24 @@ object OperationLogStore {
         val current = readMutable(context)
         val existing = current.indexOfFirst { it.id == workId }
         val title = "$modeTitle · ${formatTime(now)}"
-        val body = buildShelfBody(
-            title = modeTitle,
-            state = "准备中",
-            current = 0,
-            total = total,
-            currentTitle = "",
-            completed = 0,
-            failed = 0,
-            skipped = 0,
+        val entry = Entry(
+            id = workId,
+            title = title,
+            body = buildShelfBody(
+                title = modeTitle,
+                state = "准备中",
+                current = 0,
+                total = total,
+                currentTitle = "",
+                completed = 0,
+                failed = 0,
+                skipped = 0,
+                startedAt = now,
+                updatedAt = now
+            ),
             startedAt = now,
             updatedAt = now
         )
-        val entry = Entry(workId, title, body, now, now)
         if (existing >= 0) current[existing] = entry else current.add(0, entry)
         write(context, current)
     }
@@ -87,30 +91,32 @@ object OperationLogStore {
         val index = entries.indexOfFirst { it.id == workId }
         val startedAt = entries.getOrNull(index)?.startedAt ?: now
         val title = entries.getOrNull(index)?.title ?: "$modeTitle · ${formatTime(startedAt)}"
-        val body = buildShelfBody(
-            title = modeTitle,
-            state = state,
-            current = currentIndex,
-            total = total,
-            currentTitle = currentTitle,
-            completed = completed,
-            failed = failed,
-            skipped = skipped,
+        val updated = Entry(
+            id = workId,
+            title = title,
+            body = buildShelfBody(
+                title = modeTitle,
+                state = state,
+                current = currentIndex,
+                total = total,
+                currentTitle = currentTitle,
+                completed = completed,
+                failed = failed,
+                skipped = skipped,
+                startedAt = startedAt,
+                updatedAt = now
+            ),
             startedAt = startedAt,
             updatedAt = now
         )
-        val updated = Entry(workId, title, body, startedAt, now)
         if (index >= 0) entries[index] = updated else entries.add(0, updated)
-        entries.sortByDescending { it.startedAt }
         write(context, entries)
     }
 
     @Synchronized
     fun list(context: Context): List<Entry> {
         purgeLegacyV722StoreBeforeLoad(context)
-        return readMutable(context)
-            .sortedByDescending { it.startedAt }
-            .take(MAX_ENTRIES)
+        return readMutable(context).sortedByDescending { it.startedAt }.take(MAX_ENTRIES)
     }
 
     private fun buildShelfBody(
@@ -140,13 +146,12 @@ object OperationLogStore {
     }
 
     private fun readMutable(context: Context): MutableList<Entry> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_ENTRIES, null)
-            .orEmpty()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_ENTRIES, null).orEmpty()
         if (raw.isBlank()) return mutableListOf()
         return runCatching {
             val array = JSONArray(raw)
-            buildList {
+            val entries = buildList {
                 for (i in 0 until array.length().coerceAtMost(MAX_ENTRIES)) {
                     val item = array.optJSONObject(i) ?: continue
                     val id = item.optString("id")
@@ -162,6 +167,8 @@ object OperationLogStore {
                     )
                 }
             }.toMutableList()
+            if (array.length() > MAX_ENTRIES) write(context, entries)
+            entries
         }.getOrDefault(mutableListOf())
     }
 
