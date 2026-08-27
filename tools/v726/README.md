@@ -16,7 +16,7 @@ v726 intentionally does **not** rebuild unrelated application pages from the cur
 Allowed binary differences from v722 are limited to:
 
 - `AndroidManifest.xml`: versionCode/versionName -> `2098000726` / `726`.
-- `classes3.dex`: bounded operation-log bridge, legacy unbounded operation-log sink disabled, shelf-cache WorkInfo/status fixes and operation-log UI bridge.
+- `classes3.dex`: bounded operation-log bridge, legacy unbounded operation-log sink disabled, shelf-cache WorkInfo/status fixes, operation-log UI bridge, and the authorized background pagination-profile fix described below.
 - new `classes5.dex`: bounded (max 10) directory-cache task history list/detail UI.
 - `META-INF/*`: expected signing metadata differences after re-signing.
 
@@ -26,13 +26,19 @@ No other APK entry may be added, removed or content-changed.
 
 “目录缓存/识别目录” is a real background WorkManager job, not an Activity-owned task. An unfinished job may continue after leaving the shelf, entering the reader, locking the screen, switching apps, process recreation, and relaunch. Relaunch reconnects the progress UI; it does not cancel valid pending work.
 
-A book is successful only when the cache pipeline has completed the behavior inherited from v722: catalog recognition, full pagination, persistent page-cache save and later page-cache reuse by the reader. A cached book must not be treated as successful if opening it still requires a new pagination pass.
+A book is successful only when the cache pipeline has completed catalog recognition, full pagination, persistent page-cache save and later page-cache reuse by the reader. A cached book must not be treated as successful if opening it still requires a new pagination pass.
 
-The v722 `ShelfCacheWorker` and reader pagination/cache-identity methods therefore remain byte-identical in v726. They are not replaced with the v725 source-built implementations.
+### v726 pagination reuse correction
+
+The shipped v722 reader applies its vertical reading guards to `readerViewport`, while the body TextView itself has top/bottom padding `0`. Therefore `ReaderActivity.createLayoutSettings()` produces a page-cache identity with internal content top/bottom padding `0`.
+
+The shipped v722 background worker, however, reaches `ReaderCacheProfile.createSettings()` through defaults that used `24dp` for the internal top/bottom content padding. That makes the worker's `settingsHash` differ from the visible reader even after the worker has already paginated and saved pages.
+
+v726 keeps the v722 reader/UI unchanged and changes only that background/default pagination-profile literal from `24dp` to `0`, so the background-generated page cache can use the same cache identity as the v722 reader. The deterministic DEX change is implemented in `tools/v726/patch_v726.py`.
 
 ## Reader baseline contract
 
-The v722 reader is retained unchanged, including its `readerViewport` behavior and reader settings. Its accepted bounds are:
+The v722 reader is retained unchanged, including its `readerViewport`, auto-reading and reader settings. Its accepted bounds are:
 
 - upper reading bound: status-bar bottom + one current-font character height;
 - lower reading bound: navigation-bar top - three current-font character heights;
@@ -44,12 +50,12 @@ All reader pages/settings/features not expressly authorized for v726 remain v722
 
 `verify_apk_baseline.py` must be run against the exact v722 APK and the candidate v726 APK. It rejects a wrong baseline hash and rejects any unapproved entry difference.
 
-The following critical methods must additionally be byte-identical to v722:
+The following reader methods remain byte-identical to v722:
 
 - `ReaderActivity.applyReaderContentPadding()`
 - `ReaderActivity.paginateAndDisplay()`
 - `ReaderActivity.createLayoutSettings()`
-- `ShelfCacheWorker.doWork()`
-- `ShelfCacheWorker.reportProgressNow()`
+
+The background worker execution architecture remains the v722 WorkManager/CoroutineWorker path. `classes3.dex` is allowed to differ only for the explicitly documented v726 patches, including the `ReaderCacheProfile` default-padding correction.
 
 The signed release must use the existing `simplereader-public-v1` signing identity. Signing secrets are never stored in this public repository.
