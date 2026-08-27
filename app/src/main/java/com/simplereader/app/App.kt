@@ -2,6 +2,7 @@ package com.simplereader.app
 
 import android.app.Application
 import com.simplereader.app.crash.CrashLogStore
+import com.simplereader.app.operation.OperationLogUiInstaller
 
 class App : Application() {
     companion object {
@@ -13,5 +14,6 @@ class App : Application() {
         super.onCreate()
         instance = this
         CrashLogStore.install(this)
+        OperationLogUiInstaller.install(this)
     }
 }
