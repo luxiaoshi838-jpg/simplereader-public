@@ -2,8 +2,9 @@ from pathlib import Path
 import struct, hashlib, zlib
 
 # Input: extracted v722 classes3.dex. Output: v726 classes3.dex.
-# This intentionally does not touch ReaderActivity, PageEngine, ReaderCacheProfile,
-# ShelfCacheWorker.doWork() or any other unrequested v722 feature implementation.
+# v722 remains the binary/UI baseline. The only reader-cache change below is the
+# explicitly requested pagination reuse fix: ShelfCacheWorker's default vertical
+# content padding must match the real v722 reader viewport (0/0 inside the viewport).
 
 src = Path('classes3_v722.dex')
 out = Path('classes3_v726.dex')
@@ -37,7 +38,7 @@ M_CLASS_FORNAME = 12911
 M_CLASS_GETMETHOD = 12937
 M_METHOD_INVOKE = 13445
 
-# Context,String logger -> bounded v726 history helper.
+# 1) Context,String logger -> bounded v726 history helper.
 co = 0x1bf028
 assert code_size(co) == 29
 struct.pack_into('<H', b, co, 8)
@@ -60,19 +61,29 @@ w += [0x000e]
 assert len(w) == 29
 patch_words(co, 0, w)
 
-# Disable v722's unbounded operation/log append sink.
+# 2) Disable v722's unbounded operation/log append sink.
 co = 0x1bf2f4
 assert code_size(co) == 30
 patch_words(co, 0, [0x000e] + [0] * 29)
 
-# Fix WorkInfo handling and preserve the real current-book title.
+# 3) Fix WorkInfo handling and preserve the real current-book title.
 co = 0x1fb46c
 assert code_size(co) == 182
 w16(co + 16 + 0x000b * 2, 0x0038)
 w16(co + 16 + 0x005a * 2, 0x7607)
 w16(co + 16 + 0x009e * 2, 0x0065)
 
-# Existing Operation-log menu entry -> bounded list/detail helper.
+# 4) Pagination reuse fix.
+# Real v722 ReaderActivity puts the vertical reading guards on readerViewport:
+#   top = status bar + 1 character, bottom = navigation bar + 3 characters,
+# while contentView itself has top/bottom padding 0. ShelfCacheWorker calls
+# ReaderCacheProfile.createSettings() with defaults; v722 defaulted the internal
+# content top/bottom padding to 24dp, so its settingsHash could not match the
+# visible reader. The same const/16 literal feeds both default top and bottom.
+assert b[0x1e594c:0x1e5950] == bytes.fromhex('13051800')
+b[0x1e594e:0x1e5950] = b'\x00\x00'
+
+# 5) Existing Operation-log menu entry -> bounded list/detail helper.
 co = 0x1fd44c
 assert code_size(co) == 61
 w = []
@@ -92,6 +103,7 @@ w += invoke35(0x6e, M_METHOD_INVOKE, [0, 1, 2])
 w += [0x000e]
 patch_words(co, 0, w + [0] * (61 - len(w)))
 
+# DEX header integrity.
 b[12:32] = hashlib.sha1(b[32:]).digest()
 struct.pack_into('<I', b, 8, zlib.adler32(b[12:]) & 0xffffffff)
 out.write_bytes(b)
