@@ -3,6 +3,7 @@ package com.simplereader.app.operation
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -16,6 +17,7 @@ import java.util.Locale
 object OperationLogStore {
     private const val PREFS = "operation_history"
     private const val KEY_ENTRIES = "entries"
+    private const val LEGACY_PREFS = "operation"
     const val MAX_ENTRIES = 10
 
     data class Entry(
@@ -25,6 +27,22 @@ object OperationLogStore {
         val startedAt: Long,
         val updatedAt: Long
     )
+
+    /**
+     * v721/v722 stored every per-book update in SharedPreferences(operation)/log. A large legacy
+     * XML can make merely opening that SharedPreferences expensive. v723 never reads or parses it:
+     * delete the legacy XML (and Android's backup copy) before any code requests those prefs.
+     *
+     * New v723 history lives in operation_history/entries, so deleting this legacy file does not
+     * remove v723's bounded task-level history.
+     */
+    fun purgeLegacyV722StoreBeforeLoad(context: Context) {
+        runCatching {
+            val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
+            File(prefsDir, "$LEGACY_PREFS.xml").delete()
+            File(prefsDir, "$LEGACY_PREFS.xml.bak").delete()
+        }
+    }
 
     @Synchronized
     fun beginShelfCache(context: Context, workId: String, modeTitle: String, total: Int) {
@@ -124,7 +142,7 @@ object OperationLogStore {
         return runCatching {
             val array = JSONArray(raw)
             buildList {
-                for (i in 0 until array.length()) {
+                for (i in 0 until array.length().coerceAtMost(MAX_ENTRIES)) {
                     val item = array.optJSONObject(i) ?: continue
                     val id = item.optString("id")
                     if (id.isBlank()) continue
