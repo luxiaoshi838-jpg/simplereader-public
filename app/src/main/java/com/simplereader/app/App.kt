@@ -2,7 +2,6 @@ package com.simplereader.app
 
 import android.app.Application
 import com.simplereader.app.crash.CrashLogStore
-import com.simplereader.app.operation.OperationLogStore
 import com.simplereader.app.operation.OperationLogUiInstaller
 
 class App : Application() {
@@ -15,10 +14,9 @@ class App : Application() {
         super.onCreate()
         instance = this
 
-        // v723 migration must happen before any operation-log SharedPreferences are opened.
-        // v721/v722 can leave a very large operation.xml because they append per-book updates.
-        OperationLogStore.purgeLegacyV722StoreBeforeLoad(this)
-
+        // v724: do not insert operation-log migration into the application startup chain.
+        // Legacy v721/v722 operation storage is purged lazily by OperationLogStore before
+        // the new bounded operation history is first read or written.
         CrashLogStore.install(this)
         OperationLogUiInstaller.install(this)
     }
