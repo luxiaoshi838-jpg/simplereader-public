@@ -8,10 +8,10 @@ import android.graphics.Typeface
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.Data
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -29,11 +29,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
-/**
- * User-triggered shelf catalog cache task. It recognizes chapters and builds the current
- * device's page index one book at a time. WorkManager keeps it alive while the reader is
- * open or the app is in the background.
- */
+/** User-triggered shelf catalog cache task. */
 class ShelfCacheWorker(
     appContext: Context,
     params: WorkerParameters
@@ -42,6 +38,7 @@ class ShelfCacheWorker(
     override suspend fun doWork(): Result {
         createNotificationChannel()
         setForeground(foregroundInfo(0, 0, "正在读取书架…"))
+        setProgress(progressData(0, 0, "准备中", 0, 0, 0))
 
         val mode = inputData.getString(KEY_MODE) ?: MODE_ALL_BOOKS
         val operationTitle = modeTitle(mode)
@@ -82,13 +79,13 @@ class ShelfCacheWorker(
                 )
             )
             setProgress(
-                workDataOf(
-                    KEY_CURRENT to displayedIndex,
-                    KEY_TOTAL to books.size,
-                    KEY_TITLE to book.title,
-                    KEY_COMPLETED to completed,
-                    KEY_SKIPPED to skipped,
-                    KEY_FAILED to failed
+                progressData(
+                    displayedIndex,
+                    books.size,
+                    book.title,
+                    completed,
+                    skipped,
+                    failed
                 )
             )
             OperationLogStore.updateShelfCache(
@@ -96,7 +93,7 @@ class ShelfCacheWorker(
                 workId = workId,
                 modeTitle = operationTitle,
                 state = "运行中",
-                currentIndex = index,
+                currentIndex = displayedIndex,
                 total = books.size,
                 currentTitle = book.title,
                 completed = completed,
@@ -118,6 +115,16 @@ class ShelfCacheWorker(
                 )
             if (shouldSkip) {
                 skipped += 1
+                setProgress(
+                    progressData(
+                        displayedIndex,
+                        books.size,
+                        book.title,
+                        completed,
+                        skipped,
+                        failed
+                    )
+                )
                 OperationLogStore.updateShelfCache(
                     context = applicationContext,
                     workId = workId,
@@ -183,6 +190,16 @@ class ShelfCacheWorker(
                 }
             }
             if (result.isSuccess) completed += 1 else failed += 1
+            setProgress(
+                progressData(
+                    displayedIndex,
+                    books.size,
+                    book.title,
+                    completed,
+                    skipped,
+                    failed
+                )
+            )
             OperationLogStore.updateShelfCache(
                 context = applicationContext,
                 workId = workId,
@@ -197,6 +214,7 @@ class ShelfCacheWorker(
             )
         }
 
+        setProgress(progressData(books.size, books.size, "已完成", completed, skipped, failed))
         val output = workDataOf(
             KEY_TOTAL to books.size,
             KEY_COMPLETED to completed,
@@ -224,7 +242,23 @@ class ShelfCacheWorker(
         return foregroundInfo(0, 0, modeTitle(mode, prefix = "准备"))
     }
 
-    private fun modeTitle(mode: String, prefix: String = "") : String {
+    private fun progressData(
+        current: Int,
+        total: Int,
+        title: String,
+        completed: Int,
+        skipped: Int,
+        failed: Int
+    ): Data = workDataOf(
+        KEY_CURRENT to current,
+        KEY_TOTAL to total,
+        KEY_TITLE to title,
+        KEY_COMPLETED to completed,
+        KEY_SKIPPED to skipped,
+        KEY_FAILED to failed
+    )
+
+    private fun modeTitle(mode: String, prefix: String = ""): String {
         val scope = if (mode == MODE_BOOKS_WITHOUT_CATALOG) "无目录书籍" else "全书架"
         return if (prefix.isBlank()) "${scope}目录缓存" else "${prefix}${scope}目录缓存"
     }
