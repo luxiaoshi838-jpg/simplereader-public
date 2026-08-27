@@ -16,6 +16,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.simplereader.app.data.db.SimpleReaderDatabase
+import com.simplereader.app.operation.OperationLogStore
 import com.simplereader.app.parser.TxtParser
 import com.simplereader.app.reader.ReaderDocumentLoader
 import com.simplereader.app.reader.ReaderImageRepository
@@ -43,11 +44,32 @@ class ShelfCacheWorker(
         setForeground(foregroundInfo(0, 0, "正在读取书架…"))
 
         val mode = inputData.getString(KEY_MODE) ?: MODE_ALL_BOOKS
+        val operationTitle = modeTitle(mode)
+        val workId = id.toString()
         val database = SimpleReaderDatabase.getDatabase(applicationContext)
         val books = withContext(Dispatchers.IO) { database.bookDao().getAllBooks().first() }
         var completed = 0
         var skipped = 0
         var failed = 0
+
+        OperationLogStore.beginShelfCache(
+            context = applicationContext,
+            workId = workId,
+            modeTitle = operationTitle,
+            total = books.size
+        )
+        OperationLogStore.updateShelfCache(
+            context = applicationContext,
+            workId = workId,
+            modeTitle = operationTitle,
+            state = "运行中",
+            currentIndex = 0,
+            total = books.size,
+            currentTitle = "",
+            completed = completed,
+            failed = failed,
+            skipped = skipped
+        )
 
         books.forEachIndexed { index, book ->
             coroutineContext.ensureActive()
@@ -69,6 +91,18 @@ class ShelfCacheWorker(
                     KEY_FAILED to failed
                 )
             )
+            OperationLogStore.updateShelfCache(
+                context = applicationContext,
+                workId = workId,
+                modeTitle = operationTitle,
+                state = "运行中",
+                currentIndex = index,
+                total = books.size,
+                currentTitle = book.title,
+                completed = completed,
+                failed = failed,
+                skipped = skipped
+            )
 
             val currentSource = withContext(Dispatchers.IO) {
                 ReaderDocumentLoader.resolveDocument(applicationContext, book)
@@ -84,6 +118,18 @@ class ShelfCacheWorker(
                 )
             if (shouldSkip) {
                 skipped += 1
+                OperationLogStore.updateShelfCache(
+                    context = applicationContext,
+                    workId = workId,
+                    modeTitle = operationTitle,
+                    state = "运行中",
+                    currentIndex = displayedIndex,
+                    total = books.size,
+                    currentTitle = book.title,
+                    completed = completed,
+                    failed = failed,
+                    skipped = skipped
+                )
                 return@forEachIndexed
             }
 
@@ -137,6 +183,18 @@ class ShelfCacheWorker(
                 }
             }
             if (result.isSuccess) completed += 1 else failed += 1
+            OperationLogStore.updateShelfCache(
+                context = applicationContext,
+                workId = workId,
+                modeTitle = operationTitle,
+                state = "运行中",
+                currentIndex = displayedIndex,
+                total = books.size,
+                currentTitle = book.title,
+                completed = completed,
+                failed = failed,
+                skipped = skipped
+            )
         }
 
         val output = workDataOf(
@@ -144,6 +202,18 @@ class ShelfCacheWorker(
             KEY_COMPLETED to completed,
             KEY_SKIPPED to skipped,
             KEY_FAILED to failed
+        )
+        OperationLogStore.updateShelfCache(
+            context = applicationContext,
+            workId = workId,
+            modeTitle = operationTitle,
+            state = "已完成",
+            currentIndex = books.size,
+            total = books.size,
+            currentTitle = "",
+            completed = completed,
+            failed = failed,
+            skipped = skipped
         )
         return Result.success(output)
     }
