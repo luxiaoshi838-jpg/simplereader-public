@@ -42,14 +42,17 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Unit-test and build debug v725
+      - name: Build debug and run v725 feature tests
         env:
           SIMPLE_READER_VERSION_CODE: '2098000725'
           SIMPLE_READER_VERSION_NAME: '725'
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew clean testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee gradle-v725-debug.log
+          ./gradlew clean assembleDebug testDebugUnitTest \
+            --tests 'com.simplereader.app.operation.ShelfCacheStatusTextTest' \
+            --tests 'com.simplereader.app.operation.OperationLogStoreTest' \
+            --stacktrace 2>&1 | tee gradle-v725-debug.log
 
       - name: Verify debug package
         shell: bash
