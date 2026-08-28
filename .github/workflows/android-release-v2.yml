@@ -18,13 +18,17 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build and verify migration release APK
+    name: Build and verify migration release APK locally in runner
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Reject tracked APK files
+        shell: bash
+        run: bash tools/verify-no-apk.sh
 
       - name: Block rejected reader implementations
         shell: bash
@@ -73,7 +77,6 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Generate migration-safe version
-        id: version
         shell: bash
         run: |
           set -euo pipefail
@@ -81,12 +84,10 @@ jobs:
           version_name="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
           apk_name="SimpleReader_${version_name}_migration_v2.apk"
           apk_path="app/build/outputs/apk/release/${apk_name}"
-          artifact_name="SimpleReader_${version_name}_migration_v2"
           echo "SIMPLE_READER_VERSION_CODE=${version_code}" >> "$GITHUB_ENV"
           echo "SIMPLE_READER_VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
           echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
           echo "APK_PATH=${apk_path}" >> "$GITHUB_ENV"
-          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
 
       - name: Build and run release unit tests
         shell: bash
@@ -112,18 +113,18 @@ jobs:
           grep -Fq "sdkVersion:'26'" apk-package-info.txt
           apk_bytes="$(stat -c %s "$APK_PATH")"
           test "$apk_bytes" -le "$MAX_APK_BYTES"
-          sha256sum "$APK_PATH" | tee "$APK_PATH.sha256"
+          sha256sum "$APK_PATH" | tee apk-sha256.txt
+          echo 'Validation complete. APK remains ephemeral on the runner and is not uploaded to the public repository or Actions artifacts.'
 
-      - name: Upload verified migration APK
+      - name: Upload verification logs only
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.version.outputs.artifact_name }}
+          name: SimpleReader-migration-verification-${{ github.run_number }}
           path: |
-            ${{ env.APK_PATH }}
-            ${{ env.APK_PATH }}.sha256
+            apk-sha256.txt
             apk-certificate.txt
             apk-package-info.txt
             zipalign-check.txt
             gradle-build.log
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
