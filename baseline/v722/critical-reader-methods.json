@@ -1,0 +1,91 @@
+{
+  "baseline": "SimpleReader v722",
+  "dex": "classes3.dex",
+  "purpose": "High-risk method-level v722 regression anchors. These are examples/direct checks in addition to the full 4,078-method Merkle root in baseline.json.",
+  "methods": [
+    {
+      "signature": "Lcom/simplereader/app/ui/PagedReaderView;->setTurnMode(Lcom/simplereader/app/ui/PagedReaderView$TurnMode;)V",
+      "codeSha256": "08a318cf4ca34c56ae68f19f6ad9aca4420b4788ebc67ac4e3d3582f564eb1b4"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->applyReaderAppearance(Z)V",
+      "codeSha256": "4350330a34848c0da9cc6836d15198a4842766ee8b8e36bbc7dcbf45b64abbce"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->applyReaderContentPadding()V",
+      "codeSha256": "156ceea9b88bcd443a8c8d1246bff71880ba793adc1b256839a04cca51463ec5"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->createLayoutSettings()Lcom/simplereader/app/reader/page/ReaderLayoutSettings;",
+      "codeSha256": "defb64617595171f335ceaff5d7726d121c6ab1a3279da374fe0a2fdd1cc5451"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->paginateAndDisplay(Ljava/lang/Integer;Z)V",
+      "codeSha256": "31e6b139c83c276a34bff0cd03a59831fea7f375d8ed435cf3be63d6e45eb90d"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->savePreferences()V",
+      "codeSha256": "259936303e8bb206e0fe9d2ca779342cc09ee9dcf799112b809e805272ff095a"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->scheduleAutomaticPageTurn()V",
+      "codeSha256": "5acf738a2d1e69068e308b652b264635385a761f761dbe508e105c310b2eb792"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->setTurnMode(Ljava/lang/String;)V",
+      "codeSha256": "9dc2e7e40b0fdf852cb3ea9576a58d89b8d7f4901ba3640613e881e59f369c01"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->showAutoReadDialog()V",
+      "codeSha256": "c130b82845092b66d0ac7f15ed0bda791c6ed79f06ab0fc00674b53dfe39a852"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->startAutoReading()V",
+      "codeSha256": "85af011e725065c8d727bab188cb85b3d9953da16161bb2e6542b5eb0388700b"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->startAutomaticVerticalScroll()V",
+      "codeSha256": "38b28195c52a6e370302e65e3bd9de1364f41575c21dc942fa5ccf66ace53b96"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->stopAutoReading(Z)V",
+      "codeSha256": "9b6879dc47604ef673ac94c586705486118b652e39f592dd78e5f4f5b5fb52d1"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->turnPage(I)V",
+      "codeSha256": "e8ffd189394e15dc7adaa16664cb5870f5f21fc77462136318e4edcd21b19ec5"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->updateAutoReadSpeed(I)V",
+      "codeSha256": "a54cc0d1bd98da19b0cbf5d941a5c6e2205b8a9f1a34cf059685042fc2449b4c"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->updateSettingsLabels()V",
+      "codeSha256": "2edc4074dc28d8f90f02879813b947a2deb21a916fcdd8236a32b47cb3c866e4"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderActivity;->verticalAutoScrollBy(I)Z",
+      "codeSha256": "a41d60d078ab6fa055c29e12ae8fef75c85ae176bf589e398caf398696346e48"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderAppearance;->palette(Landroid/content/Context;)Lcom/simplereader/app/ui/ReaderAppearance$Palette;",
+      "codeSha256": "ba78526b825045a65fcaa61d75fec83d39158437624614977fbac82a15d496af"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderAppearance;->textSize(Landroid/content/Context;)F",
+      "codeSha256": "b2eb632645877c81a56b3ee6c81e6aaa6c9a3d97f26bbc430ac67b8270114e0c"
+    },
+    {
+      "signature": "Lcom/simplereader/app/ui/ReaderAppearance;->toggleMode(Landroid/content/Context;)Lcom/simplereader/app/ui/ReaderAppearance$Palette;",
+      "codeSha256": "0844d84e66fad72b419008b325c79a2991047d53519450c4847fc96b7e5d93bf"
+    },
+    {
+      "signature": "Lcom/simplereader/app/worker/ShelfCacheWorker;->doWork(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;",
+      "codeSha256": "c14c82903b2ba3be436d2199ecd93464840655f66d222a3844b5f22ef02eae61"
+    },
+    {
+      "signature": "Lcom/simplereader/app/worker/ShelfCacheWorker;->reportProgressNow(IILjava/lang/String;)V",
+      "codeSha256": "47a1479eabe5d028fbcf03cd9a17d51e7e5a9f78b956ca18e0aff246f20faef3"
+    }
+  ]
+}
