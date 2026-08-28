@@ -64,36 +64,39 @@ class ShelfCacheWorker(
             }.getOrNull() ?: workDataOf()
         }
 
-        var checkpoint = withContext(Dispatchers.IO) {
+        val loadedCheckpoint = withContext(Dispatchers.IO) {
             ShelfCacheCheckpointStore.load(applicationContext, workId)
         }
-        if (checkpoint == null || checkpoint.mode != mode) {
-            val legacyCompleted = persistedWorkProgress.getInt(KEY_COMPLETED, 0).coerceAtLeast(0)
-            val legacySkipped = persistedWorkProgress.getInt(KEY_SKIPPED, 0).coerceAtLeast(0)
-            val legacyFailed = persistedWorkProgress.getInt(KEY_FAILED, 0).coerceAtLeast(0)
-            val legacyCurrent = persistedWorkProgress.getInt(KEY_CURRENT, 0).coerceAtLeast(0)
-            val classifiedCount = (legacyCompleted + legacySkipped + legacyFailed)
-                .coerceAtMost(currentBooks.size)
-            // v725 published the current book number before doing that book. If old counters are
-            // unavailable, current-1 safely resumes by redoing at most the interrupted book.
-            val legacyResumeIndex = maxOf(
-                classifiedCount,
-                (legacyCurrent - 1).coerceAtLeast(0)
-            ).coerceAtMost(currentBooks.size)
+        var checkpoint: ShelfCacheCheckpointStore.Checkpoint =
+            if (loadedCheckpoint == null || loadedCheckpoint.mode != mode) {
+                val legacyCompleted = persistedWorkProgress.getInt(KEY_COMPLETED, 0).coerceAtLeast(0)
+                val legacySkipped = persistedWorkProgress.getInt(KEY_SKIPPED, 0).coerceAtLeast(0)
+                val legacyFailed = persistedWorkProgress.getInt(KEY_FAILED, 0).coerceAtLeast(0)
+                val legacyCurrent = persistedWorkProgress.getInt(KEY_CURRENT, 0).coerceAtLeast(0)
+                val classifiedCount = (legacyCompleted + legacySkipped + legacyFailed)
+                    .coerceAtMost(currentBooks.size)
+                // v725 published the current book number before doing that book. If old counters are
+                // unavailable, current-1 safely resumes by redoing at most the interrupted book.
+                val legacyResumeIndex = maxOf(
+                    classifiedCount,
+                    (legacyCurrent - 1).coerceAtLeast(0)
+                ).coerceAtMost(currentBooks.size)
 
-            checkpoint = withContext(Dispatchers.IO) {
-                ShelfCacheCheckpointStore.create(
-                    context = applicationContext,
-                    workId = workId,
-                    mode = mode,
-                    bookIds = currentBooks.map { it.id },
-                    nextIndex = legacyResumeIndex,
-                    completed = legacyCompleted,
-                    skipped = legacySkipped,
-                    failed = legacyFailed
-                )
+                withContext(Dispatchers.IO) {
+                    ShelfCacheCheckpointStore.create(
+                        context = applicationContext,
+                        workId = workId,
+                        mode = mode,
+                        bookIds = currentBooks.map { it.id },
+                        nextIndex = legacyResumeIndex,
+                        completed = legacyCompleted,
+                        skipped = legacySkipped,
+                        failed = legacyFailed
+                    )
+                }
+            } else {
+                loadedCheckpoint
             }
-        }
 
         var completed = checkpoint.completed
         var skipped = checkpoint.skipped
