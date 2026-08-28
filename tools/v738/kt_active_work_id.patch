@@ -1,0 +1,19 @@
+--- tools/v737/helper/SimpleReaderBackupDecoder/kt.java
++++ tools/v738/helper/SimpleReaderBackupDecoder/kt.java
+@@
+-        startNewTask(a.getSharedPreferences(PREF, Context.MODE_PRIVATE), mode, System.currentTimeMillis());
++        SharedPreferences queuePrefs = a.getSharedPreferences(PREF, Context.MODE_PRIVATE);
++        startNewTask(queuePrefs, mode, System.currentTimeMillis());
++        // Invalidate any older NoCatalogWorker immediately, before the replacement WorkRequest
++        // has even been built. Old workers observe active_work_id and stop cooperatively.
++        queuePrefs.edit().putString("active_work_id", "pending:" + System.nanoTime()).apply();
+         try { KeepAliveService.start(a); } catch (Throwable ignored) {}
+@@
+             Object request = reqBuilderClass.getMethod("build").invoke(reqBuilder);
++            try {
++                Object requestId = request.getClass().getMethod("getId").invoke(request);
++                if (requestId != null) queuePrefs.edit()
++                        .putString("active_work_id", String.valueOf(requestId)).apply();
++            } catch (Throwable ignored) {}
+ 
+             Class<?> wmClass = Class.forName("androidx.work.WorkManager");
