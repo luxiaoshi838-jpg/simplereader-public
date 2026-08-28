@@ -1,0 +1,1 @@
+Temporary PR trigger for exporting Android build-tools only. No APK or signing material is stored in this repository.
