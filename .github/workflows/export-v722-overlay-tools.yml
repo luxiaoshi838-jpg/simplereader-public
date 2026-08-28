@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
 
+# One-shot tooling export. This workflow never uploads an APK.
 jobs:
   export:
     if: ${{ github.event.head_commit.message == 'ci: export v722 overlay tools' }}
