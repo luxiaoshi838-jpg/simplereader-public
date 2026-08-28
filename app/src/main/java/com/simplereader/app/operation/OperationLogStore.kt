@@ -1,6 +1,7 @@
 package com.simplereader.app.operation
 
 import android.content.Context
+import com.simplereader.app.worker.ShelfCacheKeepAliveService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -46,6 +47,10 @@ object OperationLogStore {
     @Synchronized
     fun beginShelfCache(context: Context, workId: String, modeTitle: String, total: Int) {
         purgeLegacyV722StoreBeforeLoad(context)
+        // Starting/recreating the same WorkRequest must also restore the independent foreground
+        // owner. The service itself is idempotent and its watchdog exits when the unique work ends.
+        runCatching { ShelfCacheKeepAliveService.start(context) }
+
         val current = readMutable(context)
         // WorkManager may recreate the same WorkRequest after process death. The same workId must
         // keep the same single log entry and original start time instead of looking like a new run.
@@ -116,6 +121,9 @@ object OperationLogStore {
         )
         if (index >= 0) entries[index] = updated else entries.add(0, updated)
         write(context, entries)
+        if (state == "已完成") {
+            runCatching { ShelfCacheKeepAliveService.stop(context) }
+        }
     }
 
     @Synchronized
