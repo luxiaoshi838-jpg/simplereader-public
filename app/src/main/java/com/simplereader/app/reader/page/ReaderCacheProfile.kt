@@ -71,7 +71,16 @@ object ReaderCacheProfile {
         val metrics = context.resources.displayMetrics
         val systemBars = systemDimension(context.resources, "status_bar_height") +
             systemDimension(context.resources, "navigation_bar_height")
-        return (metrics.heightPixels - systemBars - dp(context, TOP_GUARD_DP)).coerceAtLeast(metrics.heightPixels / 2)
+        // Shipped v722 readerViewport starts one current-font character below the status bar
+        // and ends three current-font characters above the navigation bar. When no exact
+        // viewport has been remembered yet, the background worker must use the same bounds or
+        // its readerSettingsHash will never match ReaderActivity.
+        val characterPx = (currentTextSizeSp(context) * metrics.scaledDensity + 0.5f)
+            .toInt()
+            .coerceAtLeast(1)
+        val readerGuards = characterPx * 4
+        return (metrics.heightPixels - systemBars - readerGuards)
+            .coerceAtLeast(metrics.heightPixels / 2)
     }
 
     private fun systemDimension(resources: Resources, name: String): Int {
