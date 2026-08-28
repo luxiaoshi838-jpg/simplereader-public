@@ -50,6 +50,7 @@ jobs:
           chmod +x ./gradlew
           timeout --signal=INT 5m ./gradlew testDebugUnitTest \
             --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
+            --tests 'com.simplereader.app.operation.ShelfCacheResumeMigrationContractTest' \
             --stacktrace --console=plain
 
       - name: Build debug APK for validation only
