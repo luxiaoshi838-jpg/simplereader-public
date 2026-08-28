@@ -1,0 +1,142 @@
+--- /mnt/data/v736_build/src/SimpleReaderBackupDecoder/NoCatalogWorker.java	2026-08-28 10:40:58.683224395 +0000
++++ /mnt/data/v737_build/src/SimpleReaderBackupDecoder/NoCatalogWorker.java	2026-08-28 10:56:16.605479553 +0000
+@@ -29,12 +29,21 @@
+             int scanTotal = allBooks.size();
+             ArrayList<Object> targets = new ArrayList<Object>();
+             int excluded = 0;
++            int catalogMismatch = 0, sourceUnavailable = 0, pageLocationMismatch = 0, probeErrors = 0;
+             for (Object book : allBooks) {
+-                if (book != null && hasCompletedReusableCache(context, book)) excluded++;
+-                else targets.add(book);
++                int probe = probeCompletedReusableCache(context, book);
++                if (probe == 0) excluded++;
++                else {
++                    targets.add(book);
++                    if (probe == 1) catalogMismatch++;
++                    else if (probe == 2) sourceUnavailable++;
++                    else if (probe == 3) pageLocationMismatch++;
++                    else probeErrors++;
++                }
+             }
+             final int total = targets.size();
+             kt.noCatalogScan(context, scanTotal, total, excluded);
++            kt.noCatalogScanDiagnostics(context, catalogMismatch, sourceUnavailable, pageLocationMismatch, probeErrors);
+             // Publish an explicit non-null initial WorkManager state immediately after the scan.
+             publishProgress(0, total, total == 0 ? "已完成" : "准备处理", 0, 0, 0);
+             if (total == 0) return resultWithData(true, 0, 0, 0, 0);
+@@ -93,32 +102,20 @@
+      * participates in this prefilter. If any of the five conditions cannot be proven, the book
+      * remains a target and is processed again.
+      */
+-    private static boolean hasCompletedReusableCache(Context context, Object book) {
+-        if (context == null || book == null) return false;
++    // v737: use the shipped app's own PageCacheStore.hasCurrentCatalog() as the authoritative
++    // check for catalog + page-manifest existence + file name + file size. Only the fifth
++    // user-defined condition (file location) and non-empty page array are checked here.
++    // Return codes: 0=reusable/exclude, 1=catalog/name/size mismatch, 2=current source metadata
++    // unavailable, 3=page/location mismatch, 4=unexpected probe error.
++    private static int probeCompletedReusableCache(Context context, Object book) {
++        if (context == null || book == null) return 4;
+         try {
+-            Class<?> bc = book.getClass();
++            Class<?> bc = Class.forName("com.simplereader.app.data.entity.Book");
+             long id = ((Number)bc.getMethod("getId").invoke(book)).longValue();
+-
+             Object fpObj = bc.getMethod("getFilePath").invoke(book);
+             String filePath = fpObj == null ? "" : String.valueOf(fpObj);
+-            if (filePath.trim().isEmpty()) return false;
++            if (filePath.trim().isEmpty()) return 3;
+ 
+-            File filesDir = (File)context.getClass().getMethod("getFilesDir").invoke(context);
+-            File dir = new File(new File(filesDir, "reader_page_cache"), String.valueOf(id));
+-            File recognition = new File(dir, "recognition.json");
+-            if (!recognition.isFile()) return false;
+-            String rec = readUtf8(recognition);
+-
+-            // 1) 有目录：识别完成且目录中至少有一个可见章节。
+-            if (!jsonBool(rec, "completed", false)) return false;
+-            if (jsonLong(rec, "chapterCount", 0L) <= 0L) return false;
+-
+-            String storedName = jsonString(rec, "fileName");
+-            Long storedSize = jsonNullableLong(rec, "fileSize");
+-            if (storedName == null || storedName.trim().isEmpty() || storedSize == null || storedSize.longValue() < 0L) return false;
+-
+-            // 3/4) 文件名、文件大小：先用书架记录做快速比对；记录为空/旧值/不一致时，
+-            // 用简阅现有 ReaderDocumentLoader.resolveDocument() 取得当前真实文件 name/length。
+             String currentName = null;
+             Long currentSize = null;
+@@ -130,31 +127,45 @@
+                 if (z instanceof Number && ((Number)z).longValue() >= 0L) currentSize = Long.valueOf(((Number)z).longValue());
+             } catch (Throwable ignored) {}
+ 
+-            boolean fastNameOk = currentName != null && storedName.equalsIgnoreCase(currentName);
+-            boolean fastSizeOk = currentSize != null && storedSize.longValue() == currentSize.longValue();
+-            if (!fastNameOk || !fastSizeOk) {
++            Class<?> pageClass = Class.forName("com.simplereader.app.reader.page.PageCacheStore");
++            Object pageStore = pageClass.getField("INSTANCE").get(null);
++            Method hasCurrent = pageClass.getMethod("hasCurrentCatalog", Context.class, long.class, String.class, Long.class);
++
++            boolean current = false;
++            if (currentName != null && currentSize != null) {
++                Object ok = hasCurrent.invoke(pageStore, context, id, currentName, currentSize);
++                current = Boolean.TRUE.equals(ok);
++            }
++
++            // Old/migrated shelf rows can keep title-like fileName or stale size. If the fast DB
++            // metadata check does not prove the cache current, ask the shipped loader only for
++            // DocumentFile metadata (name/length). This does not read text or run recognition.
++            if (!current) {
+                 try {
+                     Class<?> loaderClass = Class.forName("com.simplereader.app.reader.ReaderDocumentLoader");
+                     Object loader = loaderClass.getField("INSTANCE").get(null);
+                     Object source = loaderClass.getMethod("resolveDocument", Context.class, bc).invoke(loader, context, book);
+-                    if (source == null) return false;
++                    if (source == null) return 2;
+                     Object n = source.getClass().getMethod("getName").invoke(source);
+                     Object z = source.getClass().getMethod("length").invoke(source);
+-                    if (!(n instanceof String) || ((String)n).trim().isEmpty()) return false;
+-                    if (!(z instanceof Number) || ((Number)z).longValue() < 0L) return false;
++                    if (!(n instanceof String) || ((String)n).trim().isEmpty()) return 2;
++                    if (!(z instanceof Number) || ((Number)z).longValue() < 0L) return 2;
+                     currentName = ((String)n).trim();
+                     currentSize = Long.valueOf(((Number)z).longValue());
++                    Object ok = hasCurrent.invoke(pageStore, context, id, currentName, currentSize);
++                    current = Boolean.TRUE.equals(ok);
+                 } catch (Throwable ignored) {
+-                    return false;
++                    return 2;
+                 }
+             }
+-            if (currentName == null || !storedName.equalsIgnoreCase(currentName)) return false;
+-            if (currentSize == null || storedSize.longValue() != currentSize.longValue()) return false;
++            if (!current) return 1;
+ 
+-            // 2/5) 有分页信息 + 文件位置一致。只要任一真实分页 manifest 同时属于本书、
+-            // pages 非空、filePath 与当前书架记录一致，即视为已成功，在预筛选阶段直接剔除。
++            // Fifth condition: file location must match the current shelf filePath. Also require
++            // real page information (non-empty pages array), not merely an empty manifest file.
++            File filesDir = (File)context.getClass().getMethod("getFilesDir").invoke(context);
++            File dir = new File(new File(filesDir, "reader_page_cache"), String.valueOf(id));
+             File[] files = dir.listFiles();
+-            if (files == null) return false;
++            if (files == null) return 3;
+@@ -165,15 +176,19 @@
+                     String storedPath = jsonString(m, "filePath");
+                     if (storedPath == null || !storedPath.equals(filePath)) continue;
+                     if (!jsonArrayNonEmpty(m, "pages")) continue;
+-                    return true;
++                    return 0;
+                 } catch (Throwable ignored) {}
+             }
+-            return false;
++            return 3;
+         } catch (Throwable ignored) {
+-            return false;
++            return 4;
+         }
+     }
+ 
++    private static boolean hasCompletedReusableCache(Context context, Object book) {
++        return probeCompletedReusableCache(context, book) == 0;
++    }
++
