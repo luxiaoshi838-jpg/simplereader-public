@@ -77,13 +77,17 @@ class ShelfCacheKeepAliveService : Service() {
     }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_TAG)
-            .apply {
-                setReferenceCounted(false)
-                acquire(TimeUnit.HOURS.toMillis(6))
-            }
+        runCatching {
+            if (wakeLock?.isHeld == true) return
+            val lock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_TAG)
+            lock.setReferenceCounted(false)
+            lock.acquire(TimeUnit.HOURS.toMillis(6))
+            wakeLock = lock
+        }.onFailure {
+            // WakeLock improves continuity but must never be allowed to crash the app/service.
+            wakeLock = null
+        }
     }
 
     private fun startWatchdog() {
