@@ -1,0 +1,59 @@
+{
+  "baseline": "SimpleReader v722",
+  "package": "com.simplereader.app",
+  "versionCode": 2098000722,
+  "versionName": "722",
+  "apkStoredInRepository": false,
+  "apkFilesForbidden": true,
+  "canonicalApkSha256": "a1403b4eeda62ac04c4d9303e32d5a12ff3c3f1a96222c450eaf71bdf489580d",
+  "signerCertificateSha256": "315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648",
+  "inventory": {
+    "apkEntryCount": 1784,
+    "applicationClassCount": 623,
+    "applicationMethodCount": 4078,
+    "apkEntryMerkleRootSha256": "18a8f9cc9e0d800cac04cd0dc2cde890d3e0bc2d495d311033640fd3ad3cbec1",
+    "applicationClassMerkleRootSha256": "91529b5da35f7680793f7a45e5fd8a5bf1c18d5a0bcb3ccfe4f039e72fc5c1ca",
+    "applicationMethodCodeMerkleRootSha256": "e2c92b8b50bc198f7e6d19978d944dc2406ae58624344109926b10f0bb44ab21"
+  },
+  "dexFiles": [
+    {
+      "file": "classes.dex",
+      "sha256": "ea61c83fe9271a532757b861e4db08653fd9e7519a6e52f065fc1f17b157fae4",
+      "size": 9548892,
+      "applicationClassCount": 0,
+      "applicationMethodCount": 0
+    },
+    {
+      "file": "classes2.dex",
+      "sha256": "e995a5a271ed1f25d78984d83999cc4dc0c2c8da1fb19549aee97d859a1d70de",
+      "size": 8555256,
+      "applicationClassCount": 0,
+      "applicationMethodCount": 0
+    },
+    {
+      "file": "classes3.dex",
+      "sha256": "ad00a7f20b8ffb0b14d2b9e41d49009e84f8c059ad718bc784c48cfa1ec435f4",
+      "size": 10762720,
+      "applicationClassCount": 623,
+      "applicationMethodCount": 4078
+    },
+    {
+      "file": "classes4.dex",
+      "sha256": "080f0390518f9d901402343a500b5044a4d760e8ff917a2748eb1352e09ff2a9",
+      "size": 1350740,
+      "applicationClassCount": 0,
+      "applicationMethodCount": 0
+    }
+  ],
+  "merkleLeafDefinitions": {
+    "apkEntries": "sorted UTF-8: <path>\\t<size>\\t<entry-sha256>; leaf=SHA256(line), pair nodes=SHA256(left||right), duplicate last odd node",
+    "applicationClasses": "sorted UTF-8: <dex>\\t<descriptor>\\t<sourceFile>\\t<accessFlags>; leaf=SHA256(line), pair nodes=SHA256(left||right), duplicate last odd node",
+    "applicationMethods": "sorted UTF-8: <method-signature>\\t<DEX-code-item-sha256-or-NO_CODE>; leaf=SHA256(line), pair nodes=SHA256(left||right), duplicate last odd node"
+  },
+  "authorizedBehaviorChanges": [
+    "shelf upper-left status box",
+    "operation-log behavior and UI"
+  ],
+  "directoryCacheContract": "catalog recognition + full pagination + persistent page-cache save + later page-cache reuse by the reader for the same layout/cache identity",
+  "allOtherBehavior": "must remain v722-equivalent, including automatic reading and all other pages/settings/features"
+}
