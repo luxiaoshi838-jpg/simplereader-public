@@ -69,7 +69,9 @@ object ShelfCacheCheckpointStore {
 
     @Synchronized
     fun save(context: Context, workId: String, checkpoint: Checkpoint) {
-        val ids = JSONArray().apply { checkpoint.bookIds.forEach(::put) }
+        val ids = JSONArray().apply {
+            checkpoint.bookIds.forEach { bookId -> put(bookId) }
+        }
         val root = JSONObject()
             .put("mode", checkpoint.mode)
             .put("bookIds", ids)
