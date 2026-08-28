@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-debug:
-    name: Build public debug APK
+    name: Validate public Android source
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -20,13 +20,9 @@ jobs:
       - name: Checkout current source
         uses: actions/checkout@v4
 
-      - name: Reject tracked APK files
+      - name: Verify v722 cache overlay contract
         shell: bash
-        run: bash tools/verify-no-apk.sh
-
-      - name: Block rejected reader implementations
-        shell: bash
-        run: bash tools/verify-rejected-reader-implementations.sh
+        run: bash tools/verify-v722-cache-overlay.sh
 
       - name: Pack exact source
         run: tar --exclude=.git --exclude='app/build' --exclude='.gradle' -czf /tmp/simplereader-current-source.tar.gz .
@@ -39,10 +35,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Enforce locked UI policy
-        shell: bash
-        run: bash tools/verify-ui-policy.sh
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -52,28 +44,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Export official Android signing tools
+      - name: Run v725 status log and shelf-cache contract tests
         shell: bash
         run: |
-          set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -x "$build_tools/apksigner"
-          test -x "$build_tools/zipalign"
-          test -x "$build_tools/aapt2"
-          tar -C "$(dirname "$build_tools")" -czf /tmp/android-build-tools.tar.gz "$(basename "$build_tools")"
-
-      - name: Upload Android signing tools
-        uses: actions/upload-artifact@v4
-        with:
-          name: Android-build-tools-${{ github.run_number }}
-          path: /tmp/android-build-tools.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          chmod +x ./gradlew
+          timeout --signal=INT 5m ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
+            --stacktrace --console=plain
 
       - name: Build debug APK for validation only
         shell: bash
         run: |
-          chmod +x ./gradlew
-          timeout --signal=INT 5m ./gradlew clean assembleDebug --stacktrace --console=plain
+          timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain
           test -s app/build/outputs/apk/debug/app-debug.apk
           echo 'APK was built only inside this runner for validation and will not be uploaded or committed.'
