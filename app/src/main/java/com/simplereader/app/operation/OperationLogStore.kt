@@ -46,29 +46,34 @@ object OperationLogStore {
     @Synchronized
     fun beginShelfCache(context: Context, workId: String, modeTitle: String, total: Int) {
         purgeLegacyV722StoreBeforeLoad(context)
-        val now = System.currentTimeMillis()
         val current = readMutable(context)
-        val existing = current.indexOfFirst { it.id == workId }
+        // WorkManager may recreate the same WorkRequest after process death. The same workId must
+        // keep the same single log entry and original start time instead of looking like a new run.
+        if (current.any { it.id == workId }) return
+
+        val now = System.currentTimeMillis()
         val title = "$modeTitle · ${formatTime(now)}"
-        val entry = Entry(
-            id = workId,
-            title = title,
-            body = buildShelfBody(
-                title = modeTitle,
-                state = "准备中",
-                current = 0,
-                total = total,
-                currentTitle = "",
-                completed = 0,
-                failed = 0,
-                skipped = 0,
+        current.add(
+            0,
+            Entry(
+                id = workId,
+                title = title,
+                body = buildShelfBody(
+                    title = modeTitle,
+                    state = "准备中",
+                    current = 0,
+                    total = total,
+                    currentTitle = "",
+                    completed = 0,
+                    failed = 0,
+                    skipped = 0,
+                    startedAt = now,
+                    updatedAt = now
+                ),
                 startedAt = now,
                 updatedAt = now
-            ),
-            startedAt = now,
-            updatedAt = now
+            )
         )
-        if (existing >= 0) current[existing] = entry else current.add(0, entry)
         write(context, current)
     }
 
