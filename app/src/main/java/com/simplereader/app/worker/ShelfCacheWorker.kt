@@ -38,6 +38,9 @@ import kotlin.coroutines.coroutineContext
  * foreground WorkManager task, so switching activities/apps does not cancel the cache pass.
  * A book counts as successful only after the persisted page cache can be loaded back with the
  * same identity that the visible v722 reader uses.
+ *
+ * The WorkRequest id also owns a durable checkpoint. If Android recreates this worker after
+ * process death, it resumes from the first unfinished book instead of rescanning the shelf.
  */
 class ShelfCacheWorker(
     appContext: Context,
@@ -46,43 +49,130 @@ class ShelfCacheWorker(
 
     override suspend fun doWork(): Result {
         createNotificationChannel()
-        setForeground(foregroundInfo(0, 0, "正在读取书架…"))
-        setProgress(progressData(0, 0, "准备中", 0, 0, 0))
 
         val mode = inputData.getString(KEY_MODE) ?: MODE_ALL_BOOKS
         val operationTitle = modeTitle(mode)
         val workId = id.toString()
         val database = SimpleReaderDatabase.getDatabase(applicationContext)
-        val books = withContext(Dispatchers.IO) { database.bookDao().getAllBooks().first() }
-        var completed = 0
-        var skipped = 0
-        var failed = 0
+
+        val currentBooks = withContext(Dispatchers.IO) {
+            database.bookDao().getAllBooks().first()
+        }
+        var checkpoint = withContext(Dispatchers.IO) {
+            ShelfCacheCheckpointStore.load(applicationContext, workId)
+        }
+        if (checkpoint == null || checkpoint.mode != mode) {
+            checkpoint = withContext(Dispatchers.IO) {
+                ShelfCacheCheckpointStore.create(
+                    context = applicationContext,
+                    workId = workId,
+                    mode = mode,
+                    bookIds = currentBooks.map { it.id }
+                )
+            }
+        }
+
+        var completed = checkpoint.completed
+        var skipped = checkpoint.skipped
+        var failed = checkpoint.failed
+        val total = checkpoint.total
+        val resumeIndex = checkpoint.nextIndex.coerceIn(0, total)
+        val nextTitle = if (resumeIndex < total) {
+            withContext(Dispatchers.IO) {
+                database.bookDao().getBook(checkpoint.bookIds[resumeIndex])?.title
+            }.orEmpty()
+        } else {
+            "已完成"
+        }
+
+        setForeground(
+            foregroundInfo(
+                resumeIndex,
+                total,
+                if (resumeIndex > 0 && resumeIndex < total) {
+                    "继续：${nextTitle.ifBlank { "下一本" }}（$resumeIndex/$total）"
+                } else if (resumeIndex >= total) {
+                    "正在完成任务…"
+                } else {
+                    "正在读取书架…"
+                }
+            )
+        )
+        setProgress(
+            progressData(
+                current = resumeIndex,
+                total = total,
+                title = nextTitle.ifBlank { if (resumeIndex > 0) "继续中" else "准备中" },
+                completed = completed,
+                skipped = skipped,
+                failed = failed
+            )
+        )
 
         OperationLogStore.beginShelfCache(
             context = applicationContext,
             workId = workId,
             modeTitle = operationTitle,
-            total = books.size
+            total = total
         )
         OperationLogStore.updateShelfCache(
             context = applicationContext,
             workId = workId,
             modeTitle = operationTitle,
-            state = "运行中",
-            currentIndex = 0,
-            total = books.size,
-            currentTitle = "",
+            state = if (resumeIndex > 0 && resumeIndex < total) "继续中" else "运行中",
+            currentIndex = resumeIndex,
+            total = total,
+            currentTitle = nextTitle,
             completed = completed,
             failed = failed,
             skipped = skipped
         )
 
-        books.forEachIndexed { index, book ->
+        for (index in resumeIndex until total) {
             coroutineContext.ensureActive()
+            val bookId = checkpoint.bookIds[index]
+            val book = withContext(Dispatchers.IO) {
+                database.bookDao().getBook(bookId)
+            }
+
+            if (book == null) {
+                skipped += 1
+                checkpoint = checkpoint.copy(
+                    nextIndex = index + 1,
+                    completed = completed,
+                    skipped = skipped,
+                    failed = failed
+                )
+                withContext(Dispatchers.IO) {
+                    ShelfCacheCheckpointStore.save(applicationContext, workId, checkpoint)
+                }
+                publishProgress(
+                    current = index + 1,
+                    total = total,
+                    title = "书籍已从书架移除",
+                    completed = completed,
+                    skipped = skipped,
+                    failed = failed
+                )
+                OperationLogStore.updateShelfCache(
+                    context = applicationContext,
+                    workId = workId,
+                    modeTitle = operationTitle,
+                    state = "运行中",
+                    currentIndex = index + 1,
+                    total = total,
+                    currentTitle = "书籍已从书架移除",
+                    completed = completed,
+                    failed = failed,
+                    skipped = skipped
+                )
+                continue
+            }
+
             val displayedIndex = index + 1
             publishProgress(
                 current = displayedIndex,
-                total = books.size,
+                total = total,
                 title = book.title,
                 completed = completed,
                 skipped = skipped,
@@ -94,7 +184,7 @@ class ShelfCacheWorker(
                 modeTitle = operationTitle,
                 state = "运行中",
                 currentIndex = displayedIndex,
-                total = books.size,
+                total = total,
                 currentTitle = book.title,
                 completed = completed,
                 failed = failed,
@@ -127,9 +217,18 @@ class ShelfCacheWorker(
 
             if (alreadyReusable) {
                 skipped += 1
+                checkpoint = checkpoint.copy(
+                    nextIndex = index + 1,
+                    completed = completed,
+                    skipped = skipped,
+                    failed = failed
+                )
+                withContext(Dispatchers.IO) {
+                    ShelfCacheCheckpointStore.save(applicationContext, workId, checkpoint)
+                }
                 publishProgress(
                     current = displayedIndex,
-                    total = books.size,
+                    total = total,
                     title = book.title,
                     completed = completed,
                     skipped = skipped,
@@ -141,13 +240,13 @@ class ShelfCacheWorker(
                     modeTitle = operationTitle,
                     state = "运行中",
                     currentIndex = displayedIndex,
-                    total = books.size,
+                    total = total,
                     currentTitle = book.title,
                     completed = completed,
                     failed = failed,
                     skipped = skipped
                 )
-                return@forEachIndexed
+                continue
             }
 
             val result = runCatching {
@@ -210,9 +309,21 @@ class ShelfCacheWorker(
             }
 
             if (result.isSuccess) completed += 1 else failed += 1
+            checkpoint = checkpoint.copy(
+                nextIndex = index + 1,
+                completed = completed,
+                skipped = skipped,
+                failed = failed
+            )
+            // Commit the checkpoint only after this book is fully classified. If the process dies
+            // during the current book, only that one book may be retried; finished books never are.
+            withContext(Dispatchers.IO) {
+                ShelfCacheCheckpointStore.save(applicationContext, workId, checkpoint)
+            }
+
             publishProgress(
                 current = displayedIndex,
-                total = books.size,
+                total = total,
                 title = book.title,
                 completed = completed,
                 skipped = skipped,
@@ -224,7 +335,7 @@ class ShelfCacheWorker(
                 modeTitle = operationTitle,
                 state = "运行中",
                 currentIndex = displayedIndex,
-                total = books.size,
+                total = total,
                 currentTitle = book.title,
                 completed = completed,
                 failed = failed,
@@ -232,9 +343,9 @@ class ShelfCacheWorker(
             )
         }
 
-        setProgress(progressData(books.size, books.size, "已完成", completed, skipped, failed))
+        setProgress(progressData(total, total, "已完成", completed, skipped, failed))
         val output = workDataOf(
-            KEY_TOTAL to books.size,
+            KEY_TOTAL to total,
             KEY_COMPLETED to completed,
             KEY_SKIPPED to skipped,
             KEY_FAILED to failed
@@ -244,13 +355,16 @@ class ShelfCacheWorker(
             workId = workId,
             modeTitle = operationTitle,
             state = "已完成",
-            currentIndex = books.size,
-            total = books.size,
+            currentIndex = total,
+            total = total,
             currentTitle = "",
             completed = completed,
             failed = failed,
             skipped = skipped
         )
+        // Keep the completed checkpoint. If Android recreates this WorkRequest before WorkManager
+        // commits SUCCEEDED, nextIndex == total makes the recreated worker finish immediately rather
+        // than starting the whole shelf again. A later user action has a different workId.
         return Result.success(output)
     }
 
