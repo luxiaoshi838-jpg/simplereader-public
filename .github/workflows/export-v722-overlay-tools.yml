@@ -11,7 +11,6 @@ permissions:
 # One-shot tooling export. This workflow never uploads an APK.
 jobs:
   export:
-    if: ${{ github.event.head_commit.message == 'ci: export v722 overlay tools' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
