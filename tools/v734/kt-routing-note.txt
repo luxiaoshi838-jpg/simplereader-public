@@ -1,0 +1,8 @@
+v734 classes5 routing delta relative to the v733 helper:
+
+In SimpleReaderBackupDecoder.kt.recordMessageSafe(Context,String):
+
+- `books_without_catalog` is now treated as the dedicated enqueue marker and calls `enqueue(context, MODE_NO_CATALOG)` immediately.
+- `all_books` is no longer routed through helper enqueue; the original v731 ShelfCacheWorker.Companion.enqueue all-books branch executes unchanged in classes3.dex.
+
+The dedicated NoCatalogWorker source remains the v733 D8-compiled implementation. This avoids patching ShelfCacheWorker.doWork() and avoids the v733 regression where the full-shelf mode used reflective request construction.
