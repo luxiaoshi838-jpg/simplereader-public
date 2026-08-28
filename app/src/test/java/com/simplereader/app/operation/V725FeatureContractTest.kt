@@ -75,6 +75,7 @@ class V725FeatureContractTest {
         assertTrue(worker.contains("PageCacheStore.loadPages(applicationContext, identity, document.text)"))
         assertTrue(worker.contains("require(verified != null)"))
         assertTrue(worker.contains("require(verified.pages.size == paged.pages.size)"))
+        assertTrue(worker.contains("require(verified.chapters.size == paged.chapters.size)"))
         assertTrue(worker.contains("PageCacheStore.markRecognitionComplete("))
         assertTrue(worker.indexOf("PageCacheStore.markRecognitionComplete(") > worker.indexOf("require(verified.pages.size == paged.pages.size)"))
 
@@ -102,13 +103,36 @@ class V725FeatureContractTest {
 
         assertTrue(worker.contains("class ShelfCacheWorker("))
         assertTrue(worker.contains(": CoroutineWorker("))
-        assertTrue(worker.contains("setForeground(foregroundInfo(0, 0, \"正在读取书架…\"))"))
+        assertTrue(worker.contains("setForeground("))
         assertTrue(worker.contains("WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("))
         assertTrue(worker.contains("ExistingWorkPolicy.KEEP"))
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE_DATA_SYNC"))
         assertTrue(manifest.contains("android:foregroundServiceType=\"dataSync\""))
         assertTrue(main.contains("可继续阅读或切换到其他应用"))
         assertFalse(main.contains("lifecycleScope.launch {\n            ShelfCacheWorker"))
+    }
+
+    @Test
+    fun unfinishedWorkResumesFromDurableCheckpointInsteadOfRestartingShelf() {
+        val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
+        val checkpoint = File("src/main/java/com/simplereader/app/worker/ShelfCacheCheckpointStore.kt").readText()
+
+        assertTrue(checkpoint.contains("val bookIds: List<Long>"))
+        assertTrue(checkpoint.contains("val nextIndex: Int"))
+        assertTrue(checkpoint.contains("val completed: Int"))
+        assertTrue(checkpoint.contains("val skipped: Int"))
+        assertTrue(checkpoint.contains("val failed: Int"))
+        assertTrue(checkpoint.contains(".commit()"))
+
+        val loadPos = worker.indexOf("ShelfCacheCheckpointStore.load(applicationContext, workId)")
+        val firstProgressPos = worker.indexOf("setProgress(")
+        assertTrue(loadPos >= 0)
+        assertTrue(firstProgressPos > loadPos)
+        assertTrue(worker.contains("val resumeIndex = checkpoint.nextIndex.coerceIn(0, total)"))
+        assertTrue(worker.contains("for (index in resumeIndex until total)"))
+        assertTrue(worker.contains("nextIndex = index + 1"))
+        assertTrue(worker.contains("ShelfCacheCheckpointStore.save(applicationContext, workId, checkpoint)"))
+        assertFalse(worker.contains("for (index in 0 until total)"))
     }
 
     @Test
@@ -134,8 +158,7 @@ class V725FeatureContractTest {
     @Test
     fun oneShelfCacheWorkIdProducesOneBoundedOperationLogEntry() {
         val store = File("src/main/java/com/simplereader/app/operation/OperationLogStore.kt").readText()
-        assertTrue(store.contains("val existing = current.indexOfFirst { it.id == workId }"))
-        assertTrue(store.contains("if (existing >= 0) current[existing] = entry else current.add(0, entry)"))
+        assertTrue(store.contains("if (current.any { it.id == workId }) return"))
         assertTrue(store.contains("val index = entries.indexOfFirst { it.id == workId }"))
         assertTrue(store.contains("distinctBy { it.id }"))
         assertTrue(store.contains("const val MAX_ENTRIES = 10"))
