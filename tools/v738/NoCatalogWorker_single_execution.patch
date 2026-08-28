@@ -1,0 +1,140 @@
+--- tools/v737/helper/SimpleReaderBackupDecoder/NoCatalogWorker.java
++++ tools/v738/helper/SimpleReaderBackupDecoder/NoCatalogWorker.java
+@@
+ import java.util.ArrayList;
++import java.util.concurrent.CancellationException;
+ import java.util.List;
+@@
+ public final class NoCatalogWorker extends Worker {
++    private static final Object EXECUTION_LOCK = new Object();
++    private static final String PREF = "operation_history_v726";
++
+     public NoCatalogWorker(Context context, WorkerParameters params) { super(context, params); }
+ 
+     @Override public ListenableWorker.Result doWork() {
++        synchronized (EXECUTION_LOCK) {
++            return doWorkSingle();
++        }
++    }
++
++    private ListenableWorker.Result doWorkSingle() {
+         Context context = getApplicationContext();
+         try {
++            checkActive(context);
+             KeepAliveService.start(context);
+@@
+-            for (Object book : allBooks) {
++            for (int scanIndex = 0; scanIndex < allBooks.size(); scanIndex++) {
++                if ((scanIndex & 31) == 0) checkActive(context);
++                Object book = allBooks.get(scanIndex);
+                 int probe = probeCompletedReusableCache(context, book);
+@@
++            checkActive(context);
+             final int total = targets.size();
+@@
+             for (int i = 0; i < total; i++) {
++                checkActive(context);
+                 Object book = targets.get(i);
+@@
+                 kt.bookStart(context, i + 1, total, title);
+                 publishProgress(i + 1, total, title, completed, skipped, failed);
++                checkActive(context);
+@@
+-                } catch (StageFailure sf) {
++                } catch (WorkSuperseded stop) {
++                    return resultWithData(true, total, completed, skipped, failed);
++                } catch (StageFailure sf) {
++                    Throwable reason = unwrap(sf.getCause() == null ? sf : sf.getCause());
++                    if (reason instanceof CancellationException || !isActive(context)) {
++                        return resultWithData(true, total, completed, skipped, failed);
++                    }
+                     failed++;
+-                    kt.bookFailure(context, sf.stage, unwrap(sf.getCause() == null ? sf : sf.getCause()));
++                    kt.bookFailure(context, sf.stage, reason);
+                 } catch (Throwable t) {
++                    Throwable reason = unwrap(t);
++                    if (reason instanceof CancellationException || !isActive(context)) {
++                        return resultWithData(true, total, completed, skipped, failed);
++                    }
+                     failed++;
+-                    kt.bookFailure(context, stage, unwrap(t));
++                    kt.bookFailure(context, stage, reason);
+                 }
+@@
++            checkActive(context);
+             kt.finishNoCatalog(context, total);
+@@
++        } catch (WorkSuperseded stop) {
++            return resultWithData(true, 0, 0, 0, 0);
+         } catch (Throwable top) {
++            if (!isActive(context)) return resultWithData(true, 0, 0, 0, 0);
+@@
+     private String processBook(final Context context, final Object book) throws Exception {
++        checkActive(context);
+@@
+         } catch (Throwable t) { throw new StageFailure("文件定位/读取", unwrap(t)); }
++        checkActive(context);
+@@
+         } catch (Throwable t) { throw new StageFailure("清理旧目录/分页缓存", unwrap(t)); }
++        checkActive(context);
+@@
+         } catch (Throwable t) { throw new StageFailure("目录识别/文档加载", unwrap(t)); }
++        checkActive(context);
+@@
+         } catch (Throwable t) { throw new StageFailure("分页参数构建", unwrap(t)); }
++        checkActive(context);
+@@
+             Function0<Boolean> cancelCheck = new Function0<Boolean>() {
+-                @Override public Boolean invoke() { return Boolean.TRUE; }
++                @Override public Boolean invoke() { return Boolean.valueOf(isActive(context)); }
+             };
+@@
+-        } catch (Throwable t) { throw new StageFailure("分页", unwrap(t)); }
++        } catch (Throwable t) {
++            Throwable reason = unwrap(t);
++            if (reason instanceof CancellationException || !isActive(context)) throw new WorkSuperseded();
++            throw new StageFailure("分页", reason);
++        }
++        checkActive(context);
+@@
++        checkActive(context);
+         return "完成";
+     }
++
++    private boolean isActive(Context context) {
++        if (context == null) return false;
++        try {
++            Method stoppedMethod = findNoArgMethod(getClass(), "isStopped");
++            if (stoppedMethod != null && Boolean.TRUE.equals(stoppedMethod.invoke(this))) return false;
++        } catch (Throwable ignored) {}
++        try {
++            Method idMethod = findNoArgMethod(getClass(), "getId");
++            if (idMethod == null) return true;
++            Object id = idMethod.invoke(this);
++            if (id == null) return true;
++            String current = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
++                    .getString("active_work_id", "");
++            return current == null || current.length() == 0 || String.valueOf(id).equals(current);
++        } catch (Throwable ignored) {
++            return true;
++        }
++    }
++
++    private void checkActive(Context context) throws WorkSuperseded {
++        if (!isActive(context)) throw new WorkSuperseded();
++    }
++
++    private static Method findNoArgMethod(Class<?> c, String name) {
++        Class<?> x = c;
++        while (x != null) {
++            try { Method m = x.getDeclaredMethod(name); m.setAccessible(true); return m; }
++            catch (Throwable ignored) {}
++            x = x.getSuperclass();
++        }
++        return null;
++    }
+@@
++    private static final class WorkSuperseded extends Exception {
++        WorkSuperseded() { super("Shelf cache work superseded"); }
++    }
+     private static final class StageFailure extends Exception {
