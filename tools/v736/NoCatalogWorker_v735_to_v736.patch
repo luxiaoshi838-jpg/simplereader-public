@@ -1,0 +1,112 @@
+--- /mnt/data/v735_build/src/SimpleReaderBackupDecoder/NoCatalogWorker.java	2026-08-28 10:24:42.031851135 +0000
++++ /mnt/data/v736_build/src/SimpleReaderBackupDecoder/NoCatalogWorker.java	2026-08-28 10:40:58.683224395 +0000
+@@ -15,7 +15,7 @@
+ import kotlin.jvm.functions.Function0;
+ import kotlin.jvm.functions.Function3;
+ 
+-/** Dedicated v735 worker for "full shelf books without completed catalog/page cache". */
++/** Dedicated v736 worker for "full shelf books without completed catalog/page cache". */
+ public final class NoCatalogWorker extends Worker {
+     public NoCatalogWorker(Context context, WorkerParameters params) { super(context, params); }
+ 
+@@ -23,6 +23,8 @@
+         Context context = getApplicationContext();
+         try {
+             KeepAliveService.start(context);
++            // Phase 1 is metadata-only prefiltering. Do not advance book-processing progress here.
++            publishProgress(0, 0, "正在筛选无目录书籍", 0, 0, 0);
+             List<Object> allBooks = loadBooksFromDatabase(context);
+             int scanTotal = allBooks.size();
+             ArrayList<Object> targets = new ArrayList<Object>();
+@@ -83,7 +85,7 @@
+     }
+ 
+     /**
+-     * v735 prefilter: exactly five user-defined conditions must all be true before a book is
++     * v736 prefilter: exactly five user-defined conditions must all be true before a book is
+      * excluded from "full shelf books without catalog":
+      * 1) a completed visible catalog exists; 2) real page information exists;
+      * 3) file name matches; 4) file size matches; 5) file location/path matches.
+@@ -97,15 +99,6 @@
+             Class<?> bc = book.getClass();
+             long id = ((Number)bc.getMethod("getId").invoke(book)).longValue();
+ 
+-            Object fnObj = bc.getMethod("getFileName").invoke(book);
+-            String fileName = fnObj == null ? "" : String.valueOf(fnObj).trim();
+-            if (fileName.isEmpty()) return false;
+-
+-            Object fsObj = bc.getMethod("getFileSize").invoke(book);
+-            if (!(fsObj instanceof Number)) return false;
+-            long fileSize = ((Number)fsObj).longValue();
+-            if (fileSize < 0L) return false;
+-
+             Object fpObj = bc.getMethod("getFilePath").invoke(book);
+             String filePath = fpObj == null ? "" : String.valueOf(fpObj);
+             if (filePath.trim().isEmpty()) return false;
+@@ -116,19 +109,50 @@
+             if (!recognition.isFile()) return false;
+             String rec = readUtf8(recognition);
+ 
+-            // Condition 1: completed catalog exists.
++            // 1) 有目录：识别完成且目录中至少有一个可见章节。
+             if (!jsonBool(rec, "completed", false)) return false;
+             if (jsonLong(rec, "chapterCount", 0L) <= 0L) return false;
+ 
+-            // Conditions 3 and 4: file name and file size match the current shelf record.
+             String storedName = jsonString(rec, "fileName");
+-            if (storedName == null || !storedName.equalsIgnoreCase(fileName)) return false;
+             Long storedSize = jsonNullableLong(rec, "fileSize");
+-            if (storedSize == null || storedSize.longValue() != fileSize) return false;
++            if (storedName == null || storedName.trim().isEmpty() || storedSize == null || storedSize.longValue() < 0L) return false;
++
++            // 3/4) 文件名、文件大小：先用书架记录做快速比对；记录为空/旧值/不一致时，
++            // 用简阅现有 ReaderDocumentLoader.resolveDocument() 取得当前真实文件 name/length。
++            String currentName = null;
++            Long currentSize = null;
++            try {
++                Object n = bc.getMethod("getFileName").invoke(book);
++                if (n != null && !String.valueOf(n).trim().isEmpty()) currentName = String.valueOf(n).trim();
++            } catch (Throwable ignored) {}
++            try {
++                Object z = bc.getMethod("getFileSize").invoke(book);
++                if (z instanceof Number && ((Number)z).longValue() >= 0L) currentSize = Long.valueOf(((Number)z).longValue());
++            } catch (Throwable ignored) {}
++
++            boolean fastNameOk = currentName != null && storedName.equalsIgnoreCase(currentName);
++            boolean fastSizeOk = currentSize != null && storedSize.longValue() == currentSize.longValue();
++            if (!fastNameOk || !fastSizeOk) {
++                try {
++                    Class<?> loaderClass = Class.forName("com.simplereader.app.reader.ReaderDocumentLoader");
++                    Object loader = loaderClass.getField("INSTANCE").get(null);
++                    Object source = loaderClass.getMethod("resolveDocument", Context.class, bc).invoke(loader, context, book);
++                    if (source == null) return false;
++                    Object n = source.getClass().getMethod("getName").invoke(source);
++                    Object z = source.getClass().getMethod("length").invoke(source);
++                    if (!(n instanceof String) || ((String)n).trim().isEmpty()) return false;
++                    if (!(z instanceof Number) || ((Number)z).longValue() < 0L) return false;
++                    currentName = ((String)n).trim();
++                    currentSize = Long.valueOf(((Number)z).longValue());
++                } catch (Throwable ignored) {
++                    return false;
++                }
++            }
++            if (currentName == null || !storedName.equalsIgnoreCase(currentName)) return false;
++            if (currentSize == null || storedSize.longValue() != currentSize.longValue()) return false;
+ 
+-            // Conditions 2 and 5: at least one real page manifest belongs to this book and points
+-            // to the same current file location. The same file-size condition is also verified in
+-            // the manifest so stale pagination for an older copy cannot be treated as successful.
++            // 2/5) 有分页信息 + 文件位置一致。只要任一真实分页 manifest 同时属于本书、
++            // pages 非空、filePath 与当前书架记录一致，即视为已成功，在预筛选阶段直接剔除。
+             File[] files = dir.listFiles();
+             if (files == null) return false;
+             for (File f : files) {
+@@ -140,8 +164,6 @@
+                     if (jsonLong(m, "bookId", -1L) != id) continue;
+                     String storedPath = jsonString(m, "filePath");
+                     if (storedPath == null || !storedPath.equals(filePath)) continue;
+-                    Long manifestSize = jsonNullableLong(m, "fileSize");
+-                    if (manifestSize == null || manifestSize.longValue() != fileSize) continue;
+                     if (!jsonArrayNonEmpty(m, "pages")) continue;
+                     return true;
+                 } catch (Throwable ignored) {}
