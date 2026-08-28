@@ -1,0 +1,69 @@
+--- tools/v739/helper/SimpleReaderBackupDecoder/kt.java
++++ tools/v740/helper/SimpleReaderBackupDecoder/kt.java
+@@
+-        } catch (Throwable error) {
++        } catch (final Throwable error) {
+             saveLogUiError(activity, error);
++            try {
++                String message = rootMessage(error);
++                new AlertDialog.Builder(activity)
++                        .setTitle("操作日志打开失败")
++                        .setMessage(message)
++                        .setNegativeButton("关闭", null)
++                        .show();
++            } catch (Throwable ignored) {}
+@@
+-        int count = Math.min(LIMIT, Math.max(0, sp.getInt("count", 0)));
++        int count = Math.min(LIMIT, Math.max(0, safePrefInt(sp, "count", 0)));
+@@
+-        for (int i = 0; i < count; i++) titles[i] = sp.getString("title_" + i, "目录缓存");
++        for (int i = 0; i < count; i++) {
++            titles[i] = safePrefString(sp, "title_" + i, "目录缓存");
++        }
+@@
+-                    @Override public void onClick(DialogInterface dialog, int which) { showDetail(activity, sp, which); }
++                    @Override public void onClick(DialogInterface dialog, int which) {
++                        try { showDetail(activity, sp, which); }
++                        catch (Throwable error) {
++                            saveLogUiError(activity, error);
++                            try {
++                                new AlertDialog.Builder(activity).setTitle("日志详情打开失败")
++                                        .setMessage(rootMessage(error)).setNegativeButton("关闭", null).show();
++                            } catch (Throwable ignored) {}
++                        }
++                    }
+@@
+-        final String title = sp.getString("title_" + index, "操作日志");
+-        final String body = sp.getString("body_" + index, "暂无结果");
++        final String title = safePrefString(sp, "title_" + index, "操作日志");
++        final String body = safePrefString(sp, "body_" + index, "暂无结果");
++
++    private static int safePrefInt(SharedPreferences sp, String key, int fallback) {
++        try { return sp.getInt(key, fallback); } catch (Throwable ignored) {}
++        try { return Integer.parseInt(sp.getString(key, String.valueOf(fallback)).trim()); } catch (Throwable ignored) {}
++        try { return (int) sp.getLong(key, fallback); } catch (Throwable ignored) {}
++        return fallback;
++    }
++
++    private static String safePrefString(SharedPreferences sp, String key, String fallback) {
++        try {
++            String value = sp.getString(key, fallback);
++            return value == null ? fallback : value;
++        } catch (Throwable ignored) {}
++        try { return String.valueOf(sp.getInt(key, 0)); } catch (Throwable ignored) {}
++        try { return String.valueOf(sp.getLong(key, 0L)); } catch (Throwable ignored) {}
++        return fallback;
++    }
++
++    private static String rootMessage(Throwable error) {
++        Throwable root = error;
++        try {
++            while (root instanceof java.lang.reflect.InvocationTargetException &&
++                    ((java.lang.reflect.InvocationTargetException) root).getTargetException() != null) {
++                root = ((java.lang.reflect.InvocationTargetException) root).getTargetException();
++            }
++        } catch (Throwable ignored) {}
++        if (root == null) return "未知异常";
++        String message = root.getMessage();
++        return root.getClass().getName() + (message == null || message.length() == 0 ? "" : ": " + message);
++    }
