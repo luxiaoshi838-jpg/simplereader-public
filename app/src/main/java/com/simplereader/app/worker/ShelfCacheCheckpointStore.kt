@@ -53,15 +53,24 @@ object ShelfCacheCheckpointStore {
         context: Context,
         workId: String,
         mode: String,
-        bookIds: List<Long>
+        bookIds: List<Long>,
+        nextIndex: Int = 0,
+        completed: Int = 0,
+        skipped: Int = 0,
+        failed: Int = 0
     ): Checkpoint {
+        val stableBookIds = bookIds.distinct()
+        val safeCompleted = completed.coerceAtLeast(0)
+        val safeSkipped = skipped.coerceAtLeast(0)
+        val safeFailed = failed.coerceAtLeast(0)
+        val fullyProcessed = (safeCompleted + safeSkipped + safeFailed).coerceAtMost(stableBookIds.size)
         val checkpoint = Checkpoint(
             mode = mode,
-            bookIds = bookIds.distinct(),
-            nextIndex = 0,
-            completed = 0,
-            skipped = 0,
-            failed = 0
+            bookIds = stableBookIds,
+            nextIndex = nextIndex.coerceIn(fullyProcessed, stableBookIds.size),
+            completed = safeCompleted,
+            skipped = safeSkipped,
+            failed = safeFailed
         )
         save(context, workId, checkpoint)
         return checkpoint
