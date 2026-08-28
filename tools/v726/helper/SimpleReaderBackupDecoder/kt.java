@@ -20,7 +20,7 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** v726 bounded operation history helper; compiled as the additional classes5.dex. */
+/** Bounded operation history helper used by the v726+ binary overlays. */
 public final class kt {
     private static final String PREF = "operation_history_v726";
     private static final int LIMIT = 10;
@@ -114,8 +114,11 @@ public final class kt {
         final ScrollView scroll = new ScrollView(activity); scroll.setFillViewport(true); scroll.addView(text);
         final SeekBar seek = new SeekBar(activity); seek.setMax(1000); seek.setProgress(0);
         LinearLayout root = new LinearLayout(activity); root.setOrientation(LinearLayout.VERTICAL);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(activity, 420), 1f));
-        root.addView(seek, new LinearLayout.LayoutParams(-1, -2));
+        // Do not call addView(View, LinearLayout.LayoutParams). Some overlay build stubs encoded
+        // that non-existent virtual signature directly, which crashes on Android 16 with
+        // NoSuchMethodError. The platform-supported one-argument overload is sufficient here.
+        root.addView(scroll);
+        root.addView(seek);
         final boolean[] dragging = new boolean[] { false };
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
