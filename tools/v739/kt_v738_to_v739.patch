@@ -1,0 +1,37 @@
+--- tools/v738/helper/SimpleReaderBackupDecoder/kt.java
++++ tools/v739/helper/SimpleReaderBackupDecoder/kt.java
+@@
+     public static void show(final Activity activity) {
+         if (activity == null || activity.isFinishing()) return;
++        try {
++            showUnsafe(activity);
++        } catch (Throwable error) {
++            saveLogUiError(activity, error);
++        }
++    }
++
++    private static void showUnsafe(final Activity activity) {
+         purgeLegacy(activity);
+         final SharedPreferences sp = activity.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+@@
+                 }).setNegativeButton("关闭", null).show();
+     }
++
++    private static void saveLogUiError(Context context, Throwable error) {
++        Context a = app(context);
++        if (a == null) return;
++        Throwable root = error;
++        try {
++            while (root instanceof java.lang.reflect.InvocationTargetException &&
++                    ((java.lang.reflect.InvocationTargetException) root).getTargetException() != null) {
++                root = ((java.lang.reflect.InvocationTargetException) root).getTargetException();
++            }
++        } catch (Throwable ignored) {}
++        String message = root == null ? "未知异常" : root.toString();
++        try {
++            a.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
++                    .putString("operation_log_ui_error", message)
++                    .putLong("operation_log_ui_error_at", System.currentTimeMillis())
++                    .apply();
++        } catch (Throwable ignored) {}
++    }
