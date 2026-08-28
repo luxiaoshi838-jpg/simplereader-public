@@ -23,6 +23,10 @@ jobs:
       - name: Checkout v725 source
         uses: actions/checkout@v4
 
+      - name: Reject tracked APK files
+        shell: bash
+        run: bash tools/verify-no-apk.sh
+
       - name: Apply deterministic v725 MainActivity integration
         run: |
           python3 tools/apply-v725.py
@@ -55,7 +59,7 @@ jobs:
             --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
             --stacktrace 2>&1 | tee gradle-v725-debug.log
 
-      - name: Verify debug package
+      - name: Verify debug package locally in runner
         shell: bash
         run: |
           set -euo pipefail
@@ -89,7 +93,7 @@ jobs:
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-v725-release.log
 
-      - name: Verify release package
+      - name: Verify release package locally in runner
         shell: bash
         run: |
           set -euo pipefail
@@ -99,14 +103,13 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools/aapt2" dump badging "$release_apk" | tee apk-release-badging.txt
           grep -Fq "package: name='com.simplereader.app' versionCode='2098000725' versionName='725'" apk-release-badging.txt
+          echo 'APK validation complete; APK files remain ephemeral and are not uploaded.'
 
-      - name: Upload v725 tested build artifacts
+      - name: Upload v725 test logs only
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v725-tested-unsigned
+          name: SimpleReader-v725-test-logs
           path: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/debug/app-debug.apk
             gradle-v725-debug.log
             gradle-v725-release.log
             apk-debug-badging.txt
@@ -122,7 +125,7 @@ jobs:
             emulator-cache-idle.txt
             emulator-v725-result.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
       - name: Persist tested MainActivity source to branch
         if: success() && github.event_name == 'push'
