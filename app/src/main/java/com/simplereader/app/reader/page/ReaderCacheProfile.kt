@@ -13,8 +13,8 @@ object ReaderCacheProfile {
 
     const val TOP_GUARD_DP = 0
     const val HORIZONTAL_PADDING_DP = 28
-    const val CONTENT_TOP_PADDING_DP = 24
-    const val CONTENT_BOTTOM_PADDING_DP = 24
+    const val CONTENT_TOP_PADDING_DP = 0
+    const val CONTENT_BOTTOM_PADDING_DP = 0
     const val LINE_SPACING_MULTIPLIER = 1.75f
     const val TITLE_SIZE_DELTA_SP = 2f
 
