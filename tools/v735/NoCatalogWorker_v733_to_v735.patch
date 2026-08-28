@@ -1,0 +1,184 @@
+--- tools/v733/helper/SimpleReaderBackupDecoder/NoCatalogWorker.java
++++ tools/v735/helper/SimpleReaderBackupDecoder/NoCatalogWorker.java
+@@
+ package SimpleReaderBackupDecoder;
+ 
+ import android.content.Context;
++import androidx.work.Data;
+ import androidx.work.ListenableWorker;
+ import androidx.work.Worker;
+ import androidx.work.WorkerParameters;
+@@
+-/** Dedicated v733 worker for "full shelf books without reusable catalog/page cache". */
++/** Dedicated v735 worker for "full shelf books without completed catalog/page cache". */
+ public final class NoCatalogWorker extends Worker {
+@@
+-                if (book != null && kt.hasReusableCurrentCache(context, book)) excluded++;
++                if (book != null && hasCompletedReusableCache(context, book)) excluded++;
+                 else targets.add(book);
+             }
+             final int total = targets.size();
+             kt.noCatalogScan(context, scanTotal, total, excluded);
+-            if (total == 0) return ListenableWorker.Result.success();
++            publishProgress(0, total, total == 0 ? "已完成" : "准备处理", 0, 0, 0);
++            if (total == 0) return resultWithData(true, 0, 0, 0, 0);
+@@
+-                if (book != null && kt.hasReusableCurrentCache(context, book)) {
++                if (book != null && hasCompletedReusableCache(context, book)) {
+@@
+             }
+             kt.finishNoCatalog(context, total);
+-            return ListenableWorker.Result.success();
++            publishProgress(total, total, "已完成", completed, skipped, failed);
++            return resultWithData(true, total, completed, skipped, failed);
+@@
+-            return ListenableWorker.Result.failure();
++            return resultWithData(false, 1, 0, 0, 1);
+         }
+     }
++
++    /**
++     * Exactly five user-defined conditions must all be true before a book is excluded from
++     * "全书架无目录书籍缓存":
++     * 1) completed visible catalog; 2) real page information; 3) same file name;
++     * 4) same file size; 5) same file location/path.
++     * No catalog-rule-version, reader-settings-hash, lastModified or reflective reader-load
++     * check participates in this prefilter.
++     */
++    private static boolean hasCompletedReusableCache(Context context, Object book) {
++        if (context == null || book == null) return false;
++        try {
++            Class<?> bc = book.getClass();
++            long id = ((Number)bc.getMethod("getId").invoke(book)).longValue();
++
++            Object fnObj = bc.getMethod("getFileName").invoke(book);
++            String fileName = fnObj == null ? "" : String.valueOf(fnObj).trim();
++            if (fileName.isEmpty()) return false;
++
++            Object fsObj = bc.getMethod("getFileSize").invoke(book);
++            if (!(fsObj instanceof Number)) return false;
++            long fileSize = ((Number)fsObj).longValue();
++            if (fileSize < 0L) return false;
++
++            Object fpObj = bc.getMethod("getFilePath").invoke(book);
++            String filePath = fpObj == null ? "" : String.valueOf(fpObj);
++            if (filePath.trim().isEmpty()) return false;
++
++            File filesDir = (File)context.getClass().getMethod("getFilesDir").invoke(context);
++            File dir = new File(new File(filesDir, "reader_page_cache"), String.valueOf(id));
++            File recognition = new File(dir, "recognition.json");
++            if (!recognition.isFile()) return false;
++            String rec = readUtf8(recognition);
++
++            if (!jsonBool(rec, "completed", false)) return false;
++            if (jsonLong(rec, "chapterCount", 0L) <= 0L) return false;
++
++            String storedName = jsonString(rec, "fileName");
++            if (storedName == null || !storedName.equalsIgnoreCase(fileName)) return false;
++            Long storedSize = jsonNullableLong(rec, "fileSize");
++            if (storedSize == null || storedSize.longValue() != fileSize) return false;
++
++            File[] files = dir.listFiles();
++            if (files == null) return false;
++            for (File f : files) {
++                if (f == null || !f.isFile()) continue;
++                String n = f.getName();
++                if (!("pages.json".equals(n) || (n.startsWith("pages-") && n.endsWith(".json")))) continue;
++                try {
++                    String m = readUtf8(f);
++                    if (jsonLong(m, "bookId", -1L) != id) continue;
++                    String storedPath = jsonString(m, "filePath");
++                    if (storedPath == null || !storedPath.equals(filePath)) continue;
++                    Long manifestSize = jsonNullableLong(m, "fileSize");
++                    if (manifestSize == null || manifestSize.longValue() != fileSize) continue;
++                    if (!jsonArrayNonEmpty(m, "pages")) continue;
++                    return true;
++                } catch (Throwable ignored) {}
++            }
++            return false;
++        } catch (Throwable ignored) {
++            return false;
++        }
++    }
++
++    private static Long jsonNullableLong(String json, String key) {
++        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
++                "\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*(-?\\d+|null)").matcher(json);
++        if (!m.find() || "null".equals(m.group(1))) return null;
++        try { return Long.valueOf(Long.parseLong(m.group(1))); } catch (Throwable ignored) { return null; }
++    }
++
++    private static long jsonLong(String json, String key, long def) {
++        Long v = jsonNullableLong(json, key); return v == null ? def : v.longValue();
++    }
++
++    private static boolean jsonBool(String json, String key, boolean def) {
++        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
++                "\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*(true|false)").matcher(json);
++        return m.find() ? "true".equals(m.group(1)) : def;
++    }
++
++    private static String jsonString(String json, String key) {
++        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
++                "\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"").matcher(json);
++        if (!m.find()) return null;
++        return m.group(1).replace("\\\\\\\"", "\\\"").replace("\\\\\\\\", "\\\\");
++    }
++
++    private static boolean jsonArrayNonEmpty(String json, String key) {
++        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
++                "\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*\\[").matcher(json);
++        if (!m.find()) return false;
++        for (int i=m.end(); i<json.length(); i++) {
++            char c=json.charAt(i); if (Character.isWhitespace(c)) continue; return c != ']';
++        }
++        return false;
++    }
++
++    private static String readUtf8(File file) throws Exception {
++        java.io.BufferedReader br = new java.io.BufferedReader(
++                new java.io.InputStreamReader(new java.io.FileInputStream(file), "UTF-8"));
++        try {
++            StringBuilder out = new StringBuilder((int)Math.min(Integer.MAX_VALUE, Math.max(64L, file.length())));
++            char[] buf = new char[4096];
++            int n;
++            while ((n = br.read(buf)) >= 0) out.append(buf, 0, n);
++            return out.toString();
++        } finally { br.close(); }
++    }
++
++    private static ListenableWorker.Result resultWithData(boolean success, int total,
++            int completed, int skipped, int failed) {
++        Data data = new Data.Builder()
++                .putInt("total", total)
++                .putInt("completed", completed)
++                .putInt("skipped", skipped)
++                .putInt("failed", failed)
++                .build();
++        return success ? ListenableWorker.Result.success(data) : ListenableWorker.Result.failure(data);
++    }
+@@
+     private void publishProgress(int current, int total, String title, int completed, int skipped, int failed) {
+         try {
+-            Class<?> dbc = Class.forName("androidx.work.Data$Builder");
+-            Object b = dbc.getConstructor().newInstance();
+-            Method putInt = dbc.getMethod("putInt", String.class, int.class);
+-            Method putString = dbc.getMethod("putString", String.class, String.class);
+-            putInt.invoke(b, "current", current); putInt.invoke(b, "total", total);
+-            putInt.invoke(b, "completed", completed); putInt.invoke(b, "skipped", skipped); putInt.invoke(b, "failed", failed);
+-            putString.invoke(b, "title", title == null ? "" : title);
+-            Object data = dbc.getMethod("build").invoke(b);
+-            Class<?> dataClass = Class.forName("androidx.work.Data");
+-            Method set = findPublicMethod(getClass(), "setProgressAsync", dataClass);
+-            if (set != null) set.invoke(this, data);
++            Data data = new Data.Builder()
++                    .putInt("current", current)
++                    .putInt("total", total)
++                    .putInt("completed", completed)
++                    .putInt("skipped", skipped)
++                    .putInt("failed", failed)
++                    .putString("title", title == null ? "" : title)
++                    .build();
++            setProgressAsync(data);
+         } catch (Throwable ignored) {}
+     }
