@@ -18,6 +18,14 @@ grep -q 'coroutineContext.ensureActive()' app/src/main/java/com/simplereader/app
 grep -q 'shouldContinue = { activeContext.isActive }' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt
 grep -q 'fun showLogHub(activity: AppCompatActivity) = showCrashLogList(activity)' app/src/main/java/com/simplereader/app/operation/OperationLogDialogs.kt
 grep -q 'return emptyList()' app/src/main/java/com/simplereader/app/operation/OperationLogStore.kt
-grep -q '?: "2098000746"' app/build.gradle.kts
-grep -q '?: "746"' app/build.gradle.kts
-echo 'Source-only V746 production guard passed.'
+grep -q 'showAutoReadDialog' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'scheduleAutomaticPageTurn' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'startAutomaticVerticalScroll' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'MIN_AUTO_READ_CPM = 200' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'MAX_AUTO_READ_CPM = 2000' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'AUTO_READ_STEP_CPM = 50' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q '@+id/autoReadButton' app/src/main/res/layout/activity_reader.xml
+grep -q '@+id/autoReadStopButton' app/src/main/res/layout/activity_reader.xml
+grep -q '?: "2098000747"' app/build.gradle.kts
+grep -q '?: "747"' app/build.gradle.kts
+echo 'Source-only V747 production guard passed.'
