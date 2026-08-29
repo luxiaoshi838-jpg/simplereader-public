@@ -7,7 +7,7 @@ import org.junit.Test
 
 class ShelfBackgroundCacheContractTest {
     @Test
-    fun shelfManagementStartsPersistentCatalogCache() {
+    fun shelfManagementStartsReplaceablePersistentCatalogCache() {
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val store = File("src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt").readText()
@@ -18,8 +18,10 @@ class ShelfBackgroundCacheContractTest {
         assertTrue(main.contains("arrayOf(\"全书架目录缓存\", \"全书架无目录书籍缓存\")"))
         assertTrue(main.contains("ShelfCacheWorker.enqueue(this, mode)"))
         assertTrue(worker.contains("CoroutineWorker"))
-        assertTrue(worker.contains("ExistingWorkPolicy.KEEP"))
+        assertTrue(worker.contains("ExistingWorkPolicy.REPLACE"))
+        assertTrue(worker.contains("coroutineContext.ensureActive()"))
         assertTrue(worker.contains("PageEngine.paginate"))
+        assertTrue(worker.contains("shouldContinue = { activeContext.isActive }"))
         assertTrue(worker.contains("MODE_ALL_BOOKS"))
         assertTrue(worker.contains("MODE_BOOKS_WITHOUT_CATALOG"))
         assertTrue(worker.contains("PageCacheStore.hasCurrentCatalog"))
