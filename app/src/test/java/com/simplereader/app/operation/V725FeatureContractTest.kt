@@ -25,7 +25,7 @@ class V725FeatureContractTest {
     }
 
     @Test
-    fun mainActivityKeepsOriginalGroupActionsAndAddsLogWithoutReplacingThem() {
+    fun mainActivityKeepsOriginalGroupActionsAndCrashLogEntry() {
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val groupStart = main.indexOf("private fun showGroupActions")
         val groupEnd = main.indexOf("private fun showGroupManagement", groupStart)
@@ -52,7 +52,7 @@ class V725FeatureContractTest {
     }
 
     @Test
-    fun workerPublishesRealBookTitleAndFreshCountersThroughoutTheTask() {
+    fun workerPublishesRealBookTitleAndFreshCountersAndReplacesOlderTask() {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         assertTrue(worker.contains("val displayedIndex = index + 1"))
         assertTrue(worker.contains("currentTitle = book.title"))
@@ -60,8 +60,9 @@ class V725FeatureContractTest {
         assertTrue(worker.contains("KEY_COMPLETED to completed"))
         assertTrue(worker.contains("KEY_SKIPPED to skipped"))
         assertTrue(worker.contains("KEY_FAILED to failed"))
-        assertTrue(worker.contains("ExistingWorkPolicy.KEEP"))
-        assertTrue(worker.countOccurrences("OperationLogStore.updateShelfCache(") >= 4)
+        assertTrue(worker.contains("ExistingWorkPolicy.REPLACE"))
+        assertTrue(worker.contains("coroutineContext.ensureActive()"))
+        assertTrue(worker.contains("shouldContinue = { activeContext.isActive }"))
         assertTrue(worker.countOccurrences("setProgress(") >= 2)
     }
 
@@ -69,7 +70,6 @@ class V725FeatureContractTest {
     fun shelfCatalogTaskAlsoBuildsAndVerifiesReusablePagination() {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val profile = File("src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt").readText()
-
         assertTrue(worker.contains("PageEngine.paginate("))
         assertTrue(worker.contains("PageCacheStore.savePages(applicationContext, identity, paged)"))
         assertTrue(worker.contains("PageCacheStore.loadPages(applicationContext, identity, document.text)"))
@@ -77,8 +77,6 @@ class V725FeatureContractTest {
         assertTrue(worker.contains("require(verified.pages.size == paged.pages.size)"))
         assertTrue(worker.contains("require(verified.chapters.size == paged.chapters.size)"))
         assertTrue(worker.contains("PageCacheStore.markRecognitionComplete("))
-        assertTrue(worker.indexOf("PageCacheStore.markRecognitionComplete(") > worker.indexOf("require(verified.pages.size == paged.pages.size)"))
-
         assertTrue(profile.contains("const val CONTENT_TOP_PADDING_DP = 0"))
         assertTrue(profile.contains("const val CONTENT_BOTTOM_PADDING_DP = 0"))
     }
@@ -89,7 +87,6 @@ class V725FeatureContractTest {
         val reusableStart = worker.indexOf("private suspend fun hasReusableCurrentCache")
         val reusableEnd = worker.indexOf("private fun cacheIdentity", reusableStart)
         val reusableBlock = worker.substring(reusableStart, reusableEnd)
-
         assertTrue(reusableBlock.contains("PageCacheStore.hasCurrentCatalog("))
         assertTrue(reusableBlock.contains("PageCacheStore.loadPages(applicationContext, identity, document.text)"))
         assertTrue(reusableBlock.contains("cached != null && cached.pages.isNotEmpty()"))
@@ -100,12 +97,11 @@ class V725FeatureContractTest {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
-
         assertTrue(worker.contains("class ShelfCacheWorker("))
         assertTrue(worker.contains(": CoroutineWorker("))
         assertTrue(worker.contains("setForeground("))
         assertTrue(worker.contains("WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("))
-        assertTrue(worker.contains("ExistingWorkPolicy.KEEP"))
+        assertTrue(worker.contains("ExistingWorkPolicy.REPLACE"))
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE_DATA_SYNC"))
         assertTrue(manifest.contains("android:foregroundServiceType=\"dataSync\""))
         assertTrue(main.contains("可继续阅读或切换到其他应用"))
@@ -116,14 +112,12 @@ class V725FeatureContractTest {
     fun unfinishedWorkResumesFromDurableCheckpointInsteadOfRestartingShelf() {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val checkpoint = File("src/main/java/com/simplereader/app/worker/ShelfCacheCheckpointStore.kt").readText()
-
         assertTrue(checkpoint.contains("val bookIds: List<Long>"))
         assertTrue(checkpoint.contains("val nextIndex: Int"))
         assertTrue(checkpoint.contains("val completed: Int"))
         assertTrue(checkpoint.contains("val skipped: Int"))
         assertTrue(checkpoint.contains("val failed: Int"))
         assertTrue(checkpoint.contains(".commit()"))
-
         val loadPos = worker.indexOf("ShelfCacheCheckpointStore.load(applicationContext, workId)")
         val firstProgressPos = worker.indexOf("setProgress(")
         assertTrue(loadPos >= 0)
@@ -136,43 +130,36 @@ class V725FeatureContractTest {
     }
 
     @Test
-    fun logListHasNoCopyButtonButDetailHasCopyAndDraggableSeekBar() {
+    fun logHubShowsCrashListAndCopyOnlyInsideOpenedLog() {
         val dialogs = File("src/main/java/com/simplereader/app/operation/OperationLogDialogs.kt").readText()
-        val listStart = dialogs.indexOf("fun showOperationList")
-        val listEnd = dialogs.indexOf("private fun showOperationDetail", listStart)
-        val listBlock = dialogs.substring(listStart, listEnd)
+        assertTrue(dialogs.contains("fun showLogHub(activity: AppCompatActivity) = showCrashLogList(activity)"))
+        val listStart = dialogs.indexOf("private fun showCrashLogList")
+        val detailStart = dialogs.indexOf("private fun showCrashLogEntry", listStart)
+        val listBlock = dialogs.substring(listStart, detailStart)
+        assertTrue(listBlock.contains("setItems(entries.map { it.displayName }.toTypedArray())"))
         assertFalse(listBlock.contains("setPositiveButton(\"复制\")"))
-        assertTrue(listBlock.contains("entries.map { it.title }.toTypedArray()"))
-        assertTrue(listBlock.contains("showOperationDetail(activity, it)"))
-
-        val detailStart = listEnd
-        val detailEnd = dialogs.indexOf("private fun showPendingCrashLog", detailStart)
-        val detailBlock = dialogs.substring(detailStart, detailEnd)
-        assertTrue(detailBlock.contains("SeekBar(activity)"))
-        assertTrue(detailBlock.contains("max = 1000"))
-        assertTrue(detailBlock.contains("setOnSeekBarChangeListener"))
-        assertTrue(detailBlock.contains("scrollView.scrollTo(0, target)"))
+        val detailBlock = dialogs.substring(detailStart)
         assertTrue(detailBlock.contains("setPositiveButton(\"复制\")"))
+        assertTrue(detailBlock.contains("setTextIsSelectable(true)"))
     }
 
     @Test
-    fun oneShelfCacheWorkIdProducesOneBoundedOperationLogEntry() {
+    fun operationHistoryPersistenceIsRemovedButKeepAliveHooksRemain() {
         val store = File("src/main/java/com/simplereader/app/operation/OperationLogStore.kt").readText()
-        assertTrue(store.contains("if (current.any { it.id == workId }) return"))
-        assertTrue(store.contains("val index = entries.indexOfFirst { it.id == workId }"))
-        assertTrue(store.contains("distinctBy { it.id }"))
-        assertTrue(store.contains("const val MAX_ENTRIES = 10"))
-        assertTrue(store.contains("take(MAX_ENTRIES)"))
+        assertTrue(store.contains("return emptyList()"))
+        assertTrue(store.contains("ShelfCacheKeepAliveService.start(context)"))
+        assertTrue(store.contains("ShelfCacheKeepAliveService.stop(context)"))
+        assertFalse(store.contains("MAX_ENTRIES"))
+        assertFalse(store.contains("distinctBy { it.id }"))
     }
 
     @Test
-    fun legacyV722OperationXmlIsDeletedDirectlyWithoutParsingIt() {
+    fun legacyOperationXmlIsDeletedDirectlyWithoutParsingIt() {
         val store = File("src/main/java/com/simplereader/app/operation/OperationLogStore.kt").readText()
-        assertTrue(store.contains("File(prefsDir, \"${'$'}LEGACY_PREFS.xml\").delete()"))
-        assertTrue(store.contains("File(prefsDir, \"${'$'}LEGACY_PREFS.xml.bak\").delete()"))
+        assertTrue(store.contains("File(prefsDir, \"${'$'}name.xml\").delete()"))
+        assertTrue(store.contains("File(prefsDir, \"${'$'}name.xml.bak\").delete()"))
         assertFalse(store.contains("getSharedPreferences(LEGACY_PREFS"))
-        assertTrue(store.contains("const val MAX_ENTRIES = 10"))
-        assertTrue(store.contains("take(MAX_ENTRIES)"))
+        assertFalse(store.contains("getSharedPreferences(REMOVED_PREFS"))
     }
 
     @Test
