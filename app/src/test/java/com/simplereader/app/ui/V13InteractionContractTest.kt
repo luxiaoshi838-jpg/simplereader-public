@@ -20,11 +20,19 @@ class V13InteractionContractTest {
     }
 
     @Test
-    fun `bookmark creation stays in reader top bar only`() {
+    fun `bookmark creation stays in reader top bar with source vector and page uniqueness`() {
         val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
-        assertTrue(reader.contains("text = \"添\""))
-        assertTrue(reader.contains("shape = GradientDrawable.OVAL"))
+        val dao = source("src/main/java/com/simplereader/app/data/dao/BookmarkDao.kt")
+        val vector = source("src/main/res/drawable/ic_bookmark_add.xml")
+        assertTrue(reader.contains("setImageResource(R.drawable.ic_bookmark_add)"))
+        assertTrue(reader.contains("background = null"))
+        assertTrue(reader.contains("database.withTransaction"))
+        assertTrue(reader.contains("getBookmarkByPage(bookId, page.globalPageIndex)"))
+        assertTrue(reader.contains("本页已有书签"))
         assertTrue(reader.contains("MENU_ADD_BOOKMARK"))
+        assertTrue(dao.contains("WHERE bookId = :bookId AND globalPageIndex = :globalPageIndex"))
+        assertTrue(vector.contains("android:strokeColor=\"#FFFFFFFF\""))
+        assertTrue(vector.contains("M12,7 L12,13 M9,10 L15,10"))
         val panelStart = reader.indexOf("private fun showCatalogBookmarkPanelV600")
         val panelEnd = reader.indexOf("private fun buttonLikeText", panelStart)
         assertFalse(reader.substring(panelStart, panelEnd).contains("addBookmark()"))
