@@ -1,0 +1,41 @@
+name: v748 Offline Toolchain Export
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-offline-toolchain.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
+      - name: Populate Gradle caches
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath >/tmp/dependencies.txt
+          ./gradlew :app:assembleDebug -x test --stacktrace || true
+      - name: Export offline toolchain
+        run: |
+          set -eux
+          mkdir -p /tmp/offline/android-sdk/platforms /tmp/offline/android-sdk/build-tools
+          cp -a ~/.gradle /tmp/offline/gradle-home
+          cp -a "$ANDROID_HOME/platforms/android-35" /tmp/offline/android-sdk/platforms/
+          if [ -d "$ANDROID_HOME/build-tools/35.0.0" ]; then cp -a "$ANDROID_HOME/build-tools/35.0.0" /tmp/offline/android-sdk/build-tools/; fi
+          cp /tmp/dependencies.txt /tmp/offline/
+          tar -C /tmp -czf /tmp/v748-offline-toolchain.tar.gz offline
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v748-offline-toolchain
+          path: /tmp/v748-offline-toolchain.tar.gz
+          compression-level: 0
+          retention-days: 1
