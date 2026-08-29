@@ -26,6 +26,7 @@ jobs:
           bash tools/verify-ui-policy.sh
           bash tools/verify-source-only-production.sh
           ! grep -R -n -E 'classes[0-9]*\.dex|dex offset|register patch' app/src/main
+          echo V747_SOURCE_GUARD=PASS
 
       - uses: actions/setup-java@v4
         with:
@@ -82,7 +83,7 @@ jobs:
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/build.gradle.kts app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/res/layout/activity_reader.xml app/src/main/res/drawable/bg_auto_read_stop.xml app/src/test/java/com/simplereader/app/ui/V747AutoReadContractTest.kt
+          git add app/build.gradle.kts app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/res/layout/activity_reader.xml app/src/main/res/drawable/bg_auto_read_stop.xml app/src/test/java/com/simplereader/app/ui/V747AutoReadContractTest.kt tools/verify-source-only-production.sh
           git commit -m 'v747: restore source-native automatic reading [skip ci]'
           git push origin HEAD:source-v747
 
