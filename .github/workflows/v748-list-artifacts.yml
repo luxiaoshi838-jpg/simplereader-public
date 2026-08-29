@@ -1,0 +1,37 @@
+name: V748 list historical artifacts
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-list-artifacts.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: List retained artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/v748
+          out=tools/v748/ACTIONS_ARTIFACTS.txt
+          {
+            echo "repo=${GITHUB_REPOSITORY}"
+            echo "generated=$(date -u +%FT%TZ)"
+            echo
+            gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | [.id,.name,.expired,.created_at,.size_in_bytes,.workflow_run.head_sha] | @tsv'
+          } > "$out"
+          echo '--- likely historical targets ---'
+          grep -Ei 'v(697|708|710|718|720|721|722|725|726|727|742|743|744|745)|overlay|baseline|apk|signed|release' "$out" || true
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out"
+          git commit -m 'v748: record retained Actions artifacts [skip ci]'
+          git push origin HEAD:source-v748
