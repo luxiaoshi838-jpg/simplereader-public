@@ -28,12 +28,37 @@ jobs:
         run: python3 tools/source-rebuild-v683/apply_source_migration.py
 
       - name: Verify source-only production path
-        run: tools/verify-source-only-production.sh
+        run: |
+          bash tools/verify-source-only-production.sh
+          bash tools/verify-ui-policy.sh
 
-      - name: Test and build from source
+      - name: Test and build V746 from source
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000746'
+          SIMPLE_READER_VERSION_NAME: '746'
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
+
+      - name: Prepare unsigned APK and local signing helper
+        run: |
+          set -euo pipefail
+          mkdir -p export-v746
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" export-v746/SimpleReader_v746_source_unsigned.apk
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          test -n "$BUILD_TOOLS_VERSION"
+          cp "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/lib/apksigner.jar" export-v746/apksigner.jar
+          sha256sum export-v746/* > export-v746/SHA256SUMS.txt
+
+      - name: Upload unsigned V746 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v746-source-unsigned
+          path: export-v746
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Commit migrated source
         run: |
@@ -41,5 +66,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app tools .github/workflows/v683-source-rebuild-once.yml || true
-          git commit -m "Sourceize current behavior from V683 lineage [source-rebuild-applied]"
+          git diff --cached --quiet && exit 0
+          git commit -m "V746: sourceize current behavior from V683 lineage [source-rebuild-applied]"
           git push origin HEAD:source-rebuild-v683
