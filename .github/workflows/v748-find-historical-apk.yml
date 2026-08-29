@@ -1,0 +1,54 @@
+name: V748 find historical APK
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-find-historical-apk.yml']
+permissions:
+  contents: write
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Scan historical archive objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/v748
+          out=tools/v748/HISTORICAL_APK_SCAN.txt
+          : > "$out"
+          python3 - <<'PY' >> "$out"
+          import subprocess, zipfile, io, hashlib, re
+          target='a53aa236ac378ff97fb4c2ea1782f90ebf871717d0e04f80949b1eee2c3ff83f'
+          rows=subprocess.check_output(['git','rev-list','--objects','--all']).decode(errors='ignore').splitlines()
+          for row in rows:
+              p=row.split(' ',1)
+              if len(p)<2: continue
+              oid,path=p
+              if not re.search(r'\.(apk|zip|jar|bin|b64|base64)$',path,re.I): continue
+              try:
+                  data=subprocess.check_output(['git','cat-file','-p',oid],stderr=subprocess.DEVNULL,timeout=5)
+              except: continue
+              blobs=[(path,data)]
+              if path.lower().endswith(('.b64','.base64')):
+                  import base64
+                  try: blobs.append((path+'#decoded',base64.b64decode(data)))
+                  except: pass
+              for label,b in blobs:
+                  if b[:4]!=b'PK\x03\x04': continue
+                  try:
+                    z=zipfile.ZipFile(io.BytesIO(b))
+                    hit=False
+                    for n in z.namelist():
+                      try: d=z.read(n)
+                      except: continue
+                      if hashlib.sha256(d).hexdigest()==target: hit=True; break
+                    if hit:
+                      print('FOUND',oid,label,len(b),sep='\t')
+                  except: pass
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out" && git commit -m 'v748: record historical package scan [skip ci]' && git push origin HEAD:source-v748
