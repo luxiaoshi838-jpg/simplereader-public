@@ -10,21 +10,17 @@ def replace_once(path: str, old: str, new: str, label: str) -> None:
     target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
-# MainActivity: source-level selection exit icon.
+# MainActivity: every selection-mode refresh path must show the same top-right exit glyph.
 main = Path("app/src/main/java/com/simplereader/app/ui/MainActivity.kt")
 text = main.read_text(encoding="utf-8")
-candidates = [
-    ('moreButton.text = "\\u53d6\\u6d88"', 'moreButton.text = "×"'),
-    ('moreButton.text = "取消"', 'moreButton.text = "×"'),
-]
-for old, new in candidates:
-    if old in text:
-        if text.count(old) != 1:
-            raise SystemExit(f"MainActivity selection label: expected 1 match, found {text.count(old)}")
-        text = text.replace(old, new, 1)
-        break
-else:
-    raise SystemExit("MainActivity selection label source not found")
+replacements = 0
+for old in ('moreButton.text = "\\u53d6\\u6d88"', 'moreButton.text = "取消"'):
+    count = text.count(old)
+    if count:
+        text = text.replace(old, 'moreButton.text = "×"')
+        replacements += count
+if replacements != 2:
+    raise SystemExit(f"MainActivity selection label: expected 2 source paths, found {replacements}")
 main.write_text(text, encoding="utf-8")
 
 
@@ -208,7 +204,7 @@ if grep -RInE 'classes[0-9]*\\.dex|patch_classes|patch_v7[0-9][0-9]|dex offset|r
   echo 'ERROR: production source references binary patch implementation' >&2
   exit 1
 fi
-grep -q 'moreButton.text = "×"' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+[ "$(grep -c 'moreButton.text = "×"' app/src/main/java/com/simplereader/app/ui/MainActivity.kt)" -eq 2 ]
 grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt
 grep -q 'getBookmarkByPage' app/src/main/java/com/simplereader/app/data/dao/BookmarkDao.kt
