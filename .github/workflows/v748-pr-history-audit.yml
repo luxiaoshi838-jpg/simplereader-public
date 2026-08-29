@@ -1,0 +1,73 @@
+name: V748 PR history audit
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-pr-history-audit.yml']
+permissions:
+  contents: write
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Fetch PR refs and locate exact source/assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 90s git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*/head' '+refs/pull/*/merge:refs/remotes/origin/pr/*/merge' --no-tags || true
+          mkdir -p tools/v748
+          out=tools/v748/PR_HISTORY_SOURCE_AUDIT.txt
+          : > "$out"
+          reader=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          echo '=== AUTO READ ===' >> "$out"
+          for c in $(git rev-list --all -- "$reader"); do
+            txt=$(git show "$c:$reader" 2>/dev/null || true)
+            if grep -q 'showAutoReadDialog' <<<"$txt" && grep -q 'startAutomaticVerticalScroll' <<<"$txt"; then
+              printf '%s\t%s\t%s\n' "$c" "$(git show -s --format=%cI "$c")" "$(git show -s --format=%s "$c")" >> "$out"
+            fi
+          done
+          echo '=== CATALOG >=100 ===' >> "$out"
+          for c in $(git rev-list --all -- app/src/main/java); do
+            txt=$(git show "$c:app/src/main/java/com/simplereader/app/parser/TxtParser.kt" 2>/dev/null || true)
+            v=$(grep -m1 -E 'CATALOG_RULE_VERSION\s*=\s*[0-9]+' <<<"$txt" | grep -oE '[0-9]+' | tail -1 || true)
+            if [ -n "$v" ] && [ "$v" -ge 100 ] 2>/dev/null; then
+              printf '%s\tv=%s\t%s\t%s\n' "$c" "$v" "$(git show -s --format=%cI "$c")" "$(git show -s --format=%s "$c")" >> "$out"
+            fi
+          done
+          echo '=== GLOBAL METHOD HITS ===' >> "$out"
+          for term in showAutoReadDialog startAutomaticVerticalScroll DirectTxtCatalogV100 CatalogTitleNormalizerV103 ReaderBodyTitleNormalizerV104 ChapterPriorityClassifier; do
+            echo "-- $term --" >> "$out"
+            git grep -n -I "$term" $(git rev-list --all) 2>/dev/null | head -n 300 >> "$out" || true
+          done
+          echo '=== EXACT ASSETS ===' >> "$out"
+          python3 - <<'PY' >> "$out"
+          import subprocess, hashlib
+          wanted={
+          'a53aa236ac378ff97fb4c2ea1782f90ebf871717d0e04f80949b1eee2c3ff83f':'book_cover_default_txt.webp',
+          '54af0ee85a3df52ff48c824db44c24643aa40060c09d9f1ae4b9e0a12f898222':'reader_material_vine_black.webp',
+          'f427defab27645f4527e78be36b63dac2baffe6181792ee60facaa98a3bd924a':'reader_material_vine_blue.webp',
+          '9f76af5fb50e3088305257df050ace78ca94bf532716f8adbfe05ea88f3266a1':'reader_material_vine_green.webp',
+          'd10bff62231a5a8768731b4000ab3cca089963947bc1a7a1f2d7cee0713ad8d9':'reader_material_vine_white.webp',
+          '14205d25ad6dd958509d3cbe038e28286ede18bfe13316fd43685cd042a5cbdb':'reader_material_vine_yellow.webp',
+          '914726d53dad8205ac24b09855f30db2eec8fe15c107b5b2d7c6519e5cbc0fba':'reader_scene_duokan_black.webp',
+          'd118ae7b9a46110562f646d032f6a3642d9f809513947f212d83f43adf227887':'reader_scene_duokan_blue.webp',
+          '81ab407df318a3c01cc7d387d5dafee349e665ba83d8c42d15e269bb11771467':'reader_scene_duokan_green.webp',
+          '30c6714f86fe4ead7161cd43d36fddcb11d4431e2d6925092d83b522586428ad':'reader_scene_duokan_white.webp',
+          '474fad8c878bc9c9c31cefed608a4de578de034a9d97870d31475157be30fde8':'reader_scene_duokan_yellow.webp',
+          'f792c87f60afa58c6d18d0e09ed04e4d174e5e730308e4df44c885f00fa0700f':'reader_texture_theme_blue.webp',
+          'adda2b567943920c752295ad343e59bfe46bd3548a5743254d03196c33a7f6a4':'reader_texture_theme_green.webp',
+          '39c05763505eab09893d85d92d535978852fd2ef3069222e9af75059c052c82a':'reader_texture_theme_white.webp',
+          '3defab0dc3d4313255b37a9808e3f8e9ef95f10d382a824241c887aedbe672d9':'reader_texture_theme_yellow.webp'}
+          for line in subprocess.check_output(['git','rev-list','--objects','--all']).decode().splitlines():
+            p=line.split(' ',1)
+            if len(p)<2 or not p[1].lower().endswith(('.webp','.png','.jpg','.jpeg')): continue
+            try:d=subprocess.check_output(['git','cat-file','-p',p[0]],stderr=subprocess.DEVNULL)
+            except:continue
+            h=hashlib.sha256(d).hexdigest()
+            if h in wanted: print(wanted[h],p[0],p[1],len(d),h,sep='\t')
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out" && git commit -m 'v748: record closed PR source audit [skip ci]' && git push origin HEAD:source-v748
