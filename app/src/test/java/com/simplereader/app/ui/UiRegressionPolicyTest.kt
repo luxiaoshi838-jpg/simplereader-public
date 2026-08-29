@@ -9,24 +9,24 @@ class UiRegressionPolicyTest {
     private fun source(path: String): String = File(path).readText()
 
     @Test
-    fun `confirmed layered background is restored`() {
+    fun `confirmed v625 single complete background model is restored`() {
         val background = source("src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt")
         val picker = source("src/main/java/com/simplereader/app/ui/ReaderBackgroundPicker.kt")
         assertTrue(background.contains("data class Selection"))
-        assertTrue(background.contains("colorId"))
-        assertTrue(background.contains("textureId"))
-        assertTrue(background.contains("materialId"))
+        assertTrue(background.contains("val category: Category"))
+        assertTrue(background.contains("val optionId: String"))
         assertTrue(background.contains("COLOR(\"纯色\")"))
         assertTrue(background.contains("TEXTURE(\"纹理\")"))
         assertTrue(background.contains("MATERIAL(\"质感\")"))
         assertTrue(picker.contains("ReaderBackgrounds.Category.COLOR"))
         assertTrue(picker.contains("ReaderBackgrounds.Category.TEXTURE"))
         assertTrue(picker.contains("ReaderBackgrounds.Category.MATERIAL"))
-        assertTrue(background.contains("reader_texture_duokan_blue"))
-        assertTrue(background.contains("reader_texture_duokan_green"))
-        assertTrue(background.contains("reader_texture_duokan_white"))
-        assertTrue(background.contains("reader_texture_duokan_yellow"))
-        assertTrue(background.contains("reader_material_duokan_paper"))
+        assertTrue(background.contains("reader_texture_theme_blue"))
+        assertTrue(background.contains("reader_texture_theme_green"))
+        assertTrue(background.contains("reader_texture_theme_white"))
+        assertTrue(background.contains("reader_texture_theme_yellow"))
+        assertTrue(background.contains("reader_material_vine_yellow"))
+        assertTrue(background.contains("Exactly one complete background bitmap is selected at a time"))
         assertFalse(background.contains("Random("))
     }
 
@@ -41,18 +41,20 @@ class UiRegressionPolicyTest {
     }
 
     @Test
-    fun `vertical mode uses a bounded continuous window and one character bottom margin`() {
+    fun `vertical mode uses bounded continuous window and exact v722 runtime margins`() {
         val reader = source("src/main/java/com/simplereader/app/ui/ReaderActivity.kt")
         val profile = source("src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt")
         val layout = source("src/main/res/layout/activity_reader.xml")
         assertTrue(reader.contains("showContinuousBook"))
-        assertTrue(profile.contains("CONTENT_BOTTOM_PADDING_DP = 24"))
+        assertTrue(profile.contains("CONTENT_BOTTOM_PADDING_DP = 0"))
         assertTrue(reader.contains("bottomPaddingPx = settings.contentPaddingBottomPx"))
+        assertTrue(reader.contains("navigationBarInsetPx + oneCharacterPx * 3"))
+        assertTrue(reader.contains("statusBarInsetPx + oneCharacterPx"))
         assertTrue(reader.contains("renderContinuousWindow"))
         assertTrue(reader.contains("CONTINUOUS_PAGES_AFTER"))
         assertFalse(reader.contains("PagerSnapHelper"))
         assertFalse(reader.contains("RecyclerView"))
-        assertTrue(layout.contains("android:paddingBottom=\"24dp\""))
+        assertTrue(layout.contains("android:paddingBottom=\"0dp\""))
         assertFalse(layout.contains("paddingBottom=\"118dp\""))
     }
 }
