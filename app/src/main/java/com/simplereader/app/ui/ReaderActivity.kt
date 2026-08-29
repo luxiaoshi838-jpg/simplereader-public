@@ -12,6 +12,7 @@ import android.text.TextUtils
 import android.text.style.BackgroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -54,6 +55,7 @@ import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -72,6 +74,16 @@ class ReaderActivity : AppCompatActivity() {
 
     private var paginationJob: Job? = null
     private var continuousRenderJob: Job? = null
+    private var autoReadJob: Job? = null
+    private var autoReadSpeedCpm: Int = DEFAULT_AUTO_READ_CPM
+    private var isAutoReading: Boolean = false
+    private var verticalAutoLastFrameNs: Long = 0L
+    private var verticalAutoPixelRemainder: Float = 0f
+    private val verticalAutoFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            onAutomaticVerticalFrame(frameTimeNanos)
+        }
+    }
     private var bookId: Long = 0L
     private var book: Book? = null
     private var document: ReaderDocument? = null
@@ -145,11 +157,18 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        stopAutoReading()
         saveProgress()
         super.onPause()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) stopAutoReading()
+    }
+
     override fun onDestroy() {
+        stopAutoReading()
         paginationJob?.cancel()
         continuousRenderJob?.cancel()
         pagedReaderView.cancelNavigation()
@@ -242,10 +261,16 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindControls() {
-        findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarkPanelV600() }
+        findViewById<TextView>(R.id.catalogButton).setOnClickListener {
+            stopAutoReading()
+            showCatalogBookmarkPanelV600()
+        }
         findViewById<TextView>(R.id.readerSearchButton).setOnClickListener {
+            stopAutoReading()
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
+        findViewById<TextView>(R.id.autoReadButton).setOnClickListener { showAutoReadDialog() }
+        findViewById<TextView>(R.id.autoReadStopButton).setOnClickListener { stopAutoReading() }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
             ReaderAppearance.toggleMode(this)
             applyReaderAppearance(rebindPages = true)
@@ -923,6 +948,7 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun changeTextSize(delta: Float) {
+        stopAutoReading()
         val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
         readerTextSizeSp = (readerTextSizeSp + delta).coerceIn(12f, 36f)
         applyReaderContentPadding()
@@ -933,12 +959,153 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun setTurnMode(mode: String) {
         if (pageTurnMode == mode) return
+        stopAutoReading()
         val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
         pageTurnMode = mode
         savePreferences()
         updateSettingsLabels()
         if (readerBook != null) {
             if (mode == TURN_MODE_VERTICAL) showContinuousBook(offset) else showHorizontalBook()
+        }
+    }
+
+
+    private fun showAutoReadDialog() {
+        stopAutoReading()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(10), dp(24), dp(6))
+        }
+        val speedLabel = TextView(this).apply {
+            textSize = 16f
+            setTextColor(Color.rgb(45, 42, 35))
+        }
+        val speedBar = SeekBar(this).apply {
+            max = (MAX_AUTO_READ_CPM - MIN_AUTO_READ_CPM) / AUTO_READ_STEP_CPM
+            progress = ((autoReadSpeedCpm - MIN_AUTO_READ_CPM) / AUTO_READ_STEP_CPM).coerceIn(0, max)
+        }
+        fun renderSpeed(progress: Int) {
+            val speed = MIN_AUTO_READ_CPM + progress * AUTO_READ_STEP_CPM
+            speedLabel.text = "速度：${speed} 字/分"
+        }
+        renderSpeed(speedBar.progress)
+        speedBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                renderSpeed(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+        content.addView(speedLabel)
+        content.addView(speedBar)
+        AlertDialog.Builder(this)
+            .setTitle("自动阅读")
+            .setView(content)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始") { _, _ ->
+                updateAutoReadSpeed(MIN_AUTO_READ_CPM + speedBar.progress * AUTO_READ_STEP_CPM)
+                startAutoReading()
+            }
+            .show()
+    }
+
+    private fun updateAutoReadSpeed(speedCpm: Int) {
+        autoReadSpeedCpm = speedCpm.coerceIn(MIN_AUTO_READ_CPM, MAX_AUTO_READ_CPM)
+        savePreferences()
+    }
+
+    private fun startAutoReading() {
+        val paged = readerBook ?: return
+        if (paged.pages.isEmpty()) return
+        stopAutoReading()
+        isAutoReading = true
+        verticalAutoLastFrameNs = 0L
+        verticalAutoPixelRemainder = 0f
+        setReaderChromeVisible(false)
+        findViewById<TextView>(R.id.autoReadStopButton).visibility = View.VISIBLE
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            startAutomaticVerticalScroll()
+        } else {
+            scheduleAutomaticPageTurn()
+        }
+    }
+
+    private fun scheduleAutomaticPageTurn() {
+        autoReadJob?.cancel()
+        autoReadJob = lifecycleScope.launch {
+            while (isAutoReading && pageTurnMode != TURN_MODE_VERTICAL) {
+                val paged = readerBook ?: break
+                val page = paged.pages.getOrNull(currentPageIndex) ?: break
+                val start = page.startOffset.coerceIn(0, paged.text.length)
+                val end = page.endOffset.coerceIn(start, paged.text.length)
+                val effectiveChars = paged.text.substring(start, end).count { !it.isWhitespace() }
+                val waitMs = if (effectiveChars <= 0) {
+                    MIN_AUTO_PAGE_WAIT_MS
+                } else {
+                    ((effectiveChars.toLong() * 60_000L) / autoReadSpeedCpm.coerceAtLeast(1))
+                        .coerceAtLeast(MIN_AUTO_PAGE_WAIT_MS)
+                }
+                delay(waitMs)
+                if (!isAutoReading || pageTurnMode == TURN_MODE_VERTICAL) break
+                if (currentPageIndex >= paged.pages.lastIndex) {
+                    stopAutoReading()
+                    break
+                }
+                pagedReaderView.turn(1)
+                delay(AUTO_TURN_SETTLE_MS)
+            }
+        }
+    }
+
+    private fun startAutomaticVerticalScroll() {
+        verticalAutoLastFrameNs = 0L
+        verticalAutoPixelRemainder = 0f
+        Choreographer.getInstance().removeFrameCallback(verticalAutoFrameCallback)
+        Choreographer.getInstance().postFrameCallback(verticalAutoFrameCallback)
+    }
+
+    private fun onAutomaticVerticalFrame(frameTimeNanos: Long) {
+        if (!isAutoReading || pageTurnMode != TURN_MODE_VERTICAL || isFinishing || isDestroyed) return
+        val paged = readerBook ?: run { stopAutoReading(); return }
+        val layout = continuousTextView.layout
+        if (layout == null || continuousTextView.text.isEmpty()) {
+            Choreographer.getInstance().postFrameCallback(verticalAutoFrameCallback)
+            return
+        }
+        if (verticalAutoLastFrameNs == 0L) {
+            verticalAutoLastFrameNs = frameTimeNanos
+            Choreographer.getInstance().postFrameCallback(verticalAutoFrameCallback)
+            return
+        }
+        val deltaMs = ((frameTimeNanos - verticalAutoLastFrameNs).coerceAtLeast(0L) / 1_000_000f)
+            .coerceAtMost(100f)
+        verticalAutoLastFrameNs = frameTimeNanos
+        val effectiveChars = continuousTextView.text.count { !it.isWhitespace() }.coerceAtLeast(1)
+        val pixelsPerChar = layout.height.toFloat().coerceAtLeast(1f) / effectiveChars
+        val distance = deltaMs * autoReadSpeedCpm / 60_000f * pixelsPerChar + verticalAutoPixelRemainder
+        val wholePixels = distance.toInt()
+        verticalAutoPixelRemainder = distance - wholePixels
+        if (wholePixels > 0) readerScrollView.scrollBy(0, wholePixels)
+
+        val atBookEnd = currentPageIndex >= paged.pages.lastIndex &&
+            continuousWindowEndOffset >= paged.text.length &&
+            readerScrollView.scrollY + readerScrollView.height >= continuousTextView.height - 2
+        if (atBookEnd) {
+            stopAutoReading()
+            return
+        }
+        Choreographer.getInstance().postFrameCallback(verticalAutoFrameCallback)
+    }
+
+    private fun stopAutoReading() {
+        isAutoReading = false
+        autoReadJob?.cancel()
+        autoReadJob = null
+        verticalAutoLastFrameNs = 0L
+        verticalAutoPixelRemainder = 0f
+        Choreographer.getInstance().removeFrameCallback(verticalAutoFrameCallback)
+        if (::readerRoot.isInitialized) {
+            findViewById<TextView>(R.id.autoReadStopButton).visibility = View.GONE
         }
     }
 
@@ -1039,6 +1206,8 @@ class ReaderActivity : AppCompatActivity() {
         readerTextSizeSp = prefs.getFloat(PREF_TEXT_SIZE, ReaderAppearance.textSize(this))
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
+        autoReadSpeedCpm = prefs.getInt(PREF_AUTO_READ_SPEED, DEFAULT_AUTO_READ_CPM)
+            .coerceIn(MIN_AUTO_READ_CPM, MAX_AUTO_READ_CPM)
         val category = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
             ?.let { runCatching { ReaderBackgrounds.Category.valueOf(it) }.getOrNull() }
             ?: ReaderBackgrounds.Category.COLOR
@@ -1052,6 +1221,7 @@ class ReaderActivity : AppCompatActivity() {
             .putFloat(PREF_TEXT_SIZE, readerTextSizeSp)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+            .putInt(PREF_AUTO_READ_SPEED, autoReadSpeedCpm)
             .putString(PREF_BACKGROUND_CATEGORY, currentBackgroundSelection().category.name)
             .putString(PREF_BACKGROUND_OPTION, currentBackgroundSelection().optionId)
             .apply()
@@ -1114,6 +1284,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key_turn"
+        private const val PREF_AUTO_READ_SPEED = "auto_read_speed_cpm"
         private const val PREF_BACKGROUND_CATEGORY = "reader_background_category"
         private const val PREF_BACKGROUND_OPTION = "reader_background_option"
         private const val TURN_MODE_OVERLAP = "overlap"
@@ -1123,6 +1294,12 @@ class ReaderActivity : AppCompatActivity() {
         private const val TURN_MODE_FADE = "fade"
         private const val MENU_ADD_BOOKMARK = 2
         private const val MENU_SEARCH = 5
+        private const val MIN_AUTO_READ_CPM = 200
+        private const val MAX_AUTO_READ_CPM = 2000
+        private const val AUTO_READ_STEP_CPM = 50
+        private const val DEFAULT_AUTO_READ_CPM = 600
+        private const val MIN_AUTO_PAGE_WAIT_MS = 500L
+        private const val AUTO_TURN_SETTLE_MS = 320L
         private const val CONTINUOUS_PAGES_BEFORE = 24
         private const val CONTINUOUS_PAGES_AFTER = 48
         private const val CONTINUOUS_SHIFT_DELAY_MS = 200L

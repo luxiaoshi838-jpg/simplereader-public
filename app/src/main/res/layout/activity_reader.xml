@@ -332,6 +332,31 @@
                 android:text="⬡\n设置"
                 android:textColor="#EEE9DD"
                 android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/autoReadButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="▶\n自动"
+                android:textColor="#EEE9DD"
+                android:textSize="17sp" />
         </LinearLayout>
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/autoReadStopButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="14dp"
+        android:layout_marginEnd="18dp"
+        android:background="@drawable/bg_auto_read_stop"
+        android:elevation="12dp"
+        android:gravity="center"
+        android:text="停"
+        android:textColor="#FFFFFF"
+        android:textSize="17sp"
+        android:visibility="gone" />
 </FrameLayout>
