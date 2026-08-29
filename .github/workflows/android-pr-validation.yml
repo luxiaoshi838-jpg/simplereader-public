@@ -42,45 +42,32 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          old = '''        addItem.actionView = ImageView(this).apply {
-              setImageResource(R.drawable.ic_bookmark_add)
-              contentDescription = "添加书签"
-              background = null
-              setPadding(dp(7), dp(7), dp(7), dp(7))
-              layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
-              setOnClickListener { addBookmark() }
-          }'''
-          new = '''        addItem.actionView = ImageView(this).apply {
-              setImageResource(R.drawable.ic_bookmark_add)
-              contentDescription = "添加书签"
-              background = null
-              scaleType = ImageView.ScaleType.CENTER_INSIDE
-              setPadding(dp(4), dp(4), dp(4), dp(4))
-              layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {
-                  marginStart = dp(4)
-                  marginEnd = dp(16)
-              }
-              setOnClickListener { addBookmark() }
-          }'''
+          source_files = [
+              Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt'),
+              Path('app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt'),
+          ]
+          old_padding = '            setPadding(dp(7), dp(7), dp(7), dp(7))'
+          new_padding = '            scaleType = ImageView.ScaleType.CENTER_INSIDE\n            setPadding(dp(4), dp(4), dp(4), dp(4))'
+          old_layout = '            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }'
+          new_layout = '            layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {\n                marginStart = dp(4)\n                marginEnd = dp(16)\n            }'
 
-          for file_name in (
-              'app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt',
-              'app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt',
-          ):
-              path = Path(file_name)
+          for path in source_files:
               text = path.read_text(encoding='utf-8')
-              if new not in text:
-                  if old not in text:
-                      raise SystemExit(f'{file_name}: bookmark action block not found')
-                  path.write_text(text.replace(old, new, 1), encoding='utf-8')
+              if 'scaleType = ImageView.ScaleType.CENTER_INSIDE' not in text:
+                  if text.count(old_padding) != 1 or text.count(old_layout) != 1:
+                      raise SystemExit(f'{path}: bookmark spacing anchors missing')
+                  text = text.replace(old_padding, new_padding, 1)
+                  text = text.replace(old_layout, new_layout, 1)
+                  path.write_text(text, encoding='utf-8')
 
           migration_path = Path('tools/source-rebuild-v683/apply_source_migration.py')
           migration = migration_path.read_text(encoding='utf-8')
-          if new not in migration:
-              count = migration.count(old)
-              if count != 2:
-                  raise SystemExit(f'migration bookmark blocks: expected 2, got {count}')
-              migration_path.write_text(migration.replace(old, new), encoding='utf-8')
+          if migration.count('scaleType = ImageView.ScaleType.CENTER_INSIDE') < 2:
+              if migration.count(old_padding) != 2 or migration.count(old_layout) != 2:
+                  raise SystemExit('migration bookmark spacing anchors missing')
+              migration = migration.replace(old_padding, new_padding)
+              migration = migration.replace(old_layout, new_layout)
+              migration_path.write_text(migration, encoding='utf-8')
           PY
 
       - name: Enforce locked UI policy
@@ -195,10 +182,9 @@ jobs:
         if: ${{ github.ref == 'refs/heads/source-rebuild-v683' && success() }}
         shell: bash
         run: |
-          rm -f .github/workflows/v683-source-rebuild-once.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app tools .github/workflows/v683-source-rebuild-once.yml || true
+          git add app tools || true
           git diff --cached --quiet && exit 0
           git commit -m "V746: commit migrated full source [skip ci]"
           git push origin HEAD:source-rebuild-v683
