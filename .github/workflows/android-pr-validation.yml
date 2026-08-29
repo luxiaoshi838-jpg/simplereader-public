@@ -31,12 +31,12 @@ jobs:
         run: bash tools/verify-no-apk.sh
 
       - name: Apply V746 full-source migration
-        if: github.ref == 'refs/heads/source-rebuild-v683'
+        if: ${{ github.ref == 'refs/heads/source-rebuild-v683' }}
         shell: bash
         run: python3 tools/source-rebuild-v683/apply_source_migration.py
 
       - name: Finalize V746 bookmark source UI
-        if: github.ref == 'refs/heads/source-rebuild-v683'
+        if: ${{ github.ref == 'refs/heads/source-rebuild-v683' }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -81,36 +81,6 @@ jobs:
               if count != 2:
                   raise SystemExit(f'migration bookmark blocks: expected 2, got {count}')
               migration_path.write_text(migration.replace(old, new), encoding='utf-8')
-
-          Path('app/src/main/res/drawable/ic_bookmark_add.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="32dp"
-    android:height="32dp"
-    android:viewportWidth="32"
-    android:viewportHeight="32">
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M16,2.5 C8.54,2.5 2.5,8.54 2.5,16 C2.5,23.46 8.54,29.5 16,29.5 C23.46,29.5 29.5,23.46 29.5,16 C29.5,8.54 23.46,2.5 16,2.5 Z"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="1.8" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M10.5,8 L21.5,8 L21.5,24 L16,20.2 L10.5,24 Z"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="1.8" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M16,11.2 L16,16.2 M13.5,13.7 L18.5,13.7"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="1.8" />
-</vector>
-''', encoding='utf-8')
           PY
 
       - name: Enforce locked UI policy
@@ -121,6 +91,7 @@ jobs:
             bash tools/verify-source-only-production.sh
             grep -Fq 'scaleType = ImageView.ScaleType.CENTER_INSIDE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
             grep -Fq 'marginEnd = dp(16)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            grep -Fq 'marginStart = dp(4)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
             grep -Fq 'M16,2.5 C8.54,2.5' app/src/main/res/drawable/ic_bookmark_add.xml
             grep -Fq 'M10.5,8 L21.5,8' app/src/main/res/drawable/ic_bookmark_add.xml
           fi
@@ -187,7 +158,7 @@ jobs:
           exit $code
 
       - name: Prepare GitHub-built V746 artifact
-        if: github.ref == 'refs/heads/source-rebuild-v683'
+        if: ${{ github.ref == 'refs/heads/source-rebuild-v683' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -200,7 +171,7 @@ jobs:
           sha256sum export-v746/SimpleReader_v746_github_source_unsigned.apk > export-v746/GITHUB_BUILD_SHA256.txt
 
       - name: Upload GitHub-built V746 APK
-        if: github.ref == 'refs/heads/source-rebuild-v683'
+        if: ${{ github.ref == 'refs/heads/source-rebuild-v683' }}
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v746-github-source-unsigned
@@ -221,7 +192,7 @@ jobs:
           retention-days: 2
 
       - name: Commit migrated V746 source
-        if: github.ref == 'refs/heads/source-rebuild-v683' && success()
+        if: ${{ github.ref == 'refs/heads/source-rebuild-v683' && success() }}
         shell: bash
         run: |
           rm -f .github/workflows/v683-source-rebuild-once.yml
