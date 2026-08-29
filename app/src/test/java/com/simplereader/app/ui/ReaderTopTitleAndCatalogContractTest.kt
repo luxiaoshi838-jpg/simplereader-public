@@ -1,16 +1,20 @@
 package com.simplereader.app.ui
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderTopTitleAndCatalogContractTest {
     @Test
-    fun readerKeepsOneCharacterMarginAtTopAndBottom() {
+    fun readerKeepsExactV722RuntimeTopAndBottomBounds() {
         val layout = File("src/main/res/layout/activity_reader.xml").readText()
-        assertTrue(layout.contains("android:paddingTop=\"24dp\""))
-        assertTrue(layout.contains("android:paddingBottom=\"24dp\""))
-        assertTrue(!layout.substringBefore("<com.simplereader.app.ui.PagedReaderView").contains("android:paddingTop="))
+        val activity = File("src/main/java/com/simplereader/app/ui/ReaderActivity.kt").readText()
+        assertTrue(layout.contains("android:paddingTop=\"0dp\""))
+        assertTrue(layout.contains("android:paddingBottom=\"0dp\""))
+        assertFalse(layout.substringBefore("<com.simplereader.app.ui.PagedReaderView").contains("android:paddingTop=\"24dp\""))
+        assertTrue(activity.contains("statusBarInsetPx + oneCharacterPx"))
+        assertTrue(activity.contains("navigationBarInsetPx + oneCharacterPx * 3"))
     }
 
     @Test
