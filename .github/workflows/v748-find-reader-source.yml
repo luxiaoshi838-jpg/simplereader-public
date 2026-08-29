@@ -1,0 +1,37 @@
+name: V748 find historical reader source
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-find-reader-source.yml']
+permissions:
+  contents: write
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Find exact historical ReaderActivity source
+        shell: bash
+        run: |
+          set -euo pipefail
+          path=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          mkdir -p tools/v748/history
+          report=tools/v748/history/READER_SOURCE_SEARCH.txt
+          : > "$report"
+          for needle in scheduleAutomaticPageTurn showAutoReadDialog startAutoReading startAutomaticVerticalScroll verticalAutoScrollBy onWindowFocusChanged; do
+            echo "=== $needle ===" >> "$report"
+            git log --all --format='%H %ad %s' --date=iso -S"$needle" -- "$path" >> "$report" || true
+          done
+          sha=$(git rev-list --all -- "$path" | while read s; do git show "$s:$path" 2>/dev/null | grep -q 'scheduleAutomaticPageTurn' && { echo "$s"; break; } || true; done)
+          echo "selected_sha=$sha" >> "$report"
+          if [ -n "$sha" ]; then
+            git show "$sha:$path" > tools/v748/history/ReaderActivity_auto_read_historical.kt
+            grep -nE 'scheduleAutomaticPageTurn|showAutoReadDialog|startAutoReading|startAutomaticVerticalScroll|verticalAutoScrollBy|stopAutoReading|setTurnMode|changeTextSize|onWindowFocusChanged|resolveBookmark' tools/v748/history/ReaderActivity_auto_read_historical.kt >> "$report" || true
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tools/v748/history
+          git commit -m 'v748: record historical reader source search [skip ci]'
+          git push origin HEAD:source-v748
