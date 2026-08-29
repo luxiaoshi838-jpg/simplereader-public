@@ -1,4 +1,4 @@
-name: V683 source rebuild one-shot
+name: V746 source rebuild and signed artifact
 
 on:
   push:
@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+env:
+  EXPECTED_SIGNING_SHA256: "6c2baa3cc6f51a3d7ec608d9350fe8f6610b66f54dc46bd6da8e1af959b8cbe5"
+  SIGNING_ALIAS: "simplereader-v2"
+
 jobs:
   source-rebuild:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,15 +29,126 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Restore permanent signing key
+        shell: bash
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64"
+          test -n "$SIGNING_PASSWORD"
+          keystore="$RUNNER_TEMP/SimpleReader_Permanent_v2.p12"
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          actual="$(keytool -list -v -keystore "$keystore" -storepass "$SIGNING_PASSWORD" -alias "$SIGNING_ALIAS" 2>/dev/null | sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')"
+          test "$actual" = "$EXPECTED_SIGNING_SHA256"
+          {
+            echo "SIMPLEREADER_KEYSTORE_PATH=$keystore"
+            echo "SIMPLEREADER_KEYSTORE_PASSWORD=$SIGNING_PASSWORD"
+            echo "SIMPLEREADER_KEY_ALIAS=$SIGNING_ALIAS"
+            echo "SIMPLEREADER_KEY_PASSWORD=$SIGNING_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Apply source migration
         run: python3 tools/source-rebuild-v683/apply_source_migration.py
 
-      - name: Verify source-only production path
+      - name: Finalize bookmark icon and toolbar spacing in source
+        shell: bash
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = '''        addItem.actionView = ImageView(this).apply {
+              setImageResource(R.drawable.ic_bookmark_add)
+              contentDescription = "添加书签"
+              background = null
+              setPadding(dp(7), dp(7), dp(7), dp(7))
+              layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+              setOnClickListener { addBookmark() }
+          }'''
+          new = '''        addItem.actionView = ImageView(this).apply {
+              setImageResource(R.drawable.ic_bookmark_add)
+              contentDescription = "添加书签"
+              background = null
+              scaleType = ImageView.ScaleType.CENTER_INSIDE
+              setPadding(dp(4), dp(4), dp(4), dp(4))
+              layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {
+                  marginStart = dp(4)
+                  marginEnd = dp(16)
+              }
+              setOnClickListener { addBookmark() }
+          }'''
+
+          for file_name in (
+              'app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt',
+              'app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt',
+          ):
+              path = Path(file_name)
+              text = path.read_text(encoding='utf-8')
+              if new not in text:
+                  if old not in text:
+                      raise SystemExit(f'{file_name}: bookmark action block not found')
+                  text = text.replace(old, new, 1)
+                  path.write_text(text, encoding='utf-8')
+
+          migration_path = Path('tools/source-rebuild-v683/apply_source_migration.py')
+          migration = migration_path.read_text(encoding='utf-8')
+          if new not in migration:
+              count = migration.count(old)
+              if count != 2:
+                  raise SystemExit(f'migration bookmark blocks: expected 2, got {count}')
+              migration = migration.replace(old, new)
+              migration_path.write_text(migration, encoding='utf-8')
+
+          Path('app/src/main/res/drawable/ic_bookmark_add.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="32dp"
+              android:height="32dp"
+              android:viewportWidth="32"
+              android:viewportHeight="32">
+
+              <path
+                  android:fillColor="@android:color/transparent"
+                  android:pathData="M16,2.5 C8.54,2.5 2.5,8.54 2.5,16 C2.5,23.46 8.54,29.5 16,29.5 C23.46,29.5 29.5,23.46 29.5,16 C29.5,8.54 23.46,2.5 16,2.5 Z"
+                  android:strokeColor="#FFFFFFFF"
+                  android:strokeLineCap="round"
+                  android:strokeLineJoin="round"
+                  android:strokeWidth="1.8" />
+
+              <path
+                  android:fillColor="@android:color/transparent"
+                  android:pathData="M10.5,8 L21.5,8 L21.5,24 L16,20.2 L10.5,24 Z"
+                  android:strokeColor="#FFFFFFFF"
+                  android:strokeLineCap="round"
+                  android:strokeLineJoin="round"
+                  android:strokeWidth="1.8" />
+
+              <path
+                  android:fillColor="@android:color/transparent"
+                  android:pathData="M16,11.2 L16,16.2 M13.5,13.7 L18.5,13.7"
+                  android:strokeColor="#FFFFFFFF"
+                  android:strokeLineCap="round"
+                  android:strokeLineJoin="round"
+                  android:strokeWidth="1.8" />
+          </vector>
+          ''', encoding='utf-8')
+          PY
+
+      - name: Verify source-only production path and bookmark contract
+        shell: bash
+        run: |
+          set -euo pipefail
           bash tools/verify-source-only-production.sh
           bash tools/verify-ui-policy.sh
+          grep -Fq 'scaleType = ImageView.ScaleType.CENTER_INSIDE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'marginEnd = dp(16)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'marginStart = dp(4)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'M16,2.5 C8.54,2.5' app/src/main/res/drawable/ic_bookmark_add.xml
+          grep -Fq 'M10.5,8 L21.5,8' app/src/main/res/drawable/ic_bookmark_add.xml
+          grep -Fq 'M16,11.2 L16,16.2' app/src/main/res/drawable/ic_bookmark_add.xml
 
-      - name: Test and build V746 from source
+      - name: Test and build signed V746 from source
         env:
           SIMPLE_READER_VERSION_CODE: '2098000746'
           SIMPLE_READER_VERSION_NAME: '746'
@@ -40,32 +156,44 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
 
-      - name: Prepare unsigned APK and local signing helper
+      - name: Verify signed V746
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-certificate.txt
+          grep -Fq 'Verified using v1 scheme (JAR signing): true' apk-certificate.txt
+          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' apk-certificate.txt
+          actual="$(sed -n 's/.*certificate SHA-256 digest: //p' apk-certificate.txt | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')"
+          test "$actual" = "$EXPECTED_SIGNING_SHA256"
+
+      - name: Prepare signed artifact
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p export-v746
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
-          test -n "$APK"
-          cp "$APK" export-v746/SimpleReader_v746_source_unsigned.apk
-          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
-          test -n "$BUILD_TOOLS_VERSION"
-          cp "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/lib/apksigner.jar" export-v746/apksigner.jar
-          sha256sum export-v746/* > export-v746/SHA256SUMS.txt
+          cp app/build/outputs/apk/release/app-release.apk export-v746/SimpleReader_v746_source_signed.apk
+          cp apk-certificate.txt export-v746/apk-certificate.txt
+          sha256sum export-v746/SimpleReader_v746_source_signed.apk > export-v746/SHA256SUMS.txt
 
-      - name: Upload unsigned V746 build
+      - name: Upload signed V746 build
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v746-source-unsigned
+          name: SimpleReader-v746-source-signed
           path: export-v746
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
       - name: Commit migrated source
+        shell: bash
         run: |
           rm -f .github/workflows/v683-source-rebuild-once.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app tools .github/workflows/v683-source-rebuild-once.yml || true
           git diff --cached --quiet && exit 0
-          git commit -m "V746: sourceize current behavior from V683 lineage [source-rebuild-applied]"
+          git commit -m "V746: finalize source bookmark UI and signed build [source-rebuild-applied]"
           git push origin HEAD:source-rebuild-v683
