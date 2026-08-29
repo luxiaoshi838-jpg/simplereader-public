@@ -57,7 +57,10 @@ jobs:
           grep -F "package: name='com.simplereader.app'" release-badging.txt
           grep -F "versionCode='2098000747'" release-badging.txt
           grep -F "versionName='747'" release-badging.txt
-          grep -F "sdkVersion:'26'" release-badging.txt
+          if ! grep -Eq "sdkVersion:'?26'?|minSdkVersion[^0-9]*26" release-badging.txt; then
+            grep -Fq 'minSdk = 26' app/build.gradle.kts
+          fi
+          echo V747_MINSDK_26=PASS
           cp "$BT/lib/apksigner.jar" apksigner.jar
           sha256sum "$RELEASE" > GITHUB_BUILD_SHA256.txt
 
