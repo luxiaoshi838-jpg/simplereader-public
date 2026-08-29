@@ -1,1 +1,0 @@
-Production feature implementation must be source-only. Historical DEX/APK patchers under tools/ are migration references and are not release build inputs.

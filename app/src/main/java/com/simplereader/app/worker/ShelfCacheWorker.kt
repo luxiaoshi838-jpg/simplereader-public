@@ -26,8 +26,10 @@ import com.simplereader.app.reader.page.PageEngine
 import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
@@ -298,14 +300,17 @@ class ShelfCacheWorker(
                     settings = settings
                 )
 
+                val activeContext = coroutineContext
                 val paged = withContext(Dispatchers.Default) {
                     val images = ReaderImageRepository(applicationContext, book.id)
                     PageEngine.paginate(
                         text = document.text,
                         sourceChapters = document.chapters,
                         settings = settings,
-                        typeface = Typeface.DEFAULT
-                    ) { href, width, height -> images.span(href, width, height) }
+                        typeface = Typeface.DEFAULT,
+                        shouldContinue = { activeContext.isActive },
+                        imageSpanProvider = { href, width, height -> images.span(href, width, height) }
+                    )
                 }
                 require(paged.pages.isNotEmpty()) { "分页结果为空" }
                 coroutineContext.ensureActive()
@@ -334,6 +339,9 @@ class ShelfCacheWorker(
                 }
             }
 
+            result.exceptionOrNull()?.let { failure ->
+                if (failure is CancellationException) throw failure
+            }
             if (result.isSuccess) completed += 1 else failed += 1
             checkpoint = checkpoint.copy(
                 nextIndex = index + 1,
@@ -546,7 +554,7 @@ class ShelfCacheWorker(
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                ExistingWorkPolicy.REPLACE,
                 request
             )
         }

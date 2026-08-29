@@ -18,6 +18,7 @@ import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -27,6 +28,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
@@ -190,17 +192,16 @@ class ReadiumEpubActivity :
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        addItem.actionView = TextView(this).apply {
-            text = "签"
-            gravity = Gravity.CENTER
-            textSize = 16f
-            setTextColor(Color.WHITE)
+        addItem.actionView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bookmark_add)
             contentDescription = "添加书签"
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(Color.rgb(239, 122, 40))
+            background = null
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {
+                marginStart = dp(4)
+                marginEnd = dp(16)
             }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
             setOnClickListener { addBookmark() }
         }
         return true
@@ -709,17 +710,31 @@ class ReadiumEpubActivity :
     private fun addBookmark() {
         val locator = currentLocator ?: return
         val label = "${locator.title ?: book?.title.orEmpty()}\n${pageLabelForLocator(locator)}\n${locator.text.highlight.orEmpty()}"
+        val globalPageIndex = (pageNumberForLocator(locator) - 1).coerceAtLeast(0)
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                database.bookmarkDao().insert(
-                    Bookmark(
-                        bookId = bookId,
-                        position = locator.toJSON().toString(),
-                        content = label
-                    )
-                )
+            val added = withContext(Dispatchers.IO) {
+                database.withTransaction {
+                    val dao = database.bookmarkDao()
+                    if (dao.getBookmarkByPage(bookId, globalPageIndex) != null) {
+                        false
+                    } else {
+                        dao.insert(
+                            Bookmark(
+                                bookId = bookId,
+                                position = locator.toJSON().toString(),
+                                content = label,
+                                globalPageIndex = globalPageIndex
+                            )
+                        )
+                        true
+                    }
+                }
             }
-            Toast.makeText(this@ReadiumEpubActivity, "已添加书签", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this@ReadiumEpubActivity,
+                if (added) "已添加书签" else "本页已有书签",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

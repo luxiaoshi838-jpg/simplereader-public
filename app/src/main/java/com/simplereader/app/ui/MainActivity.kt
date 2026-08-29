@@ -1309,7 +1309,7 @@ class MainActivity : AppCompatActivity() {
         if (!shelfSelectionMode) {
             shelfSelectionMode = true
             editButton.text = "\u5220\u9664"
-            moreButton.text = "\u53d6\u6d88"
+            moreButton.text = "×"
         }
     }
 
@@ -1340,7 +1340,7 @@ class MainActivity : AppCompatActivity() {
         if (!shelfSelectionMode) return
         val count = selectedShelfBookIds.size + selectedShelfGroupIds.size
         editButton.text = if (count > 0) "\u5220\u9664($count)" else "\u5220\u9664"
-        moreButton.text = "\u53d6\u6d88"
+        moreButton.text = "×"
     }
 
     private fun confirmDeleteShelfSelection() {

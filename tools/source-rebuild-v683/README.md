@@ -1,1 +1,0 @@
-This directory records the one-time migration from historical binary overlays back into normal source. Production builds must use app/src/main directly and must not apply DEX/register/APK binary patches.

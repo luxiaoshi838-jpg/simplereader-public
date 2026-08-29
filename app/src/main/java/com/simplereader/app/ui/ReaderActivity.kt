@@ -23,6 +23,7 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -35,6 +36,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
@@ -160,17 +162,16 @@ class ReaderActivity : AppCompatActivity() {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        addItem.actionView = TextView(this).apply {
-            text = "添"
-            gravity = Gravity.CENTER
-            textSize = 16f
-            setTextColor(Color.WHITE)
+        addItem.actionView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bookmark_add)
             contentDescription = "添加书签"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(239, 122, 40))
+            background = null
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {
+                marginStart = dp(4)
+                marginEnd = dp(16)
             }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
             setOnClickListener { addBookmark() }
         }
         return true
@@ -786,20 +787,33 @@ class ReaderActivity : AppCompatActivity() {
         val preview = paged.text.substring(page.startOffset, page.endOffset)
             .replace(Regex("\\s+"), " ").trim().take(180)
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                database.bookmarkDao().insert(
-                    Bookmark(
-                        bookId = bookId,
-                        position = page.startOffset.toString(),
-                        content = preview,
-                        globalPageIndex = page.globalPageIndex,
-                        chapterIndex = page.chapterIndex,
-                        pageIndexInChapter = page.pageIndexInChapter,
-                        startOffset = page.startOffset
-                    )
-                )
+            val added = withContext(Dispatchers.IO) {
+                database.withTransaction {
+                    val dao = database.bookmarkDao()
+                    if (dao.getBookmarkByPage(bookId, page.globalPageIndex) != null) {
+                        false
+                    } else {
+                        dao.insert(
+                            Bookmark(
+                                bookId = bookId,
+                                position = page.startOffset.toString(),
+                                content = preview,
+                                globalPageIndex = page.globalPageIndex,
+                                chapterIndex = page.chapterIndex,
+                                pageIndexInChapter = page.pageIndexInChapter,
+                                startOffset = page.startOffset
+                            )
+                        )
+                        true
+                    }
+                }
             }
-            Toast.makeText(this@ReaderActivity, "书签已添加 ${page.globalPageIndex + 1}/${page.totalPageCount}", Toast.LENGTH_SHORT).show()
+            val message = if (added) {
+                "书签已添加 ${page.globalPageIndex + 1}/${page.totalPageCount}"
+            } else {
+                "本页已有书签"
+            }
+            Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1072,10 +1086,10 @@ class ReaderActivity : AppCompatActivity() {
         val oneCharacterPx = (readerTextSizeSp * resources.displayMetrics.scaledDensity + 0.5f)
             .toInt()
             .coerceAtLeast(1)
-        // Upper limit = notification/status-bar bottom + one complete text character.
-        // This is intentionally not measured from the physical top edge of the screen.
+        // Exact v722 content bounds: one current-font character below the status bar and
+        // three current-font characters above the navigation bar.
         val topPaddingPx = statusBarInsetPx + oneCharacterPx
-        val bottomPaddingPx = navigationBarInsetPx + oneCharacterPx
+        val bottomPaddingPx = navigationBarInsetPx + oneCharacterPx * 3
         continuousTextView.setPadding(
             continuousTextView.paddingLeft,
             topPaddingPx,

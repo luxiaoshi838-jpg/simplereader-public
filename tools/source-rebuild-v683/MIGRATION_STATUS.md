@@ -1,1 +1,0 @@
-Source migration started. See repository root SOURCE_REBUILD_FROM_V683.md for the production source-of-truth policy.
