@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-pr-validation-${{ github.ref }}
@@ -30,9 +30,100 @@ jobs:
         shell: bash
         run: bash tools/verify-no-apk.sh
 
+      - name: Apply V746 full-source migration
+        if: github.ref == 'refs/heads/source-rebuild-v683'
+        shell: bash
+        run: python3 tools/source-rebuild-v683/apply_source_migration.py
+
+      - name: Finalize V746 bookmark source UI
+        if: github.ref == 'refs/heads/source-rebuild-v683'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = '''        addItem.actionView = ImageView(this).apply {
+              setImageResource(R.drawable.ic_bookmark_add)
+              contentDescription = "添加书签"
+              background = null
+              setPadding(dp(7), dp(7), dp(7), dp(7))
+              layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+              setOnClickListener { addBookmark() }
+          }'''
+          new = '''        addItem.actionView = ImageView(this).apply {
+              setImageResource(R.drawable.ic_bookmark_add)
+              contentDescription = "添加书签"
+              background = null
+              scaleType = ImageView.ScaleType.CENTER_INSIDE
+              setPadding(dp(4), dp(4), dp(4), dp(4))
+              layoutParams = FrameLayout.LayoutParams(dp(44), dp(40)).apply {
+                  marginStart = dp(4)
+                  marginEnd = dp(16)
+              }
+              setOnClickListener { addBookmark() }
+          }'''
+
+          for file_name in (
+              'app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt',
+              'app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt',
+          ):
+              path = Path(file_name)
+              text = path.read_text(encoding='utf-8')
+              if new not in text:
+                  if old not in text:
+                      raise SystemExit(f'{file_name}: bookmark action block not found')
+                  path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          migration_path = Path('tools/source-rebuild-v683/apply_source_migration.py')
+          migration = migration_path.read_text(encoding='utf-8')
+          if new not in migration:
+              count = migration.count(old)
+              if count != 2:
+                  raise SystemExit(f'migration bookmark blocks: expected 2, got {count}')
+              migration_path.write_text(migration.replace(old, new), encoding='utf-8')
+
+          Path('app/src/main/res/drawable/ic_bookmark_add.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M16,2.5 C8.54,2.5 2.5,8.54 2.5,16 C2.5,23.46 8.54,29.5 16,29.5 C23.46,29.5 29.5,23.46 29.5,16 C29.5,8.54 23.46,2.5 16,2.5 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M10.5,8 L21.5,8 L21.5,24 L16,20.2 L10.5,24 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M16,11.2 L16,16.2 M13.5,13.7 L18.5,13.7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+</vector>
+''', encoding='utf-8')
+          PY
+
       - name: Enforce locked UI policy
         shell: bash
-        run: bash tools/verify-ui-policy.sh
+        run: |
+          bash tools/verify-ui-policy.sh
+          if [ "${GITHUB_REF}" = "refs/heads/source-rebuild-v683" ]; then
+            bash tools/verify-source-only-production.sh
+            grep -Fq 'scaleType = ImageView.ScaleType.CENTER_INSIDE' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            grep -Fq 'marginEnd = dp(16)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            grep -Fq 'M16,2.5 C8.54,2.5' app/src/main/res/drawable/ic_bookmark_add.xml
+            grep -Fq 'M10.5,8 L21.5,8' app/src/main/res/drawable/ic_bookmark_add.xml
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -45,11 +136,13 @@ jobs:
 
       - name: Confirm source version
         shell: bash
-        run: |
-          grep -n "generatedVersionCode\|generatedVersionName" app/build.gradle.kts
+        run: grep -n "generatedVersionCode\|generatedVersionName" app/build.gradle.kts
 
       - name: Debug unit tests
         shell: bash
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000746'
+          SIMPLE_READER_VERSION_NAME: '746'
         run: |
           set +e
           timeout --signal=INT 5m ./gradlew clean testDebugUnitTest --stacktrace --console=plain > /tmp/debug-unit.log 2>&1
@@ -59,6 +152,9 @@ jobs:
 
       - name: Release unit tests
         shell: bash
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000746'
+          SIMPLE_READER_VERSION_NAME: '746'
         run: |
           set +e
           timeout --signal=INT 5m ./gradlew testReleaseUnitTest --stacktrace --console=plain > /tmp/release-unit.log 2>&1
@@ -68,6 +164,9 @@ jobs:
 
       - name: Assemble debug for validation only
         shell: bash
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000746'
+          SIMPLE_READER_VERSION_NAME: '746'
         run: |
           set +e
           timeout --signal=INT 5m ./gradlew assembleDebug --stacktrace --console=plain > /tmp/assemble-debug.log 2>&1
@@ -75,8 +174,11 @@ jobs:
           tail -n 180 /tmp/assemble-debug.log
           exit $code
 
-      - name: Assemble release for validation only
+      - name: Assemble release V746 from GitHub source
         shell: bash
+        env:
+          SIMPLE_READER_VERSION_CODE: '2098000746'
+          SIMPLE_READER_VERSION_NAME: '746'
         run: |
           set +e
           timeout --signal=INT 5m ./gradlew assembleRelease --stacktrace --console=plain > /tmp/assemble-release.log 2>&1
@@ -84,7 +186,29 @@ jobs:
           tail -n 180 /tmp/assemble-release.log
           exit $code
 
-      - name: Upload validation logs only
+      - name: Prepare GitHub-built V746 artifact
+        if: github.ref == 'refs/heads/source-rebuild-v683'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p export-v746
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" export-v746/SimpleReader_v746_github_source_unsigned.apk
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          cp "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/lib/apksigner.jar" export-v746/apksigner.jar
+          sha256sum export-v746/SimpleReader_v746_github_source_unsigned.apk > export-v746/GITHUB_BUILD_SHA256.txt
+
+      - name: Upload GitHub-built V746 APK
+        if: github.ref == 'refs/heads/source-rebuild-v683'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v746-github-source-unsigned
+          path: export-v746
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -95,3 +219,15 @@ jobs:
             app/build/reports/tests
           if-no-files-found: warn
           retention-days: 2
+
+      - name: Commit migrated V746 source
+        if: github.ref == 'refs/heads/source-rebuild-v683' && success()
+        shell: bash
+        run: |
+          rm -f .github/workflows/v683-source-rebuild-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app tools .github/workflows/v683-source-rebuild-once.yml || true
+          git diff --cached --quiet && exit 0
+          git commit -m "V746: commit migrated full source [skip ci]"
+          git push origin HEAD:source-rebuild-v683
