@@ -12,6 +12,9 @@ interface BookmarkDao {
     @Delete
     suspend fun delete(bookmark: Bookmark)
 
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId AND globalPageIndex = :globalPageIndex LIMIT 1")
+    suspend fun getBookmarkByPage(bookId: Long, globalPageIndex: Int): Bookmark?
+
     @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY COALESCE(globalPageIndex, CAST(position AS INTEGER)) ASC, createTime ASC")
     fun getBookmarks(bookId: Long): Flow<List<Bookmark>>
 
