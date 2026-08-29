@@ -1,0 +1,48 @@
+name: V748 scan historical APK artifacts
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-scan-historical-apks.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Scan retained artifacts from historical window
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/v748/artscan tmp-art
+          out=tools/v748/HISTORICAL_APK_ARTIFACT_SCAN.txt
+          : > "$out"
+          echo "generated=$(date -u +%FT%TZ)" >> "$out"
+          # Focus on Aug 25-27, when v697 through v726/earlier v745 chain was produced.
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired==false) | select(.created_at >= "2026-08-25T00:00:00Z" and .created_at < "2026-08-28T00:00:00Z") | [.id,.name,.created_at,.size_in_bytes,.workflow_run.head_sha] | @tsv' > tmp-art/candidates.tsv
+          cat tmp-art/candidates.tsv >> "$out"
+          echo >> "$out"
+          echo '=== APK BADGING ===' >> "$out"
+          while IFS=$'\t' read -r id name created size sha; do
+            # Skip huge unrelated artifacts; APK artifacts in this repo are typically <40 MiB.
+            if [ "$size" -gt 50000000 ]; then continue; fi
+            rm -rf tmp-art/z tmp-art/u; mkdir -p tmp-art/z tmp-art/u
+            if ! gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > tmp-art/z/a.zip 2>/dev/null; then continue; fi
+            if ! unzip -qq tmp-art/z/a.zip -d tmp-art/u 2>/dev/null; then continue; fi
+            find tmp-art/u -type f -name '*.apk' -print0 | while IFS= read -r -d '' apk; do
+              badging=$(aapt dump badging "$apk" 2>/dev/null | head -1 || true)
+              hash=$(sha256sum "$apk" | awk '{print $1}')
+              bytes=$(stat -c%s "$apk")
+              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$created" "$sha" "$bytes" "$hash" "$badging" >> "$out"
+            done
+          done < tmp-art/candidates.tsv
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out"
+          git commit -m 'v748: record historical APK artifact scan [skip ci]'
+          git push origin HEAD:source-v748
