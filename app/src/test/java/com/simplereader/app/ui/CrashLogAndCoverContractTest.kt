@@ -7,12 +7,11 @@ import org.junit.Test
 
 class CrashLogAndCoverContractTest {
     @Test
-    fun `plain text uses generic cover without txt badge while epub real cover still wins`() {
+    fun `txt uses confirmed default cover while epub real cover still wins`() {
         val assets = File("src/main/java/com/simplereader/app/ui/BookCoverAssets.kt").readText()
         val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
         val group = File("src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt").readText()
-        assertTrue(assets.contains("book_cover_default_generic"))
-        assertFalse(assets.contains("book_cover_default_txt"))
+        assertTrue(assets.contains("book_cover_default_txt"))
         assertTrue(assets.contains("book_cover_default_epub"))
         assertTrue(main.contains("BookCoverAssets.drawable("))
         assertTrue(group.contains("BookCoverAssets.drawable("))
