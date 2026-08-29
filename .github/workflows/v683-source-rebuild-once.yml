@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   source-rebuild:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +35,6 @@ jobs:
                   raise SystemExit(f'{label}: expected 1 match, found {count}')
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          # MainActivity: source-level selection exit icon.
           main = Path('app/src/main/java/com/simplereader/app/ui/MainActivity.kt')
           text = main.read_text(encoding='utf-8')
           candidates = [
@@ -56,20 +54,15 @@ jobs:
           main.write_text(text, encoding='utf-8')
 
           reader = 'app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt'
-          replace_once(
-              reader,
+          replace_once(reader,
               'import android.widget.FrameLayout\nimport android.widget.LinearLayout',
               'import android.widget.FrameLayout\nimport android.widget.ImageView\nimport android.widget.LinearLayout',
-              'ReaderActivity ImageView import'
-          )
-          replace_once(
-              reader,
+              'ReaderActivity ImageView import')
+          replace_once(reader,
               'import androidx.lifecycle.lifecycleScope\n',
               'import androidx.lifecycle.lifecycleScope\nimport androidx.room.withTransaction\n',
-              'ReaderActivity transaction import'
-          )
-          replace_once(
-              reader,
+              'ReaderActivity transaction import')
+          replace_once(reader,
               '''        addItem.actionView = TextView(this).apply {
             text = "添"
             gravity = Gravity.CENTER
@@ -91,10 +84,8 @@ jobs:
             layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
             setOnClickListener { addBookmark() }
         }''',
-              'ReaderActivity bookmark icon'
-          )
-          replace_once(
-              reader,
+              'ReaderActivity bookmark icon')
+          replace_once(reader,
               '''        lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 database.bookmarkDao().insert(
@@ -140,24 +131,18 @@ jobs:
             }
             Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_SHORT).show()
         }''',
-              'ReaderActivity bookmark uniqueness'
-          )
+              'ReaderActivity bookmark uniqueness')
 
           epub = 'app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt'
-          replace_once(
-              epub,
+          replace_once(epub,
               'import android.widget.FrameLayout\nimport android.widget.LinearLayout',
               'import android.widget.FrameLayout\nimport android.widget.ImageView\nimport android.widget.LinearLayout',
-              'Readium ImageView import'
-          )
-          replace_once(
-              epub,
+              'Readium ImageView import')
+          replace_once(epub,
               'import androidx.lifecycle.lifecycleScope\n',
               'import androidx.lifecycle.lifecycleScope\nimport androidx.room.withTransaction\n',
-              'Readium transaction import'
-          )
-          replace_once(
-              epub,
+              'Readium transaction import')
+          replace_once(epub,
               '''        addItem.actionView = TextView(this).apply {
             text = "签"
             gravity = Gravity.CENTER
@@ -179,10 +164,8 @@ jobs:
             layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
             setOnClickListener { addBookmark() }
         }''',
-              'Readium bookmark icon'
-          )
-          replace_once(
-              epub,
+              'Readium bookmark icon')
+          replace_once(epub,
               '''        lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 database.bookmarkDao().insert(
@@ -221,8 +204,7 @@ jobs:
                 Toast.LENGTH_SHORT
             ).show()
         }''',
-              'Readium bookmark uniqueness'
-          )
+              'Readium bookmark uniqueness')
           PY
 
           cat > tools/verify-source-only-production.sh <<'SH'
@@ -230,13 +212,10 @@ jobs:
           set -euo pipefail
           root="$(cd "$(dirname "$0")/.." && pwd)"
           cd "$root"
-
-          # app/src/main must never invoke historical APK/DEX patch tooling.
           if grep -RInE 'classes[0-9]*\.dex|patch_classes|patch_v7[0-9][0-9]|dex offset|register patch' app/src/main --include='*.kt' --include='*.java' --include='*.xml'; then
             echo 'ERROR: production source references binary patch implementation' >&2
             exit 1
           fi
-
           grep -q 'moreButton.text = "×"' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
           grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt
@@ -245,7 +224,6 @@ jobs:
           echo 'Source-only production guard passed.'
           SH
           chmod +x tools/verify-source-only-production.sh
-
           rm -f .github/workflows/v683-source-rebuild-once.yml
 
       - name: Verify source-only policy
