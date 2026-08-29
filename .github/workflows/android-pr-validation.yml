@@ -59,15 +59,6 @@ jobs:
                   text = text.replace(old_padding, new_padding, 1)
                   text = text.replace(old_layout, new_layout, 1)
                   path.write_text(text, encoding='utf-8')
-
-          migration_path = Path('tools/source-rebuild-v683/apply_source_migration.py')
-          migration = migration_path.read_text(encoding='utf-8')
-          if migration.count('scaleType = ImageView.ScaleType.CENTER_INSIDE') < 2:
-              if migration.count(old_padding) != 2 or migration.count(old_layout) != 2:
-                  raise SystemExit('migration bookmark spacing anchors missing')
-              migration = migration.replace(old_padding, new_padding)
-              migration = migration.replace(old_layout, new_layout)
-              migration_path.write_text(migration, encoding='utf-8')
           PY
 
       - name: Enforce locked UI policy
@@ -182,6 +173,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/source-rebuild-v683' && success() }}
         shell: bash
         run: |
+          rm -rf tools/source-rebuild-v683
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app tools || true
