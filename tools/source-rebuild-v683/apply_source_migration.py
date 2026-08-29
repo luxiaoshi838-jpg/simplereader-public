@@ -1,0 +1,221 @@
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str, label: str) -> None:
+    target = Path(path)
+    text = target.read_text(encoding="utf-8")
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected 1 match, found {count}")
+    target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+# MainActivity: source-level selection exit icon.
+main = Path("app/src/main/java/com/simplereader/app/ui/MainActivity.kt")
+text = main.read_text(encoding="utf-8")
+candidates = [
+    ('moreButton.text = "\\u53d6\\u6d88"', 'moreButton.text = "×"'),
+    ('moreButton.text = "取消"', 'moreButton.text = "×"'),
+]
+for old, new in candidates:
+    if old in text:
+        if text.count(old) != 1:
+            raise SystemExit(f"MainActivity selection label: expected 1 match, found {text.count(old)}")
+        text = text.replace(old, new, 1)
+        break
+else:
+    raise SystemExit("MainActivity selection label source not found")
+main.write_text(text, encoding="utf-8")
+
+
+reader = "app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt"
+replace_once(
+    reader,
+    "import android.widget.FrameLayout\nimport android.widget.LinearLayout",
+    "import android.widget.FrameLayout\nimport android.widget.ImageView\nimport android.widget.LinearLayout",
+    "ReaderActivity ImageView import",
+)
+replace_once(
+    reader,
+    "import androidx.lifecycle.lifecycleScope\n",
+    "import androidx.lifecycle.lifecycleScope\nimport androidx.room.withTransaction\n",
+    "ReaderActivity transaction import",
+)
+replace_once(
+    reader,
+    '''        addItem.actionView = TextView(this).apply {
+            text = "添"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            contentDescription = "添加书签"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(239, 122, 40))
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            setOnClickListener { addBookmark() }
+        }''',
+    '''        addItem.actionView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bookmark_add)
+            contentDescription = "添加书签"
+            background = null
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            setOnClickListener { addBookmark() }
+        }''',
+    "ReaderActivity bookmark icon",
+)
+replace_once(
+    reader,
+    '''        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                database.bookmarkDao().insert(
+                    Bookmark(
+                        bookId = bookId,
+                        position = page.startOffset.toString(),
+                        content = preview,
+                        globalPageIndex = page.globalPageIndex,
+                        chapterIndex = page.chapterIndex,
+                        pageIndexInChapter = page.pageIndexInChapter,
+                        startOffset = page.startOffset
+                    )
+                )
+            }
+            Toast.makeText(this@ReaderActivity, "书签已添加 ${page.globalPageIndex + 1}/${page.totalPageCount}", Toast.LENGTH_SHORT).show()
+        }''',
+    '''        lifecycleScope.launch {
+            val added = withContext(Dispatchers.IO) {
+                database.withTransaction {
+                    val dao = database.bookmarkDao()
+                    if (dao.getBookmarkByPage(bookId, page.globalPageIndex) != null) {
+                        false
+                    } else {
+                        dao.insert(
+                            Bookmark(
+                                bookId = bookId,
+                                position = page.startOffset.toString(),
+                                content = preview,
+                                globalPageIndex = page.globalPageIndex,
+                                chapterIndex = page.chapterIndex,
+                                pageIndexInChapter = page.pageIndexInChapter,
+                                startOffset = page.startOffset
+                            )
+                        )
+                        true
+                    }
+                }
+            }
+            val message = if (added) {
+                "书签已添加 ${page.globalPageIndex + 1}/${page.totalPageCount}"
+            } else {
+                "本页已有书签"
+            }
+            Toast.makeText(this@ReaderActivity, message, Toast.LENGTH_SHORT).show()
+        }''',
+    "ReaderActivity bookmark uniqueness",
+)
+
+
+epub = "app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt"
+replace_once(
+    epub,
+    "import android.widget.FrameLayout\nimport android.widget.LinearLayout",
+    "import android.widget.FrameLayout\nimport android.widget.ImageView\nimport android.widget.LinearLayout",
+    "Readium ImageView import",
+)
+replace_once(
+    epub,
+    "import androidx.lifecycle.lifecycleScope\n",
+    "import androidx.lifecycle.lifecycleScope\nimport androidx.room.withTransaction\n",
+    "Readium transaction import",
+)
+replace_once(
+    epub,
+    '''        addItem.actionView = TextView(this).apply {
+            text = "签"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            contentDescription = "添加书签"
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.rgb(239, 122, 40))
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            setOnClickListener { addBookmark() }
+        }''',
+    '''        addItem.actionView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bookmark_add)
+            contentDescription = "添加书签"
+            background = null
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            setOnClickListener { addBookmark() }
+        }''',
+    "Readium bookmark icon",
+)
+replace_once(
+    epub,
+    '''        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                database.bookmarkDao().insert(
+                    Bookmark(
+                        bookId = bookId,
+                        position = locator.toJSON().toString(),
+                        content = label
+                    )
+                )
+            }
+            Toast.makeText(this@ReadiumEpubActivity, "已添加书签", Toast.LENGTH_SHORT).show()
+        }''',
+    '''        val globalPageIndex = (pageNumberForLocator(locator) - 1).coerceAtLeast(0)
+        lifecycleScope.launch {
+            val added = withContext(Dispatchers.IO) {
+                database.withTransaction {
+                    val dao = database.bookmarkDao()
+                    if (dao.getBookmarkByPage(bookId, globalPageIndex) != null) {
+                        false
+                    } else {
+                        dao.insert(
+                            Bookmark(
+                                bookId = bookId,
+                                position = locator.toJSON().toString(),
+                                content = label,
+                                globalPageIndex = globalPageIndex
+                            )
+                        )
+                        true
+                    }
+                }
+            }
+            Toast.makeText(
+                this@ReadiumEpubActivity,
+                if (added) "已添加书签" else "本页已有书签",
+                Toast.LENGTH_SHORT
+            ).show()
+        }''',
+    "Readium bookmark uniqueness",
+)
+
+
+Path("tools/verify-source-only-production.sh").write_text(
+    '''#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root"
+if grep -RInE 'classes[0-9]*\\.dex|patch_classes|patch_v7[0-9][0-9]|dex offset|register patch' app/src/main --include='*.kt' --include='*.java' --include='*.xml'; then
+  echo 'ERROR: production source references binary patch implementation' >&2
+  exit 1
+fi
+grep -q 'moreButton.text = "×"' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+grep -q 'R.drawable.ic_bookmark_add' app/src/main/java/com/simplereader/app/ui/ReadiumEpubActivity.kt
+grep -q 'getBookmarkByPage' app/src/main/java/com/simplereader/app/data/dao/BookmarkDao.kt
+grep -q 'fun showLogHub(activity: AppCompatActivity) = showCrashLogList(activity)' app/src/main/java/com/simplereader/app/operation/OperationLogDialogs.kt
+echo 'Source-only production guard passed.'
+''',
+    encoding="utf-8",
+)
+Path("tools/verify-source-only-production.sh").chmod(0o755)
+print("Source migration applied.")
