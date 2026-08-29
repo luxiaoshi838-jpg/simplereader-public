@@ -1,0 +1,1 @@
+The directories tools/v726 through tools/v745 are historical migration references. New production releases must not execute those DEX/APK patch scripts.
