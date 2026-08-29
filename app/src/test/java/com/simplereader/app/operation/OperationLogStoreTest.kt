@@ -2,8 +2,9 @@ package com.simplereader.app.operation
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import org.json.JSONArray
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -17,40 +18,39 @@ class OperationLogStoreTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        context.getSharedPreferences("operation", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("operation_history", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test
-    fun historyIsPhysicallyLimitedToTenEntries() {
+    fun operationHistoryIsNoLongerPersisted() {
         repeat(12) { index ->
             OperationLogStore.beginShelfCache(context, "work-$index", "全书架目录缓存", 20)
-        }
-        assertEquals(10, OperationLogStore.list(context).size)
-        val raw = context.getSharedPreferences("operation_history", Context.MODE_PRIVATE)
-            .getString("entries", "[]") ?: "[]"
-        assertEquals(10, JSONArray(raw).length())
-    }
-
-    @Test
-    fun repeatedProgressForOneWorkIdUpdatesSameEntry() {
-        OperationLogStore.beginShelfCache(context, "same-work", "全书架目录缓存", 326)
-        repeat(25) { index ->
             OperationLogStore.updateShelfCache(
                 context = context,
-                workId = "same-work",
+                workId = "work-$index",
                 modeTitle = "全书架目录缓存",
                 state = "运行中",
                 currentIndex = index + 1,
-                total = 326,
+                total = 20,
                 currentTitle = "书${index + 1}",
                 completed = index,
                 failed = 0,
                 skipped = 0
             )
         }
-        val entries = OperationLogStore.list(context)
-        assertEquals(1, entries.size)
-        assertTrue(entries.single().body.contains("进度：25 / 326"))
-        assertTrue(entries.single().body.contains("当前：书25"))
+        assertEquals(emptyList<OperationLogStore.Entry>(), OperationLogStore.list(context))
+        assertFalse(context.getSharedPreferences("operation_history", Context.MODE_PRIVATE).contains("entries"))
+    }
+
+    @Test
+    fun legacyOperationPreferenceFilesArePurgedWithoutRestoringHistory() {
+        val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
+        context.getSharedPreferences("operation", Context.MODE_PRIVATE).edit().putString("entries", "legacy").commit()
+        context.getSharedPreferences("operation_history", Context.MODE_PRIVATE).edit().putString("entries", "legacy").commit()
+        OperationLogStore.purgeLegacyV722StoreBeforeLoad(context)
+        assertTrue(OperationLogStore.list(context).isEmpty())
+        assertFalse(File(prefsDir, "operation.xml.bak").exists())
+        assertFalse(File(prefsDir, "operation_history.xml.bak").exists())
     }
 }
