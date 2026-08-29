@@ -1,0 +1,25 @@
+name: v748 JDK17 Export
+on:
+  push:
+    branches: [source-v748]
+    paths: ['.github/workflows/v748-export-jdk17.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Archive JDK17
+        run: tar -C "$(dirname "$JAVA_HOME")" -czf /tmp/v748-jdk17.tar.gz "$(basename "$JAVA_HOME")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v748-jdk17
+          path: /tmp/v748-jdk17.tar.gz
+          compression-level: 0
+          retention-days: 1
