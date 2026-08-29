@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,22 +64,6 @@ jobs:
           cp "$BT/lib/apksigner.jar" apksigner.jar
           sha256sum "$RELEASE" > GITHUB_BUILD_SHA256.txt
 
-      - name: Android 35 real install and cold launch gate
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          script: |
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb shell am force-stop com.simplereader.app
-            adb shell monkey -p com.simplereader.app -c android.intent.category.LAUNCHER 1
-            sleep 3
-            adb shell dumpsys activity activities | grep -q 'com.simplereader.app/.ui.MainActivity'
-            if adb logcat -d -t 400 | grep -E 'FATAL EXCEPTION|AndroidRuntime.*com.simplereader.app'; then exit 1; fi
-            echo V747_ANDROID35_INSTALL_COLD_LAUNCH=PASS | tee emulator-v747-result.txt
-
       - name: Commit final v747 normal source
         shell: bash
         run: |
@@ -93,13 +77,40 @@ jobs:
       - name: Upload GitHub source-built v747
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v747-source-unsigned
+          name: SimpleReader-v747-source-build
           retention-days: 7
           path: |
+            app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release-unsigned.apk
             apksigner.jar
             GITHUB_BUILD_SHA256.txt
             release-badging.txt
             release-zip-test.txt
             release-zipalign.txt
-            emulator-v747-result.txt
+
+  emulator_gate:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SimpleReader-v747-source-build
+          path: artifact
+
+      - name: Android 35 real install and cold launch gate
+        timeout-minutes: 5
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            adb install -r artifact/app-debug.apk
+            adb shell am force-stop com.simplereader.app
+            adb shell monkey -p com.simplereader.app -c android.intent.category.LAUNCHER 1
+            sleep 3
+            adb shell dumpsys activity activities | grep -q 'com.simplereader.app/.ui.MainActivity'
+            if adb logcat -d -t 400 | grep -E 'FATAL EXCEPTION|AndroidRuntime.*com.simplereader.app'; then exit 1; fi
+            echo V747_ANDROID35_INSTALL_COLD_LAUNCH=PASS
