@@ -27,7 +27,8 @@ jobs:
           parent="$(dirname "$real_java_home")"
           base="$(basename "$real_java_home")"
           tar -C "$parent" -czf /tmp/v748parts/jdk17-real.tar.gz "$base"
-          tar -tzf /tmp/v748parts/jdk17-real.tar.gz | grep -Fq "$base/bin/java"
+          tar -tzf /tmp/v748parts/jdk17-real.tar.gz > /tmp/v748parts/jdk17-list.txt
+          grep -Fq "$base/bin/java" /tmp/v748parts/jdk17-list.txt
           du -h /tmp/v748parts/jdk17-real.tar.gz
       - uses: actions/upload-artifact@v4
         with:
