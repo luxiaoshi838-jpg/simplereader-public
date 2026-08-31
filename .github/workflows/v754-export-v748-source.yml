@@ -1,10 +1,10 @@
-name: v754 Export source-v748 Snapshot
+name: v754 Export source-v753 Snapshot
 
 on:
   push:
     branches: [source-v754]
     paths:
-      - 'recovery/v754/EXPORT_V748_TRIGGER'
+      - 'recovery/v754/EXPORT_V753_TRIGGER'
   workflow_dispatch:
 
 jobs:
@@ -12,34 +12,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact source-v748
+      - name: Checkout source-v753-restore
         uses: actions/checkout@v4
         with:
-          ref: source-v748
+          ref: source-v753-restore
           fetch-depth: 1
 
       - name: Record source commit
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD | tee SOURCE_V748_COMMIT.txt
-          test "$(git rev-parse HEAD)" = "d13fbe3a22397bcb4e6c5773441d241494a57584"
+          git rev-parse HEAD | tee SOURCE_V753_RESTORE_COMMIT.txt
 
       - name: Archive working tree
         shell: bash
         run: |
           set -euo pipefail
           rm -rf .git
-          zip -qr /tmp/source-v748-snapshot.zip .
-          sha256sum /tmp/source-v748-snapshot.zip | tee /tmp/source-v748-snapshot.sha256
+          zip -qr /tmp/source-v753-restore-snapshot.zip .
+          sha256sum /tmp/source-v753-restore-snapshot.zip | tee /tmp/source-v753-restore-snapshot.sha256
 
-      - name: Upload source-v748 snapshot
+      - name: Upload source-v753 snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: source-v748-snapshot
+          name: source-v753-restore-snapshot
           path: |
-            /tmp/source-v748-snapshot.zip
-            /tmp/source-v748-snapshot.sha256
+            /tmp/source-v753-restore-snapshot.zip
+            /tmp/source-v753-restore-snapshot.sha256
           if-no-files-found: error
           retention-days: 2
           compression-level: 0
