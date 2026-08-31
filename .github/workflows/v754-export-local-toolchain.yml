@@ -37,16 +37,15 @@ jobs:
           ./gradlew --no-daemon testDebugUnitTest assembleRelease
           echo "JAVA_HOME=$JAVA_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          du -sh "$HOME/.gradle" "$JAVA_HOME" "$ANDROID_SDK_ROOT/platforms/android-35" "$ANDROID_SDK_ROOT/build-tools" || true
 
-      - name: Stage offline toolchain
+      - name: Stage and split offline toolchain
         shell: bash
         run: |
           set -euo pipefail
           STAGE=/tmp/v754-local-toolchain
           rm -rf "$STAGE"
-          mkdir -p "$STAGE/gradle-home" "$STAGE/android-sdk/platforms" "$STAGE/android-sdk/build-tools" "$STAGE/android-sdk/platform-tools"
-          cp -a "$JAVA_HOME" "$STAGE/jdk17"
+          mkdir -p "$STAGE/gradle-home" "$STAGE/android-sdk/platforms" "$STAGE/android-sdk/build-tools"
+          cp -aL "$JAVA_HOME" "$STAGE/jdk17"
           cp -a "$HOME/.gradle/wrapper" "$STAGE/gradle-home/"
           cp -a "$HOME/.gradle/caches" "$STAGE/gradle-home/"
           cp -a "$ANDROID_SDK_ROOT/platforms/android-35" "$STAGE/android-sdk/platforms/"
@@ -63,15 +62,48 @@ jobs:
           EOF
           tar --zstd -cf /tmp/v754-local-toolchain.tar.zst -C "$STAGE" .
           sha256sum /tmp/v754-local-toolchain.tar.zst | tee /tmp/v754-local-toolchain.sha256
-          ls -lh /tmp/v754-local-toolchain.tar.zst
+          split -b 450M -d -a 3 /tmp/v754-local-toolchain.tar.zst /tmp/v754-toolchain.part-
+          ls -lh /tmp/v754-toolchain.part-* /tmp/v754-local-toolchain.sha256
+          test "$(find /tmp -maxdepth 1 -name 'v754-toolchain.part-*' | wc -l)" -le 4
 
-      - name: Upload offline toolchain
+      - name: Upload toolchain part 000
         uses: actions/upload-artifact@v4
         with:
-          name: v754-local-offline-toolchain
+          name: v754-toolchain-part-000
+          path: /tmp/v754-toolchain.part-000
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload toolchain part 001
+        uses: actions/upload-artifact@v4
+        with:
+          name: v754-toolchain-part-001
+          path: /tmp/v754-toolchain.part-001
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload toolchain part 002
+        uses: actions/upload-artifact@v4
+        with:
+          name: v754-toolchain-part-002
+          path: /tmp/v754-toolchain.part-002
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload toolchain part 003 if present
+        if: ${{ hashFiles('/tmp/v754-toolchain.part-003') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: v754-toolchain-part-003
+          path: /tmp/v754-toolchain.part-003
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload toolchain manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: v754-toolchain-manifest
           path: |
-            /tmp/v754-local-toolchain.tar.zst
             /tmp/v754-local-toolchain.sha256
-          if-no-files-found: error
           retention-days: 2
           compression-level: 0
