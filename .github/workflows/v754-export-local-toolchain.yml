@@ -1,0 +1,77 @@
+name: v754 Export Local Build Toolchain
+
+on:
+  push:
+    branches: [source-v754]
+    paths:
+      - 'recovery/v754/EXPORT_TOOLCHAIN_TRIGGER'
+  workflow_dispatch:
+
+jobs:
+  export-toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout stable public source
+        uses: actions/checkout@v4
+        with:
+          ref: source-v748
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Populate exact Android/Gradle dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          du -sh "$HOME/.gradle" "$JAVA_HOME" "$ANDROID_SDK_ROOT/platforms/android-35" "$ANDROID_SDK_ROOT/build-tools" || true
+
+      - name: Stage offline toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE=/tmp/v754-local-toolchain
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/gradle-home" "$STAGE/android-sdk/platforms" "$STAGE/android-sdk/build-tools" "$STAGE/android-sdk/platform-tools"
+          cp -a "$JAVA_HOME" "$STAGE/jdk17"
+          cp -a "$HOME/.gradle/wrapper" "$STAGE/gradle-home/"
+          cp -a "$HOME/.gradle/caches" "$STAGE/gradle-home/"
+          cp -a "$ANDROID_SDK_ROOT/platforms/android-35" "$STAGE/android-sdk/platforms/"
+          cp -a "$ANDROID_SDK_ROOT/build-tools/35.0.0" "$STAGE/android-sdk/build-tools/"
+          if [ -d "$ANDROID_SDK_ROOT/build-tools/33.0.1" ]; then cp -a "$ANDROID_SDK_ROOT/build-tools/33.0.1" "$STAGE/android-sdk/build-tools/"; fi
+          cp -a "$ANDROID_SDK_ROOT/platform-tools" "$STAGE/android-sdk/"
+          if [ -d "$ANDROID_SDK_ROOT/licenses" ]; then cp -a "$ANDROID_SDK_ROOT/licenses" "$STAGE/android-sdk/"; fi
+          cat > "$STAGE/TOOLCHAIN_INFO.txt" <<EOF
+          source_commit=$(git rev-parse HEAD)
+          java_home=$JAVA_HOME
+          android_sdk_root=$ANDROID_SDK_ROOT
+          gradle_wrapper=$(grep distributionUrl gradle/wrapper/gradle-wrapper.properties)
+          generated_utc=$(date -u +%FT%TZ)
+          EOF
+          tar --zstd -cf /tmp/v754-local-toolchain.tar.zst -C "$STAGE" .
+          sha256sum /tmp/v754-local-toolchain.tar.zst | tee /tmp/v754-local-toolchain.sha256
+          ls -lh /tmp/v754-local-toolchain.tar.zst
+
+      - name: Upload offline toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: v754-local-offline-toolchain
+          path: |
+            /tmp/v754-local-toolchain.tar.zst
+            /tmp/v754-local-toolchain.sha256
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
