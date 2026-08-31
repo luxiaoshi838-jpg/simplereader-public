@@ -1,0 +1,140 @@
+name: v754 Restore Source and Build Unsigned APK
+
+on:
+  push:
+    branches: [source-v754]
+    paths:
+      - 'recovery/v754/TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source-v754
+        uses: actions/checkout@v4
+        with:
+          ref: source-v754
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Reassemble and validate recovery delta
+        id: delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v754-delta
+          cat recovery/v754/delta/part-*.b64 | tr -d '\r\n' | base64 -d > /tmp/v754-delta.zip
+          sha256sum /tmp/v754-delta.zip | tee /tmp/v754-delta.sha256
+          unzip -t /tmp/v754-delta.zip
+          unzip -Z1 /tmp/v754-delta.zip | tee /tmp/v754-delta-files.txt
+          unzip -q /tmp/v754-delta.zip -d /tmp/v754-delta
+          ROOT="$(find /tmp/v754-delta -type f -path '*/app/build.gradle.kts' -printf '%h\n' | sed 's#/app$##' | head -1)"
+          if [ -z "$ROOT" ]; then
+            echo 'Recovery delta does not contain app/build.gradle.kts' >&2
+            exit 2
+          fi
+          echo "delta_root=$ROOT" >> "$GITHUB_OUTPUT"
+          echo "Recovery root: $ROOT"
+
+      - name: Apply exact v754 recovery delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='${{ steps.delta.outputs.delta_root }}'
+          cp -a "$ROOT"/. ./
+          chmod +x gradlew tools/*.sh 2>/dev/null || true
+          grep -Fq '2098000754' app/build.gradle.kts
+          grep -Fq '"754"' app/build.gradle.kts
+
+      - name: Run v754 40 hard gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/v754-40-gates.sh | tee /tmp/v754-40-gates.log
+          grep -Fq 'ALL_40_GATES_PASS' /tmp/v754-40-gates.log
+
+      - name: Commit restored normal source before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SimpleReader Recovery Bot'
+          git config user.email 'simplereader-recovery@users.noreply.github.com'
+          git add -A app tools build.gradle.kts settings.gradle.kts gradle gradlew gradlew.bat V754_CHANGELOG.md 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m 'v754: restore exact source from verified recovery delta'
+            git push origin HEAD:source-v754
+          fi
+
+      - name: Debug and release unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon testDebugUnitTest testReleaseUnitTest
+
+      - name: Assemble unsigned Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon clean assembleRelease
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)"
+          test -n "$APK" -a -f "$APK"
+          mkdir -p /tmp/v754-artifact
+          cp "$APK" /tmp/v754-artifact/SimpleReader_v754_unsigned.apk
+          sha256sum /tmp/v754-artifact/SimpleReader_v754_unsigned.apk | tee /tmp/v754-apk.sha256
+
+      - name: Write auditable build log
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/v754
+          {
+            echo '# v754 unsigned build log'
+            echo
+            echo "- UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "- Source commit: $(git rev-parse HEAD)"
+            echo '- JDK: 17'
+            echo '- Hard gates: 40/40 PASS'
+            echo '- Unit tests: Debug + Release PASS'
+            echo '- assembleRelease: PASS'
+            echo "- Unsigned APK SHA-256: $(cut -d' ' -f1 /tmp/v754-apk.sha256)"
+            echo '- Signing material: NOT uploaded to GitHub; final signing is local with SimpleReader Public V1.'
+          } > recovery/v754/BUILD_LOG.md
+          git add recovery/v754/BUILD_LOG.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'v754: record unsigned release build result'
+            git push origin HEAD:source-v754
+          fi
+
+      - name: Upload unsigned v754 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v754-unsigned
+          path: /tmp/v754-artifact/SimpleReader_v754_unsigned.apk
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload verification logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v754-verification
+          path: |
+            /tmp/v754-delta.sha256
+            /tmp/v754-delta-files.txt
+            /tmp/v754-40-gates.log
+            /tmp/v754-apk.sha256
+          if-no-files-found: error
+          retention-days: 7
