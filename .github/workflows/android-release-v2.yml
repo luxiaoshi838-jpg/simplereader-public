@@ -7,12 +7,10 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_SIGNING_SHA256: "315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648"
-  SIGNING_ALIAS: "simplereader-public-v1"
   SIMPLE_READER_VERSION_CODE: "2098000753"
   SIMPLE_READER_VERSION_NAME: "753"
-  APK_NAME: "SimpleReader_v753_github_signed.apk"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v753_github_signed.apk"
+  APK_NAME: "SimpleReader_v753_github_unsigned.apk"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v753_github_unsigned.apk"
   APK_SIZE_WARNING_BYTES: "16777216"
   MAX_APK_BYTES: "52428800"
 
@@ -22,7 +20,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build and verify v753 release APK
+    name: Build and verify v753 unsigned release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,36 +38,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Restore public v1 signing key from secrets
-        shell: bash
-        env:
-          SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
-          SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$SIGNING_KEY_BASE64"
-          test -n "$SIGNING_PASSWORD"
-          keystore="$RUNNER_TEMP/simplereader-public-v1.keystore"
-          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$keystore"
-          test -s "$keystore"
-
-          actual="$(keytool -list -v \
-            -keystore "$keystore" \
-            -storepass "$SIGNING_PASSWORD" \
-            -alias "$SIGNING_ALIAS" 2>/dev/null \
-            | sed -n 's/.*SHA256: //p' \
-            | head -n 1 \
-            | tr -d ':\r\n ' \
-            | tr 'A-F' 'a-f')"
-          test "$actual" = "$EXPECTED_SIGNING_SHA256"
-
-          {
-            echo "SIMPLEREADER_KEYSTORE_PATH=$keystore"
-            echo "SIMPLEREADER_KEYSTORE_PASSWORD=$SIGNING_PASSWORD"
-            echo "SIMPLEREADER_KEY_ALIAS=$SIGNING_ALIAS"
-            echo "SIMPLEREADER_KEY_PASSWORD=$SIGNING_PASSWORD"
-          } >> "$GITHUB_ENV"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -82,35 +50,37 @@ jobs:
           set -o pipefail
           timeout --signal=INT 5m ./gradlew clean testReleaseUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
 
-      - name: Verify package, fixed certificate and signature schemes
+      - name: Verify package and version
         shell: bash
         run: |
           set -euo pipefail
-          cp app/build/outputs/apk/release/app-release.apk "$APK_PATH"
+          unsigned_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          signed_apk="app/build/outputs/apk/release/app-release.apk"
+          if [ -f "$unsigned_apk" ]; then
+            cp "$unsigned_apk" "$APK_PATH"
+          else
+            cp "$signed_apk" "$APK_PATH"
+          fi
           test -s "$APK_PATH"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/zipalign" -c -v 4 "$APK_PATH" | tee zipalign-check.txt
-          "${build_tools}/apksigner" verify --verbose --print-certs "$APK_PATH" | tee apk-certificate.txt
-          grep -Fq "Verified using v1 scheme (JAR signing): true" apk-certificate.txt
-          grep -Fq "Verified using v2 scheme (APK Signature Scheme v2): true" apk-certificate.txt
-          actual="$(sed -n 's/.*certificate SHA-256 digest: //p' apk-certificate.txt | head -n 1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')"
-          test "$actual" = "$EXPECTED_SIGNING_SHA256"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
+          grep -Fq "versionCode='2098000753'" apk-package-info.txt
+          grep -Fq "versionName='753'" apk-package-info.txt
           grep -Fq "sdkVersion:'26'" apk-package-info.txt
           apk_bytes="$(stat -c %s "$APK_PATH")"
           test "$apk_bytes" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
-          echo 'Validation complete. APK is uploaded as an Actions artifact only and is not committed to the public repository.'
+          echo 'Validation complete. Unsigned APK is uploaded as an Actions artifact only and is not committed to the public repository.'
 
-      - name: Upload v753 APK and verification logs
+      - name: Upload v753 unsigned APK and verification logs
         uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v753-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
-            apk-certificate.txt
             apk-package-info.txt
             zipalign-check.txt
             gradle-build.log
