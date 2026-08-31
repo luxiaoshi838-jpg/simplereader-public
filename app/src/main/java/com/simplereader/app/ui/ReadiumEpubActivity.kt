@@ -200,7 +200,12 @@ class ReadiumEpubActivity :
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setColor(Color.rgb(239, 122, 40))
             }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginStart = dp(8)
+                marginEnd = dp(16)
+            }
+            // Match TXT reader: shift left by one third of the active EPUB reading character.
+            translationX = -(20.0 * fontScale * resources.displayMetrics.scaledDensity / 3.0).toFloat()
             setOnClickListener { addBookmark() }
         }
         return true

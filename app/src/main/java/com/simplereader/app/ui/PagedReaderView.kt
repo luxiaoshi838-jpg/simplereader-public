@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.simplereader.app.reader.ReaderBodyTitleNormalizerV104
 import com.simplereader.app.R
 import kotlin.math.abs
 
@@ -142,9 +143,9 @@ class PagedReaderView @JvmOverloads constructor(
         previousPage = previous
         currentPage = current
         nextPage = next
-        previousView.text = previous?.content ?: ""
-        currentView.text = current.content
-        nextView.text = next?.content ?: ""
+        previousView.text = previous?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
+        currentView.text = ReaderBodyTitleNormalizerV104.normalizeSnapshot(current)
+        nextView.text = next?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
         resetTransforms()
     }
 
@@ -155,8 +156,8 @@ class PagedReaderView @JvmOverloads constructor(
     ) {
         previousPage = previous
         nextPage = next
-        previousView.text = previous?.content ?: ""
-        nextView.text = next?.content ?: ""
+        previousView.text = previous?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
+        nextView.text = next?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
         if (!animating && !dragging) resetTransforms()
     }
 

@@ -78,6 +78,72 @@ object ReaderBackgrounds {
 
     fun selection(category: Category, optionId: String): Selection = validated(Selection(category, optionId))
 
+    /**
+     * Exact shipped-v745 compatibility path for preferences written by the older
+     * background picker.  Material wins over texture, texture wins over colour;
+     * when no legacy id is known, the old palette colour is matched to the nearest
+     * v745 scene colour.
+     */
+    fun selectionFromLegacy(
+        legacyColorId: String?,
+        legacyTextureId: String?,
+        legacyMaterialId: String?,
+        legacyBackgroundColor: Int
+    ): Selection {
+        val material = mapOf(
+            "material_duokan_dark" to "vine_black",
+            "material_duokan_green" to "vine_green",
+            "material_duokan_grey" to "vine_white",
+            "material_duokan_paper" to "vine_yellow",
+            "material_duokan_warm" to "vine_yellow",
+            "material_duokan_white" to "vine_white",
+            "material_parchment" to "vine_yellow",
+            "material_cloud" to "vine_white",
+            "material_warm" to "vine_yellow",
+            "material_jade" to "vine_green"
+        )[legacyMaterialId]
+        if (material != null) return selection(Category.MATERIAL, material)
+
+        val texture = mapOf(
+            "texture_duokan_blue" to "texture_blue",
+            "texture_duokan_green" to "texture_green",
+            "texture_duokan_white" to "texture_white",
+            "texture_duokan_yellow" to "texture_yellow",
+            "texture_paper_grain" to "texture_yellow",
+            "texture_paper_fiber" to "texture_white",
+            "texture_paper" to "texture_yellow",
+            "texture_linen" to "texture_yellow",
+            "texture_fiber" to "texture_white",
+            "texture_blue" to "texture_blue",
+            "texture_green" to "texture_green",
+            "texture_grey" to "texture_white"
+        )[legacyTextureId]
+        if (texture != null) return selection(Category.TEXTURE, texture)
+
+        val color = mapOf(
+            "solid_ivory" to "scene_yellow",
+            "solid_eye" to "scene_green",
+            "solid_white" to "scene_white",
+            "solid_blue" to "scene_blue",
+            "solid_peach" to "scene_yellow",
+            "solid_mist" to "scene_yellow",
+            "solid_night" to "scene_black"
+        )[legacyColorId]
+        if (color != null) return selection(Category.COLOR, color)
+
+        return selection(Category.COLOR, closestSceneId(legacyBackgroundColor))
+    }
+
+    private fun closestSceneId(color: Int): String {
+        fun distance(a: Int, b: Int): Long {
+            val dr = Color.red(b) - Color.red(a)
+            val dg = Color.green(b) - Color.green(a)
+            val db = Color.blue(b) - Color.blue(a)
+            return (dr * dr + dg * dg + db * db).toLong()
+        }
+        return colorOptions.minByOrNull { distance(color, it.representativeColor) }?.id ?: DEFAULT_COLOR_ID
+    }
+
     fun validated(selection: Selection): Selection {
         val choices = options(selection.category)
         if (choices.any { it.id == selection.optionId }) return selection

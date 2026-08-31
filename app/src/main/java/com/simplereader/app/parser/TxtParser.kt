@@ -1,5 +1,7 @@
 package com.simplereader.app.parser
 
+import com.simplereader.app.reader.DirectTxtCatalogV100
+
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -48,7 +50,7 @@ data class TxtTranscodeResult(
 
 object TxtParser {
     /** Bump this whenever TXT catalog recognition rules change. */
-    const val CATALOG_RULE_VERSION = 3
+    const val CATALOG_RULE_VERSION = 111
 
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
@@ -689,22 +691,15 @@ object TxtParser {
 
     fun isLikelyChapterTitle(line: String): Boolean = extractChapterTitle(line) != null
 
-    fun extractStructuredChapterTitle(line: String): String? {
-        val normalized = line.trim()
-        if (normalized.length !in 2..120) return null
-        if (normalized.contains("http", ignoreCase = true)) return null
-        if (normalized.count { it in "，,。；;！？!?" } > 2) return null
-        return normalized.take(100).takeIf { candidate ->
-            structuredChapterPatterns.any { it.matches(candidate) }
-        }
-    }
+    fun extractStructuredChapterTitle(line: String): String? = DirectTxtCatalogV100.recognize(line)
+
 
     /**
      * Last-resort rule. Callers that scan a whole book must only use these hits
      * when no structured chapter heading was found anywhere in that book.
      */
     fun extractFallbackChapterTitle(line: String): String? {
-        val normalized = line.trim()
+        val normalized = CatalogTitleNormalizerV103.normalize(line)
         if (normalized.length !in 2..40) return null
         if (normalized.contains("http", ignoreCase = true)) return null
         if (normalized.all(Char::isDigit)) return null

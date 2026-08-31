@@ -35,11 +35,20 @@ object BookFileActions {
 
         val uri = runCatching { Uri.parse(book.filePath) }.getOrNull()
         if (uri?.scheme.equals("content", ignoreCase = true)) {
-            val document = resolveTreeDocument(context, book)
+            val folder = resolveTreeFolder(context, book)
+            val document = folder?.let { resolveDocumentInFolder(it, book) }
                 ?: DocumentFile.fromSingleUri(context, uri ?: error("无法访问原书籍文件"))
                 ?: error("无法访问原书籍文件")
             check(document.canWrite()) { "没有本地文件写入权限，请重新按文件夹导入或重新选择总文件夹授权" }
-            check(document.renameTo(newFileName)) { "本地文件重命名失败，可能是同名文件已存在或文件夹未授权写入" }
+            if (folder != null && !newFileName.equals(oldFileName, ignoreCase = true)) {
+                val conflict = folder.listFiles().any { candidate ->
+                    candidate.uri != document.uri && candidate.name?.equals(newFileName, ignoreCase = true) == true
+                }
+                check(!conflict) { "同名文件已存在，请换一个书名" }
+            }
+            if (newFileName != oldFileName) {
+                check(document.renameTo(newFileName)) { "本地文件重命名失败，可能是同名文件已存在或文件夹未授权写入" }
+            }
             return book.copy(
                 title = updatedTitle,
                 fileName = newFileName,
@@ -83,7 +92,7 @@ object BookFileActions {
         return file.exists() && file.delete()
     }
 
-    private fun resolveTreeDocument(context: Context, book: Book): DocumentFile? {
+    private fun resolveTreeFolder(context: Context, book: Book): DocumentFile? {
         val treeUri = book.sourceTreeUri?.takeIf { it.isNotBlank() } ?: return null
         var folder = DocumentFile.fromTreeUri(context, Uri.parse(treeUri)) ?: return null
         val rootName = folder.name.orEmpty()
@@ -95,11 +104,20 @@ object BookFileActions {
             ?.forEach { segment ->
                 folder = folder.findFile(segment)?.takeIf { it.isDirectory } ?: return null
             }
+        return folder
+    }
+
+    private fun resolveDocumentInFolder(folder: DocumentFile, book: Book): DocumentFile? {
         return folder.findFile(book.fileName)
             ?: runCatching { Uri.parse(book.filePath).lastPathSegment }
                 .getOrNull()
                 ?.substringAfterLast('/')
                 ?.let(folder::findFile)
+    }
+
+    private fun resolveTreeDocument(context: Context, book: Book): DocumentFile? {
+        val folder = resolveTreeFolder(context, book) ?: return null
+        return resolveDocumentInFolder(folder, book)
     }
 
     private fun String.removeSuffixIgnoreCase(suffix: String): String {

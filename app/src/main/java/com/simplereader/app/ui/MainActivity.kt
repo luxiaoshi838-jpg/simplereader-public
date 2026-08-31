@@ -209,7 +209,7 @@ class MainActivity : AppCompatActivity() {
             text = "编辑"
             setOnClickListener {
                 if (shelfSelectionMode) {
-                    confirmDeleteShelfSelection()
+                    handleShelfSelectionPrimaryAction()
                 } else {
                     Toast.makeText(this@MainActivity, "长按书籍或分组可批量选择", Toast.LENGTH_SHORT).show()
                 }
@@ -440,12 +440,7 @@ class MainActivity : AppCompatActivity() {
     private fun addBookCard(book: ShelfBookItem) {
         val card = createShelfCard()
         card.addView(createBookCover(book, compact = false))
-        card.addView(TextView(this).apply {
-            text = book.title
-            textSize = 18f
-            setTextColor(ReaderAppearance.shelfTextColor(this@MainActivity))
-            maxLines = 2
-        })
+        // v749: the shelf cover already carries the book title; do not repeat it below the cover.
         card.addView(TextView(this).apply {
             val status = if (book.fileStatus == "AVAILABLE") "" else " · ${book.fileStatus}"
             text = "已读 ${book.progressPercent()}%$status"
@@ -822,85 +817,9 @@ class MainActivity : AppCompatActivity() {
                     return@setOnClickListener
                 }
 
-                val selectedGroupIds = selectedGroups.map { it.id }.toSet()
-                val selectedBooks = books.filter { it.groupId in selectedGroupIds }
-                val choiceDialog = AlertDialog.Builder(this@MainActivity)
-                    .setTitle("批量删除 ${selectedGroups.size} 个分组")
-                    .setMessage(
-                        "请选择处理组内 ${selectedBooks.size} 本书的方式：\n\n" +
-                            "回归书架：只删除分组，书籍移到未分组。\n" +
-                            "全部删除：删除分组，并从书架移除这些书籍。\n\n" +
-                            "两种方式都不会删除手机中的原文件。"
-                    )
-                    .setNegativeButton("取消", null)
-                    .setNeutralButton("回归书架", null)
-                    .setPositiveButton("全部删除", null)
-                    .create()
-
-                choiceDialog.setOnShowListener {
-                    choiceDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                        lifecycleScope.launch {
-                            val error = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    database.withTransaction {
-                                        selectedGroups.forEach { group ->
-                                            database.bookDao().clearGroup(group.id)
-                                            database.bookGroupDao().deleteById(group.id)
-                                        }
-                                    }
-                                }.exceptionOrNull()
-                            }
-                            if (error == null) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "已删除 ${selectedGroups.size} 个分组，${selectedBooks.size} 本书已回归书架",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                choiceDialog.dismiss()
-                                dialog.dismiss()
-                            } else {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "删除分组失败：${error.message ?: "未知错误"}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                    }
-
-                    choiceDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        lifecycleScope.launch {
-                            val error = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    database.withTransaction {
-                                        selectedBooks.distinctBy { it.id }.forEach { book ->
-                                            database.bookDao().deleteById(book.id)
-                                        }
-                                        selectedGroups.forEach { group ->
-                                            database.bookGroupDao().deleteById(group.id)
-                                        }
-                                    }
-                                }.exceptionOrNull()
-                            }
-                            if (error == null) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "已删除 ${selectedGroups.size} 个分组及 ${selectedBooks.size} 本书",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                choiceDialog.dismiss()
-                                dialog.dismiss()
-                            } else {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "全部删除失败：${error.message ?: "未知错误"}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                    }
+                confirmDeleteGroupsChoice(selectedGroups) {
+                    dialog.dismiss()
                 }
-                choiceDialog.show()
             }
         }
         dialog.show()
@@ -952,79 +871,84 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+
     private fun confirmDeleteGroup(group: BookGroup, groupBooks: List<ShelfBookItem>) {
-        val groupName = group.displayName.ifBlank { group.name }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("删除分组 · $groupName")
+        confirmDeleteGroupsChoice(listOf(group))
+    }
+
+    private fun confirmDeleteGroupsChoice(
+        groupsToDelete: List<BookGroup>,
+        onCompleted: () -> Unit = {}
+    ) {
+        if (groupsToDelete.isEmpty()) return
+        val groupIds = groupsToDelete.map { it.id }.toSet()
+        val affectedBooks = books.filter { it.groupId in groupIds }
+        val title = if (groupsToDelete.size == 1) {
+            "删除分组 · ${groupsToDelete.first().displayName.ifBlank { groupsToDelete.first().name }}"
+        } else {
+            "删除 ${groupsToDelete.size} 个分组"
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
             .setMessage(
-                "请选择处理组内 ${groupBooks.size} 本书的方式：\n\n" +
-                    "回归书架：只删除分组，书籍移到未分组。\n" +
-                    "全部删除：删除分组，并从书架移除组内全部书籍。\n\n" +
-                    "两种方式都不会删除手机中的原文件。"
+                "请选择删除方式：\n\n" +
+                    "仅删除分组：只删除书架上的分组结构，组内 ${affectedBooks.size} 本书回到未分组。\n\n" +
+                    "分组及书籍一起删除：删除分组，同时把组内书籍从书架移除。\n\n" +
+                    "两种方式都不会删除手机中的本地书籍文件。"
             )
             .setNegativeButton("取消", null)
-            .setNeutralButton("回归书架", null)
-            .setPositiveButton("全部删除", null)
-            .create()
+            .setNeutralButton("仅删除分组") { _, _ ->
+                executeDeleteGroups(groupsToDelete, affectedBooks, removeBooksFromShelf = false, onCompleted)
+            }
+            .setPositiveButton("分组及书籍一起删除") { _, _ ->
+                executeDeleteGroups(groupsToDelete, affectedBooks, removeBooksFromShelf = true, onCompleted)
+            }
+            .show()
+    }
 
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                lifecycleScope.launch {
-                    val error = withContext(Dispatchers.IO) {
-                        runCatching {
-                            database.withTransaction {
-                                database.bookDao().clearGroup(group.id)
-                                database.bookGroupDao().deleteById(group.id)
+    private fun executeDeleteGroups(
+        groupsToDelete: List<BookGroup>,
+        affectedBooks: List<ShelfBookItem>,
+        removeBooksFromShelf: Boolean,
+        onCompleted: () -> Unit
+    ) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    database.withTransaction {
+                        if (removeBooksFromShelf) {
+                            affectedBooks.forEach { book ->
+                                database.bookmarkDao().deleteByBookId(book.id)
+                                database.readProgressDao().deleteByBookId(book.id)
+                                database.bookDao().deleteById(book.id)
                             }
-                        }.exceptionOrNull()
-                    }
-                    if (error == null) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "分组已删除，${groupBooks.size} 本书已回归书架",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        dialog.dismiss()
-                    } else {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "删除分组失败：${error.message ?: "未知错误"}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        } else {
+                            groupsToDelete.forEach { group ->
+                                database.bookDao().clearGroup(group.id)
+                            }
+                        }
+                        groupsToDelete.forEach { group ->
+                            database.bookGroupDao().deleteById(group.id)
+                        }
                     }
                 }
             }
-
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                lifecycleScope.launch {
-                    val error = withContext(Dispatchers.IO) {
-                        runCatching {
-                            database.withTransaction {
-                                groupBooks.forEach { book ->
-                                    database.bookDao().deleteById(book.id)
-                                }
-                                database.bookGroupDao().deleteById(group.id)
-                            }
-                        }.exceptionOrNull()
-                    }
-                    if (error == null) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "分组及 ${groupBooks.size} 本书已从书架删除",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        dialog.dismiss()
-                    } else {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "全部删除失败：${error.message ?: "未知错误"}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
+            result.onSuccess {
+                val message = if (removeBooksFromShelf) {
+                    "已删除 ${groupsToDelete.size} 个分组，并从书架移除 ${affectedBooks.size} 本书；本地文件未删除"
+                } else {
+                    "已删除 ${groupsToDelete.size} 个分组，${affectedBooks.size} 本书已回归书架"
                 }
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                onCompleted()
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "删除分组失败：${error.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
-        dialog.show()
     }
 
     private fun showBookActions(book: ShelfBookItem) {
@@ -1308,8 +1232,7 @@ class MainActivity : AppCompatActivity() {
     private fun enterShelfSelectionMode() {
         if (!shelfSelectionMode) {
             shelfSelectionMode = true
-            editButton.text = "\u5220\u9664"
-            moreButton.text = "\u53d6\u6d88"
+            updateShelfSelectionButtons()
         }
     }
 
@@ -1338,34 +1261,143 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateShelfSelectionButtons() {
         if (!shelfSelectionMode) return
-        val count = selectedShelfBookIds.size + selectedShelfGroupIds.size
-        editButton.text = if (count > 0) "\u5220\u9664($count)" else "\u5220\u9664"
-        moreButton.text = "\u53d6\u6d88"
+        val bookCount = selectedShelfBookIds.size
+        val groupCount = selectedShelfGroupIds.size
+        editButton.text = when {
+            groupCount >= 2 && bookCount == 0 -> "删除"
+            groupCount == 1 && bookCount == 0 -> "操作"
+            bookCount > 0 -> "操作"
+            else -> "操作"
+        }
+        moreButton.text = "×"
+        moreButton.contentDescription = "退出选择"
     }
+
+    private fun handleShelfSelectionPrimaryAction() {
+        val bookCount = selectedShelfBookIds.size
+        val groupCount = selectedShelfGroupIds.size
+        when {
+            groupCount == 1 && bookCount == 0 -> {
+                val groupId = selectedShelfGroupIds.first()
+                val group = groups.firstOrNull { it.id == groupId } ?: return
+                val groupBooks = books.filter { it.groupId == groupId }
+                exitShelfSelectionMode()
+                showGroupActions(group, groupBooks)
+            }
+            groupCount >= 2 && bookCount == 0 -> confirmDeleteSelectedGroups()
+            bookCount > 0 && groupCount == 0 -> showShelfBookSelectionActions()
+            bookCount + groupCount > 0 -> showMixedShelfSelectionActions()
+            else -> Toast.makeText(this, "请先选择书籍或分组", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
+    private fun showShelfBookSelectionActions() {
+        val selectedBooks = books.filter { it.id in selectedShelfBookIds }
+        if (selectedBooks.isEmpty()) return
+        val single = selectedBooks.singleOrNull()
+        val actions = if (single != null) {
+            listOf("重命名", "移动到其他分组", "删除")
+        } else {
+            listOf("移动到其他分组", "删除")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("已选择 ${selectedBooks.size} 本")
+            .setItems(actions.toTypedArray()) { _, which ->
+                when (actions[which]) {
+                    "重命名" -> single?.let {
+                        exitShelfSelectionMode()
+                        showRenameBookDialog(it)
+                    }
+                    "移动到其他分组" -> showMoveSelectedShelfBooksToGroup()
+                    "删除" -> confirmDeleteShelfSelection()
+                }
+            }
+            .show()
+    }
+
+    private fun showMixedShelfSelectionActions() {
+        val actions = arrayOf("取消选择分组", "取消选择书籍", "删除书架")
+        AlertDialog.Builder(this)
+            .setTitle("批量操作")
+            .setItems(actions) { _, which ->
+                when (which) {
+                    0 -> { selectedShelfGroupIds.clear(); updateShelfSelectionButtons(); updateUI() }
+                    1 -> { selectedShelfBookIds.clear(); updateShelfSelectionButtons(); updateUI() }
+                    2 -> confirmDeleteShelfSelection()
+                }
+            }
+            .show()
+    }
+
+    private fun showMoveSelectedShelfBooksToGroup() {
+        if (selectedShelfBookIds.isEmpty()) return
+        lifecycleScope.launch {
+            val existingGroups = withContext(Dispatchers.IO) { bookGroupRepository.getAllGroups().first() }
+            val labels = (listOf("未分组") + existingGroups.map { it.displayName.ifBlank { it.name } }).toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("移入分组")
+                .setItems(labels) { _, which ->
+                    val targetGroupId = if (which == 0) null else existingGroups[which - 1].id
+                    moveSelectedShelfBooksToGroup(targetGroupId)
+                }
+                .show()
+        }
+    }
+
+    private fun moveSelectedShelfBooksToGroup(targetGroupId: Long?) {
+        val ids = selectedShelfBookIds.toList()
+        if (ids.isEmpty()) return
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                ids.forEach { id ->
+                    bookRepository.getBook(id)?.let { entity ->
+                        bookRepository.update(entity.copy(groupId = targetGroupId))
+                    }
+                }
+            }
+            Toast.makeText(this@MainActivity, "已移动 ${ids.size} 本书", Toast.LENGTH_SHORT).show()
+            exitShelfSelectionMode()
+        }
+    }
+
+
+    private fun confirmDeleteSelectedGroups() {
+        val selectedGroups = groups.filter { it.id in selectedShelfGroupIds }
+        if (selectedGroups.size < 2) return
+        confirmDeleteGroupsChoice(selectedGroups) {
+            exitShelfSelectionMode()
+        }
+    }
+
 
     private fun confirmDeleteShelfSelection() {
         val total = selectedShelfBookIds.size + selectedShelfGroupIds.size
         if (total == 0) {
-            Toast.makeText(this, "\u8bf7\u5148\u9009\u62e9\u4e66\u7c4d\u6216\u5206\u7ec4", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "请先选择书籍或分组", Toast.LENGTH_SHORT).show()
             return
         }
         if (selectedShelfGroupIds.isNotEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("\u6279\u91cf\u5220\u9664\u4e66\u67b6")
-                .setMessage("\u5df2\u9009\u62e9 $total \u9879\uff0c\u5176\u4e2d\u5305\u542b\u5206\u7ec4\u3002\u5c06\u53ea\u5220\u9664\u4e66\u67b6\u8bb0\u5f55\uff0c\u4e0d\u5220\u9664\u672c\u5730\u6587\u4ef6\u3002")
-                .setNegativeButton("\u53d6\u6d88", null)
-                .setPositiveButton("\u5220\u9664\u4e66\u67b6") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+                .setTitle("删除书架项目")
+                .setMessage(
+                    "所选分组只会从书架删除，组内书籍回到未分组；" +
+                        "所选书籍只会从书架移除。不会删除任何本地文件。"
+                )
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除书架") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
                 .show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("\u6279\u91cf\u5220\u9664\u4e66\u7c4d")
-            .setMessage("\u5df2\u9009\u62e9 ${selectedShelfBookIds.size} \u672c\u4e66\u3002")
-            .setNegativeButton("\u53d6\u6d88", null)
-            .setNeutralButton("\u53ea\u5220\u9664\u4e66\u67b6") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
-            .setPositiveButton("\u4e66\u67b6+\u672c\u5730\u6587\u4ef6") { _, _ -> deleteShelfSelection(deleteLocalFiles = true) }
+            .setTitle("删除 ${selectedShelfBookIds.size} 本书")
+            .setMessage("请选择删除方式。")
+            .setNegativeButton("取消", null)
+            .setNeutralButton("只删除书架") { _, _ -> deleteShelfSelection(deleteLocalFiles = false) }
+            .setPositiveButton("删除书籍及本地") { _, _ -> deleteShelfSelection(deleteLocalFiles = true) }
             .show()
     }
+
 
     private fun deleteShelfSelection(deleteLocalFiles: Boolean) {
         val bookIds = selectedShelfBookIds.toList()
@@ -1386,11 +1418,7 @@ class MainActivity : AppCompatActivity() {
                             database.bookDao().deleteById(id)
                         }
                         groupIds.forEach { groupId ->
-                            books.filter { it.groupId == groupId }.forEach { book ->
-                                database.bookmarkDao().deleteByBookId(book.id)
-                                database.readProgressDao().deleteByBookId(book.id)
-                                database.bookDao().deleteById(book.id)
-                            }
+                            database.bookDao().clearGroup(groupId)
                             database.bookGroupDao().deleteById(groupId)
                         }
                     }
@@ -1398,11 +1426,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             result.onSuccess { (localDeleted, localFailed) ->
-                val message = if (deleteLocalFiles) "\u5df2\u5220\u9664\u4e66\u67b6\u8bb0\u5f55\uff0c\u672c\u5730\u6587\u4ef6\u6210\u529f $localDeleted \u4e2a\uff0c\u5931\u8d25 $localFailed \u4e2a" else "\u5df2\u4ece\u4e66\u67b6\u5220\u9664"
+                val message = when {
+                    deleteLocalFiles -> "已删除书架记录；本地文件成功 $localDeleted 个，失败 $localFailed 个"
+                    groupIds.isNotEmpty() && bookIds.isNotEmpty() -> "已删除所选书架项目；分组内书籍已回归书架"
+                    groupIds.isNotEmpty() -> "已删除所选分组；组内书籍已回归书架"
+                    else -> "已从书架删除所选书籍"
+                }
                 Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                 exitShelfSelectionMode()
             }.onFailure { error ->
-                Toast.makeText(this@MainActivity, "\u5220\u9664\u5931\u8d25\uff1a${error.message ?: "\u672a\u77e5\u9519\u8bef"}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, "删除失败：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
             }
         }
     }

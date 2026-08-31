@@ -1,4 +1,4 @@
-name: Build 简阅 Permanent Signing v2
+name: Build 简阅 v753
 
 on:
   workflow_dispatch:
@@ -7,18 +7,22 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_SIGNING_SHA256: "6c2baa3cc6f51a3d7ec608d9350fe8f6610b66f54dc46bd6da8e1af959b8cbe5"
-  SIGNING_ALIAS: "simplereader-v2"
+  EXPECTED_SIGNING_SHA256: "315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648"
+  SIGNING_ALIAS: "simplereader-public-v1"
+  SIMPLE_READER_VERSION_CODE: "2098000753"
+  SIMPLE_READER_VERSION_NAME: "753"
+  APK_NAME: "SimpleReader_v753_github_signed.apk"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v753_github_signed.apk"
   APK_SIZE_WARNING_BYTES: "16777216"
   MAX_APK_BYTES: "52428800"
 
 concurrency:
-  group: permanent-signing-v2-${{ github.ref }}
+  group: simplereader-v753-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build-apk:
-    name: Build and verify migration release APK locally in runner
+    name: Build and verify v753 release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,7 +44,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Restore permanent v2 signing key from secrets
+      - name: Restore public v1 signing key from secrets
         shell: bash
         env:
           SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
@@ -49,7 +53,7 @@ jobs:
           set -euo pipefail
           test -n "$SIGNING_KEY_BASE64"
           test -n "$SIGNING_PASSWORD"
-          keystore="$RUNNER_TEMP/SimpleReader_Permanent_v2.p12"
+          keystore="$RUNNER_TEMP/simplereader-public-v1.keystore"
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$keystore"
           test -s "$keystore"
 
@@ -76,19 +80,6 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Generate migration-safe version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version_code=$((2101000000 + 10#$GITHUB_RUN_NUMBER))
-          version_name="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
-          apk_name="SimpleReader_${version_name}_migration_v2.apk"
-          apk_path="app/build/outputs/apk/release/${apk_name}"
-          echo "SIMPLE_READER_VERSION_CODE=${version_code}" >> "$GITHUB_ENV"
-          echo "SIMPLE_READER_VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
-          echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
-          echo "APK_PATH=${apk_path}" >> "$GITHUB_ENV"
-
       - name: Build and run release unit tests
         shell: bash
         run: |
@@ -114,13 +105,14 @@ jobs:
           apk_bytes="$(stat -c %s "$APK_PATH")"
           test "$apk_bytes" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
-          echo 'Validation complete. APK remains ephemeral on the runner and is not uploaded to the public repository or Actions artifacts.'
+          echo 'Validation complete. APK is uploaded as an Actions artifact only and is not committed to the public repository.'
 
-      - name: Upload verification logs only
+      - name: Upload v753 APK and verification logs
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-migration-verification-${{ github.run_number }}
+          name: SimpleReader-v753-${{ github.run_number }}
           path: |
+            ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-certificate.txt
             apk-package-info.txt

@@ -5,36 +5,70 @@
     android:layout_height="match_parent"
     android:background="#F5E9C8">
 
-    <com.simplereader.app.ui.PagedReaderView
-        android:id="@+id/pagedReaderView"
+    <FrameLayout
+        android:id="@+id/readerViewport"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="invisible" />
+        android:layout_height="match_parent">
 
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/readerScrollView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:clickable="true"
-        android:clipToPadding="false"
-        android:fillViewport="true"
-        android:focusable="true"
-        android:overScrollMode="ifContentScrolls"
-        android:scrollbars="none"
-        >
-
-        <TextView
-            android:id="@+id/contentView"
+        <com.simplereader.app.ui.PagedReaderView
+            android:id="@+id/pagedReaderView"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:lineSpacingMultiplier="1.75"
-            android:paddingStart="28dp"
-            android:paddingTop="0dp"
-            android:paddingEnd="28dp"
-            android:paddingBottom="0dp"
-            android:textColor="#3B3428"
-            android:textSize="20sp" />
-    </androidx.core.widget.NestedScrollView>
+            android:layout_height="match_parent"
+            android:visibility="invisible" />
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/readerScrollView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:focusable="true"
+            android:overScrollMode="ifContentScrolls"
+            android:scrollbars="none"
+            >
+
+            <TextView
+                android:id="@+id/contentView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingMultiplier="1.75"
+                android:paddingStart="28dp"
+                android:paddingTop="0dp"
+                android:paddingEnd="28dp"
+                android:paddingBottom="0dp"
+                android:textColor="#3B3428"
+                android:textSize="20sp" />
+        </androidx.core.widget.NestedScrollView>
+
+        <View
+            android:id="@+id/readerTopHaze"
+            android:layout_width="match_parent"
+            android:layout_height="28dp"
+            android:layout_gravity="top"
+            android:visibility="gone" />
+
+        <View
+            android:id="@+id/readerBottomHaze"
+            android:layout_width="match_parent"
+            android:layout_height="28dp"
+            android:layout_gravity="bottom"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/autoReadStopButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="58dp"
+        android:background="@android:drawable/btn_default_small"
+        android:gravity="center"
+        android:text="停"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/readerProgressLabel"
@@ -330,6 +364,16 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="⬡\n设置"
+                android:textColor="#EEE9DD"
+                android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/autoReadButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="▶\n自动"
                 android:textColor="#EEE9DD"
                 android:textSize="17sp" />
         </LinearLayout>

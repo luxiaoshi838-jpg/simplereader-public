@@ -169,65 +169,6 @@ object ReaderDocumentLoader {
         )
     }
 
-    private fun detectTxtChapters(text: String): List<BookChapter> {
-        if (text.isBlank()) return listOf(BookChapter("正文", 0, text.length))
+    private fun detectTxtChapters(text: String): List<BookChapter> = DirectTxtCatalogV100.detect(text)
 
-        data class LineInfo(
-            val raw: String,
-            val startOffset: Int,
-            val previousBlank: Boolean,
-            val nextBlank: Boolean
-        )
-
-        val lines = mutableListOf<LineInfo>()
-        var cursor = 0
-        var previousBlank = true
-        while (cursor <= text.length) {
-            val end = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
-            val raw = text.substring(cursor, end).trim()
-            val nextStart = (end + 1).coerceAtMost(text.length)
-            val nextEnd = if (nextStart < text.length) {
-                text.indexOf('\n', nextStart).let { if (it < 0) text.length else it }
-            } else {
-                text.length
-            }
-            val nextBlank = nextStart >= text.length || text.substring(nextStart, nextEnd).isBlank()
-            lines += LineInfo(raw, cursor, previousBlank, nextBlank)
-            previousBlank = raw.isBlank()
-            if (end >= text.length) break
-            cursor = end + 1
-        }
-
-        fun collectStructured(): List<Pair<String, Int>> =
-            lines.mapNotNull { line ->
-                TxtParser.extractStructuredChapterTitle(line.raw)?.let { it to line.startOffset }
-            }
-
-        fun collectFallback(): List<Pair<String, Int>> =
-            lines.mapNotNull { line ->
-                if (!(line.previousBlank || line.nextBlank)) return@mapNotNull null
-                TxtParser.extractFallbackChapterTitle(line.raw)?.let { it to line.startOffset }
-            }
-
-        val structured = collectStructured()
-        val selected = if (structured.isNotEmpty()) structured else collectFallback()
-        val hits = selected.fold(mutableListOf<Pair<String, Int>>()) { output, hit ->
-            if (output.lastOrNull()?.second?.let { hit.second - it >= 20 } != false) output += hit
-            output
-        }
-        if (hits.isEmpty()) return listOf(BookChapter("正文", 0, text.length))
-
-        val output = mutableListOf<BookChapter>()
-        if (hits.first().second > 0) {
-            output += BookChapter("正文", 0, hits.first().second, catalogVisible = false)
-        }
-        hits.forEachIndexed { index, hit ->
-            output += BookChapter(
-                title = hit.first,
-                startOffset = hit.second,
-                endOffset = hits.getOrNull(index + 1)?.second ?: text.length
-            )
-        }
-        return output
-    }
 }

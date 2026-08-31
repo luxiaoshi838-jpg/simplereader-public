@@ -5,6 +5,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -12,6 +14,7 @@ import android.text.TextUtils
 import android.text.style.BackgroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -23,6 +26,7 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -35,6 +39,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.R
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
@@ -60,6 +66,9 @@ import java.util.Locale
 class ReaderActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var readerRoot: View
+    private lateinit var readerViewport: FrameLayout
+    private lateinit var readerTopHaze: View
+    private lateinit var readerBottomHaze: View
     private lateinit var readerScrollView: NestedScrollView
     private lateinit var continuousTextView: TextView
     private lateinit var pagedReaderView: PagedReaderView
@@ -67,6 +76,7 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var readerControls: LinearLayout
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
+    private lateinit var autoReadStopView: TextView
 
     private var paginationJob: Job? = null
     private var continuousRenderJob: Job? = null
@@ -95,6 +105,34 @@ class ReaderActivity : AppCompatActivity() {
     private var navigationBarInsetPx = 0
     private var readerInsetsApplied = false
     private var backgroundSelection: ReaderBackgrounds.Selection = ReaderBackgrounds.Selection()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var fontChangeRunnable: Runnable? = null
+    private var pendingFontRollback: FontRollback? = null
+    private var autoReadSpeedCpm: Int = 500
+    private var autoReading = false
+    private var autoReadPageRunnable: Runnable? = null
+    private var autoReadAwaitingPageCommit = false
+    private var verticalAutoFrameCallback: Choreographer.FrameCallback? = null
+    private var verticalAutoLastFrameNanos: Long = 0L
+    private var verticalAutoPixelRemainder: Double = 0.0
+    private var verticalRecyclerView: RecyclerView? = null
+    private var verticalLayoutManager: LinearLayoutManager? = null
+    private var verticalAdapter: VerticalPageAdapter? = null
+    private var verticalProgrammaticScroll = false
+    private var verticalWindowSuspended = false
+    private var modeSwitchInProgress = false
+    private var paginationInProgress = false
+    private var pendingTurnMode: String? = null
+    private var suspendedAnchorOffset: Int? = null
+    private var suspendedAnchorViewportPx: Int? = null
+
+    private data class FontRollback(
+        val textSizeSp: Float,
+        val readerBook: ReaderBook,
+        val settings: ReaderLayoutSettings?,
+        val pageIndex: Int,
+        val sourceOffset: Int
+    )
 
     private val continuousGesture by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -123,6 +161,9 @@ class ReaderActivity : AppCompatActivity() {
 
         database = SimpleReaderDatabase.getDatabase(this)
         readerRoot = findViewById(R.id.readerRoot)
+        readerViewport = findViewById(R.id.readerViewport)
+        readerTopHaze = findViewById(R.id.readerTopHaze)
+        readerBottomHaze = findViewById(R.id.readerBottomHaze)
         readerScrollView = findViewById(R.id.readerScrollView)
         continuousTextView = findViewById(R.id.contentView)
         pagedReaderView = findViewById(R.id.pagedReaderView)
@@ -130,6 +171,12 @@ class ReaderActivity : AppCompatActivity() {
         readerControls = findViewById(R.id.readerControls)
         readerSettingsPanel = findViewById(R.id.readerSettingsPanel)
         progressSeekBar = findViewById(R.id.fontSizeSeekBar)
+        autoReadStopView = findViewById(R.id.autoReadStopButton)
+        autoReadStopView.setOnClickListener { stopAutoReading(false) }
+        autoReadStopView.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(220, 48, 47, 42))
+        }
         bookId = intent.getLongExtra("bookId", 0L)
 
         loadPreferences()
@@ -143,6 +190,7 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        stopAutoReading(false)
         saveProgress()
         super.onPause()
     }
@@ -151,6 +199,9 @@ class ReaderActivity : AppCompatActivity() {
         paginationJob?.cancel()
         continuousRenderJob?.cancel()
         pagedReaderView.cancelNavigation()
+        verticalRecyclerView?.stopScroll()
+        fontChangeRunnable?.let(mainHandler::removeCallbacks)
+        stopAutoReading(false)
         super.onDestroy()
     }
 
@@ -160,21 +211,24 @@ class ReaderActivity : AppCompatActivity() {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         val addItem = menu.add(Menu.NONE, MENU_ADD_BOOKMARK, Menu.NONE, "添加书签")
         addItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        addItem.actionView = TextView(this).apply {
-            text = "添"
-            gravity = Gravity.CENTER
-            textSize = 16f
-            setTextColor(Color.WHITE)
+        addItem.actionView = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_reader_add_bookmark)
+            setBackgroundColor(Color.TRANSPARENT)
             contentDescription = "添加书签"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(239, 122, 40))
+            setPadding(0, 0, 0, 0)
+            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginStart = dp(8)
+                marginEnd = dp(16)
             }
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) }
+            // v752: move the bookmark glyph left by exactly one third of the active reading character.
+            translationX = -bookmarkOneThirdCharacterPx()
             setOnClickListener { addBookmark() }
         }
         return true
     }
+
+    private fun bookmarkOneThirdCharacterPx(): Float =
+        readerTextSizeSp * resources.displayMetrics.scaledDensity / 3f
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         MENU_SEARCH -> { showContentSearch(); true }
@@ -186,7 +240,8 @@ class ReaderActivity : AppCompatActivity() {
         if (volumeKeyTurnEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
             val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1
             if (pageTurnMode == TURN_MODE_VERTICAL) {
-                readerScrollView.smoothScrollBy(0, direction * readerScrollView.height.coerceAtLeast(1))
+                val rv = verticalRecyclerView
+                if (rv != null) rv.smoothScrollBy(0, direction * rv.height.coerceAtLeast(1))
             } else {
                 pagedReaderView.turn(direction)
             }
@@ -205,8 +260,12 @@ class ReaderActivity : AppCompatActivity() {
                 bindHorizontalPages()
                 updateProgressUi()
                 saveProgress()
+                autoReadAwaitingPageCommit = false
+                if (autoReading && pageTurnMode != TURN_MODE_VERTICAL) scheduleAutomaticPageTurn()
             } else {
                 bindHorizontalPages()
+                autoReadAwaitingPageCommit = false
+                if (autoReading) stopAutoReading(true)
             }
         }
         pagedReaderView.onBoundaryTurn = { direction ->
@@ -241,10 +300,12 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindControls() {
-        findViewById<TextView>(R.id.catalogButton).setOnClickListener { showCatalogBookmarkPanelV600() }
+        findViewById<TextView>(R.id.catalogButton).setOnClickListener { stopAutoReading(false); showCatalogBookmarkPanelV600() }
         findViewById<TextView>(R.id.readerSearchButton).setOnClickListener {
+            stopAutoReading(false)
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
+        findViewById<TextView>(R.id.autoReadButton).setOnClickListener { showAutoReadDialog() }
         findViewById<TextView>(R.id.nightButton).setOnClickListener {
             ReaderAppearance.toggleMode(this)
             applyReaderAppearance(rebindPages = true)
@@ -334,6 +395,7 @@ class ReaderActivity : AppCompatActivity() {
             return
         }
         paginationJob?.cancel()
+        paginationInProgress = true
         progressLabel.text = "分页中…"
         paginationJob = lifecycleScope.launch {
             try {
@@ -360,6 +422,7 @@ class ReaderActivity : AppCompatActivity() {
                     ) { href, width, height -> imageRepository?.span(href, width, height) }
                 }
                 readerBook = paged
+                pendingFontRollback = null
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
                 val stableOffset = preserveOffset
                     ?: progress?.startOffset
@@ -371,7 +434,9 @@ class ReaderActivity : AppCompatActivity() {
                     else -> 0
                 }
                 currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
+                paginationInProgress = false
                 showActiveReader()
+                pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
                 lifecycleScope.launch(Dispatchers.IO) {
                     runCatching {
                         if (cached == null) {
@@ -388,7 +453,21 @@ class ReaderActivity : AppCompatActivity() {
                     }
                 }
             } catch (error: Throwable) {
-                showContinuousFallback(error.message ?: "分页失败")
+                val rollback = pendingFontRollback
+                if (rollback != null) {
+                    pendingFontRollback = null
+                    readerTextSizeSp = rollback.textSizeSp
+                    readerBook = rollback.readerBook
+                    layoutSettings = rollback.settings
+                    currentPageIndex = rollback.pageIndex.coerceIn(0, rollback.readerBook.pages.lastIndex)
+                    applyReaderContentPadding()
+                    savePreferences()
+                    updateSettingsLabels()
+                    showActiveReader()
+                    Toast.makeText(this@ReaderActivity, "字号分页失败，已恢复原字号和位置", Toast.LENGTH_SHORT).show()
+                } else {
+                    showContinuousFallback(error.message ?: "分页失败")
+                }
             }
         }
     }
@@ -413,6 +492,9 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun showHorizontalBook() {
+        verticalRecyclerView?.apply { stopScroll(); visibility = View.GONE }
+        readerTopHaze.visibility = View.GONE
+        readerBottomHaze.visibility = View.GONE
         readerScrollView.visibility = View.GONE
         configurePagedReaderStyle()
         bindHorizontalPages()
@@ -472,6 +554,8 @@ class ReaderActivity : AppCompatActivity() {
             settings,
             page.pageIndexInChapter == 0
         ) { href, width, height -> imageRepository?.span(href, width, height) }
+        // v745: keep renderPage() source-layout faithful. V104 is horizontal-snapshot-only
+        // and is applied by PagedReaderView.bind/updateAdjacent, never by vertical RecyclerView.
         val hit = activeSearchHit ?: return rendered
         if (hit.startOffset !in start until end) return rendered
         val result = SpannableString(rendered)
@@ -483,20 +567,109 @@ class ReaderActivity : AppCompatActivity() {
         return result
     }
 
-    private fun showContinuousBook(targetOffset: Int? = null) {
-        val paged = readerBook ?: return
-        val settings = layoutSettings ?: return
+    private fun ensureVerticalReader() {
+        if (verticalRecyclerView != null) return
+        val recycler = RecyclerView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            itemAnimator = null
+            setItemViewCacheSize(12)
+            visibility = View.INVISIBLE
+        }
+        val manager = LinearLayoutManager(this, RecyclerView.VERTICAL, false).apply {
+            initialPrefetchItemCount = 8
+        }
+        val adapter = VerticalPageAdapter(this)
+        recycler.layoutManager = manager
+        recycler.adapter = adapter
+        recycler.addOnScrollListener(VerticalScrollListener(this, manager))
+        recycler.setOnTouchListener(VerticalTouchListener(this))
+        readerViewport.addView(recycler, 2)
+        verticalRecyclerView = recycler
+        verticalLayoutManager = manager
+        verticalAdapter = adapter
+    }
+
+    private fun showContinuousBook(targetOffset: Int? = null, onComplete: ((Boolean) -> Unit)? = null) {
+        val paged = readerBook ?: return onComplete?.invoke(false) ?: Unit
+        ensureVerticalReader()
         pagedReaderView.cancelNavigation()
         pagedReaderView.visibility = View.GONE
-        readerScrollView.visibility = View.VISIBLE
-        continuousTextView.textSize = readerTextSizeSp
-        continuousTextView.setLineSpacing(0f, settings.lineSpacingMultiplier)
-        continuousTextView.setTextColor(activePalette().textColor)
-        continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
-        readerScrollView.background = activeBackgroundDrawable()
+        readerScrollView.visibility = View.GONE
+        readerTopHaze.visibility = View.GONE
+        readerBottomHaze.visibility = View.GONE
+        verticalProgrammaticScroll = true
+        verticalAdapter?.setPages(paged.pages)
         val offset = targetOffset ?: paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
-        renderContinuousWindow(offset)
+        val page = paged.pageForOffset(offset)
+        currentPageIndex = page.globalPageIndex
+        continuousWindowStartOffset = page.startOffset
+        continuousWindowEndOffset = page.endOffset
+        verticalRecyclerView?.visibility = View.VISIBLE
+        verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
+        verticalRecyclerView?.post {
+            verticalProgrammaticScroll = false
+            verticalOnPageVisible(currentPageIndex)
+            onComplete?.invoke(true)
+        }
+        updateProgressUi()
     }
+
+    internal fun verticalRenderPage(page: ReaderPage): CharSequence = renderPage(page)
+    internal fun verticalTextSizeSp(): Float = readerTextSizeSp
+    internal fun verticalLineSpacingMultiplier(): Float = layoutSettings?.lineSpacingMultiplier ?: 1.75f
+    internal fun verticalTextColor(): Int = activePalette().textColor
+    internal fun verticalPaddingLeft(): Int = continuousTextView.paddingLeft
+    internal fun verticalPaddingRight(): Int = continuousTextView.paddingRight
+    internal fun verticalShouldIgnoreScroll(): Boolean = verticalWindowSuspended || verticalProgrammaticScroll
+    internal fun verticalShowBoundaryHaze() = showBoundaryHaze()
+
+    private fun showBoundaryHaze() {
+        if (pageTurnMode != TURN_MODE_VERTICAL) return
+        readerViewport.removeCallbacks(hideBoundaryHazeRunnable)
+        listOf(readerTopHaze, readerBottomHaze).forEach { haze ->
+            haze.animate().cancel()
+            haze.visibility = View.VISIBLE
+            haze.alpha = 0.86f
+        }
+        readerViewport.postDelayed(hideBoundaryHazeRunnable, 130L)
+    }
+
+    private val hideBoundaryHazeRunnable = Runnable {
+        if (!::readerTopHaze.isInitialized || !::readerBottomHaze.isInitialized) return@Runnable
+        listOf(readerTopHaze, readerBottomHaze).forEach { haze ->
+            haze.animate().cancel()
+            haze.visibility = View.VISIBLE
+            haze.animate().alpha(0.52f).setDuration(260L).start()
+        }
+    }
+
+    private fun updateBoundaryHazeStyle() {
+        val backgroundColor = activePalette().backgroundColor
+        readerTopHaze.background = ReaderBoundaryFogDrawable(backgroundColor, true)
+        readerBottomHaze.background = ReaderBoundaryFogDrawable(backgroundColor, false)
+        val alpha = if (pageTurnMode == TURN_MODE_VERTICAL) 0.48f else 0.58f
+        listOf(readerTopHaze, readerBottomHaze).forEach { haze ->
+            haze.visibility = View.VISIBLE
+            haze.alpha = alpha
+        }
+    }
+    internal fun verticalOnPageVisible(index: Int) {
+        val pages = readerBook?.pages.orEmpty()
+        if (index !in pages.indices) return
+        currentPageIndex = index
+        continuousWindowStartOffset = pages[index].startOffset
+        continuousWindowEndOffset = pages[index].endOffset
+        updateProgressUi()
+    }
+    internal fun verticalOnUserDrag() { clearSearchHighlight() }
+    internal fun verticalHandleTouch(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && autoReading) stopAutoReading(false)
+        continuousGesture.onTouchEvent(event)
+        return false
+    }
+
 
     /**
      * Vertical mode renders only a bounded page neighborhood. A multi-megabyte novel is never
@@ -571,7 +744,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun scheduleContinuousWindowShift(scrollY: Int) {
         val paged = readerBook ?: return
-        if (continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
+        if (verticalWindowSuspended || continuousWindowShiftPosted || continuousTextView.height <= 0 || readerScrollView.height <= 0) return
         val threshold = readerScrollView.height * 4
         val nearTop = scrollY < threshold && continuousWindowStartOffset > 0
         val nearBottom = scrollY + readerScrollView.height > continuousTextView.height - threshold &&
@@ -627,7 +800,8 @@ class ReaderActivity : AppCompatActivity() {
     private fun turnPage(direction: Int) {
         clearSearchHighlight()
         if (pageTurnMode == TURN_MODE_VERTICAL) {
-            readerScrollView.smoothScrollBy(0, direction * readerScrollView.height.coerceAtLeast(1))
+            val rv = verticalRecyclerView
+            rv?.smoothScrollBy(0, direction * rv.height.coerceAtLeast(1))
         } else {
             pagedReaderView.turn(direction)
         }
@@ -639,13 +813,11 @@ class ReaderActivity : AppCompatActivity() {
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         if (pageTurnMode == TURN_MODE_VERTICAL) {
-            val targetOffset = pages[currentPageIndex].startOffset
-            if (targetOffset !in continuousWindowStartOffset until continuousWindowEndOffset) {
-                renderContinuousWindow(targetOffset)
-            } else {
-                applyContinuousHighlight()
-                scrollContinuousToOffset(targetOffset)
-            }
+            ensureVerticalReader()
+            verticalProgrammaticScroll = true
+            verticalAdapter?.refresh()
+            verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
+            verticalRecyclerView?.post { verticalProgrammaticScroll = false }
         } else {
             pagedReaderView.cancelNavigation()
             bindHorizontalPages()
@@ -774,10 +946,90 @@ class ReaderActivity : AppCompatActivity() {
         setPadding(0, dp(16), 0, dp(16))
     }
 
-    private fun resolveBookmarkPage(bookmark: Bookmark, paged: ReaderBook): Int = when {
-        bookmark.globalPageIndex != null && bookmark.globalPageIndex in paged.pages.indices -> bookmark.globalPageIndex
-        bookmark.startOffset != null -> paged.pageForOffset(bookmark.startOffset).globalPageIndex
-        else -> paged.pageForOffset(bookmark.position.toIntOrNull() ?: 0).globalPageIndex
+    private fun resolveBookmarkPage(bookmark: Bookmark, paged: ReaderBook): Int {
+        // V636-V638 compatibility order. New bookmarks always prefer stable source positions; an
+        // obsolete global page number is only the last fallback. Schema-v1 backups have no
+        // globalPageIndex and require preview/legacy-stream-position recovery.
+        bookmark.startOffset?.takeIf { it in 0..paged.text.length }?.let {
+            return paged.pageForOffset(it).globalPageIndex
+        }
+
+        val numeric = bookmark.position.toLongOrNull()
+        val isLegacyV1 = bookmark.globalPageIndex == null
+        if (!isLegacyV1) {
+            numeric?.takeIf { it in 0..paged.text.length.toLong() }?.let {
+                return paged.pageForOffset(it.toInt()).globalPageIndex
+            }
+            bookmark.globalPageIndex?.takeIf { it in paged.pages.indices }?.let { return it }
+            return 0
+        }
+
+        val format = book?.format.orEmpty()
+        val estimatedSourceOffset = when {
+            format.equals("TXT", ignoreCase = true) && numeric != null -> {
+                val fileBytes = book?.fileSize?.takeIf { it > 0L }
+                if (fileBytes != null) {
+                    ((numeric.toDouble() / fileBytes.toDouble()) * paged.text.length.toDouble())
+                        .toInt().coerceIn(0, paged.text.length)
+                } else null
+            }
+            numeric != null && numeric in 0..paged.text.length.toLong() -> numeric.toInt()
+            else -> null
+        }
+
+        resolveBookmarkTextAnchor(bookmark.content, paged.text, estimatedSourceOffset)?.let {
+            return paged.pageForOffset(it).globalPageIndex
+        }
+
+        // Old streaming TXT position was a byte position, not a current character offset. If the
+        // preview cannot be found, map its byte ratio to the current real page sequence.
+        if (format.equals("TXT", ignoreCase = true) && numeric != null) {
+            val fileBytes = book?.fileSize?.takeIf { it > 0L }
+            if (fileBytes != null && paged.pages.isNotEmpty()) {
+                val ratio = (numeric.toDouble() / fileBytes.toDouble()).coerceIn(0.0, 1.0)
+                return kotlin.math.round(ratio * paged.pages.lastIndex.toDouble()).toInt()
+                    .coerceIn(0, paged.pages.lastIndex)
+            }
+        }
+        // Legacy EPUB/other combined-text positions are valid only when they still fit the
+        // current source text. Invalid old offsets deliberately fall back to page 0.
+        if (!format.equals("TXT", ignoreCase = true) && numeric != null &&
+            numeric in 0..paged.text.length.toLong()) {
+            return paged.pageForOffset(numeric.toInt()).globalPageIndex
+        }
+        return 0
+    }
+
+    private fun resolveBookmarkTextAnchor(preview: String, source: String, estimated: Int?): Int? {
+        val needle = preview.replace(Regex("\\s+"), " ").trim().take(48)
+        if (needle.length < 12) return null
+        val normalized = StringBuilder(source.length)
+        val sourceMap = ArrayList<Int>(source.length.coerceAtMost(1_000_000))
+        var lastSpace = false
+        source.forEachIndexed { index, char ->
+            val space = char.isWhitespace()
+            if (space) {
+                if (!lastSpace) { normalized.append(' '); sourceMap.add(index) }
+            } else {
+                normalized.append(char); sourceMap.add(index)
+            }
+            lastSpace = space
+        }
+        var from = 0
+        var best: Int? = null
+        var bestDistance = Int.MAX_VALUE
+        while (from < normalized.length) {
+            val hit = normalized.indexOf(needle, from)
+            if (hit < 0) break
+            val sourceOffset = sourceMap.getOrNull(hit) ?: break
+            val distance = estimated?.let { kotlin.math.abs(sourceOffset - it) } ?: 0
+            if (best == null || distance < bestDistance) {
+                best = sourceOffset
+                bestDistance = distance
+            }
+            from = hit + 1
+        }
+        return best
     }
 
     private fun addBookmark() {
@@ -909,24 +1161,77 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun changeTextSize(delta: Float) {
-        val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
-        readerTextSizeSp = (readerTextSizeSp + delta).coerceIn(12f, 36f)
+        stopAutoReading(false)
+        val paged = readerBook ?: return
+        val currentOffset = currentVisibleSourceOffset()
+        val requested = (readerTextSizeSp + delta).coerceIn(12f, 36f)
+        if (requested == readerTextSizeSp) return
+        fontChangeRunnable?.let(mainHandler::removeCallbacks)
+        val oldSize = readerTextSizeSp
+        val oldBook = paged
+        val oldSettings = layoutSettings
+        val oldPage = currentPageIndex
+        readerTextSizeSp = requested
         applyReaderContentPadding()
         savePreferences()
         updateSettingsLabels()
-        paginateAndDisplay(offset)
+        fontChangeRunnable = Runnable {
+            pendingFontRollback = FontRollback(oldSize, oldBook, oldSettings, oldPage, currentOffset)
+            paginateAndDisplay(currentOffset)
+        }.also { mainHandler.postDelayed(it, FONT_CHANGE_DEBOUNCE_MS) }
     }
 
     private fun setTurnMode(mode: String) {
-        if (pageTurnMode == mode) return
-        val offset = readerBook?.pages?.getOrNull(currentPageIndex)?.startOffset ?: 0
+        stopAutoReading(false)
+        if (pageTurnMode == mode || modeSwitchInProgress) return
+        if (paginationInProgress) {
+            pendingTurnMode = mode
+            Toast.makeText(this, "字体分页完成后自动切换翻页模式", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val paged = readerBook
+        val sourceOffset = currentVisibleSourceOffset()
+        val previousMode = pageTurnMode
         pageTurnMode = mode
+        modeSwitchInProgress = true
         savePreferences()
         updateSettingsLabels()
-        if (readerBook != null) {
-            if (mode == TURN_MODE_VERTICAL) showContinuousBook(offset) else showHorizontalBook()
+        if (paged == null) { modeSwitchInProgress = false; return }
+        runCatching {
+            if (mode == TURN_MODE_VERTICAL) {
+                showContinuousBook(sourceOffset) { ok ->
+                    modeSwitchInProgress = false
+                    if (!ok) {
+                        pageTurnMode = previousMode
+                        savePreferences(); updateSettingsLabels(); showHorizontalBook()
+                    }
+                }
+            } else {
+                currentPageIndex = paged.pageForOffset(sourceOffset).globalPageIndex
+                verticalRecyclerView?.stopScroll()
+                showHorizontalBook()
+                modeSwitchInProgress = false
+                updateProgressUi()
+            }
+        }.onFailure {
+            modeSwitchInProgress = false
+            pageTurnMode = previousMode
+            savePreferences(); updateSettingsLabels()
+            if (previousMode == TURN_MODE_VERTICAL) showContinuousBook(sourceOffset) else showHorizontalBook()
+            Toast.makeText(this, "翻页模式切换失败，已恢复原模式", Toast.LENGTH_SHORT).show()
         }
     }
+
+
+    private fun currentVisibleSourceOffset(): Int {
+        val paged = readerBook ?: return 0
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            val index = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
+            if (index in paged.pages.indices) return paged.pages[index].startOffset
+        }
+        return paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
+    }
+
 
     private fun selectQuickColor(colorId: String) {
         backgroundSelection = ReaderBackgrounds.selection(ReaderBackgrounds.Category.COLOR, colorId)
@@ -937,28 +1242,43 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun currentBackgroundSelection() = ReaderBackgrounds.validated(backgroundSelection)
 
-    private fun activePalette(): ReaderAppearance.Palette = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
-        ReaderAppearance.palette(this)
-    } else {
-        val selection = currentBackgroundSelection()
-        ReaderAppearance.Palette(
+    private fun activeBackgroundSelection(): ReaderBackgrounds.Selection =
+        if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
+            ReaderBackgrounds.nightSelection()
+        } else {
+            currentBackgroundSelection()
+        }
+
+    private fun activePalette(): ReaderAppearance.Palette {
+        val selection = activeBackgroundSelection()
+        return ReaderAppearance.Palette(
             ReaderBackgrounds.representativeColor(selection),
             ReaderBackgrounds.textColor(selection)
         )
     }
 
-    private fun activeBackgroundDrawable() = if (ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT) {
-        ReaderBackgrounds.nightDrawable(this)
-    } else {
-        ReaderBackgrounds.drawable(this, currentBackgroundSelection())
-    }
+    private fun activeBackgroundDrawable() = ReaderBackgrounds.drawable(this, activeBackgroundSelection())
 
     private fun applyReaderAppearance(rebindPages: Boolean) {
         val palette = activePalette()
-        readerScrollView.background = activeBackgroundDrawable()
+        readerRoot.background = activeBackgroundDrawable()
+        verticalAdapter?.refresh()
+        readerScrollView.background = ColorDrawable(Color.TRANSPARENT)
         continuousTextView.setTextColor(palette.textColor)
         continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
         findViewById<View>(android.R.id.content).background = activeBackgroundDrawable()
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        updateBoundaryHazeStyle()
+        val lightSystemBars = !ReaderAppearance.isDark(palette.backgroundColor)
+        WindowCompat.getInsetsController(window, readerRoot).apply {
+            isAppearanceLightStatusBars = lightSystemBars
+            isAppearanceLightNavigationBars = lightSystemBars
+        }
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
         findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
         findViewById<TextView>(R.id.themeNightButton).text = if (night) "☀" else "☾"
@@ -1025,12 +1345,20 @@ class ReaderActivity : AppCompatActivity() {
         readerTextSizeSp = prefs.getFloat(PREF_TEXT_SIZE, ReaderAppearance.textSize(this))
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
-        val category = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
+        autoReadSpeedCpm = prefs.getInt(PREF_AUTO_READ_SPEED, 500).coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM)
+        val storedCategory = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
             ?.let { runCatching { ReaderBackgrounds.Category.valueOf(it) }.getOrNull() }
-            ?: ReaderBackgrounds.Category.COLOR
-        val optionId = prefs.getString(PREF_BACKGROUND_OPTION, null)
-            ?: ReaderBackgrounds.DEFAULT_COLOR_ID
-        backgroundSelection = ReaderBackgrounds.validated(ReaderBackgrounds.Selection(category, optionId))
+        val storedOptionId = prefs.getString(PREF_BACKGROUND_OPTION, null)
+        backgroundSelection = if (storedCategory != null && storedOptionId != null) {
+            ReaderBackgrounds.selection(storedCategory, storedOptionId)
+        } else {
+            ReaderBackgrounds.selectionFromLegacy(
+                legacyColorId = prefs.getString("reader_background_color_id", null),
+                legacyTextureId = prefs.getString("reader_background_texture_id", null),
+                legacyMaterialId = prefs.getString("reader_background_material_id", null),
+                legacyBackgroundColor = ReaderAppearance.palette(this).backgroundColor
+            )
+        }
     }
 
     private fun savePreferences() {
@@ -1038,6 +1366,7 @@ class ReaderActivity : AppCompatActivity() {
             .putFloat(PREF_TEXT_SIZE, readerTextSizeSp)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+            .putInt(PREF_AUTO_READ_SPEED, autoReadSpeedCpm)
             .putString(PREF_BACKGROUND_CATEGORY, currentBackgroundSelection().category.name)
             .putString(PREF_BACKGROUND_OPTION, currentBackgroundSelection().optionId)
             .apply()
@@ -1070,19 +1399,199 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun applyReaderContentPadding() {
         val oneCharacterPx = (readerTextSizeSp * resources.displayMetrics.scaledDensity + 0.5f)
-            .toInt()
-            .coerceAtLeast(1)
-        // Upper limit = notification/status-bar bottom + one complete text character.
-        // This is intentionally not measured from the physical top edge of the screen.
-        val topPaddingPx = statusBarInsetPx + oneCharacterPx
-        val bottomPaddingPx = navigationBarInsetPx + oneCharacterPx
+            .toInt().coerceAtLeast(1)
+        val topGuardPx = statusBarInsetPx + oneCharacterPx
+        val bottomGuardPx = navigationBarInsetPx + oneCharacterPx * 3
+        val params = readerViewport.layoutParams as? FrameLayout.LayoutParams
+        if (params != null && (params.topMargin != topGuardPx || params.bottomMargin != bottomGuardPx)) {
+            params.topMargin = topGuardPx
+            params.bottomMargin = bottomGuardPx
+            readerViewport.layoutParams = params
+        }
+        // v722 cache identity uses the guarded viewport and zero internal vertical body padding.
         continuousTextView.setPadding(
-            continuousTextView.paddingLeft,
-            topPaddingPx,
-            continuousTextView.paddingRight,
-            bottomPaddingPx
+            continuousTextView.paddingLeft, 0, continuousTextView.paddingRight, 0
         )
     }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        val rv = verticalRecyclerView
+        if (!hasFocus) {
+            verticalWindowSuspended = true
+            stopAutoReading(false)
+            rv?.stopScroll()
+        } else if (rv != null) {
+            verticalWindowSuspended = true
+            rv.stopScroll()
+            rv.postOnAnimation {
+                rv.stopScroll()
+                verticalWindowSuspended = false
+            }
+        } else {
+            verticalWindowSuspended = false
+        }
+    }
+
+
+    private fun showAutoReadDialog() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(10), dp(22), 0)
+        }
+        val label = TextView(this).apply {
+            textSize = 16f
+            text = "$autoReadSpeedCpm 字/分"
+        }
+        val seek = SeekBar(this).apply {
+            min = AUTO_READ_MIN_CPM
+            max = AUTO_READ_MAX_CPM
+            progress = autoReadSpeedCpm
+        }
+        content.addView(label, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        content.addView(seek, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        var selected = autoReadSpeedCpm
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val snapped = ((progress.coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM) +
+                    AUTO_READ_STEP_CPM / 2) / AUTO_READ_STEP_CPM) * AUTO_READ_STEP_CPM
+                selected = snapped.coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM)
+                label.text = "$selected 字/分"
+                if (fromUser && seekBar?.progress != selected) seekBar?.progress = selected
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle("自动阅读")
+            .setView(content)
+            .setNegativeButton("取消", null)
+        if (autoReading) {
+            builder.setNeutralButton("停止") { _, _ -> stopAutoReading(false) }
+            builder.setPositiveButton("应用速度") { _, _ -> updateAutoReadSpeed(selected) }
+        } else {
+            builder.setNeutralButton("关闭", null)
+            builder.setPositiveButton("开启") { _, _ ->
+                updateAutoReadSpeed(selected)
+                startAutoReading()
+            }
+        }
+        builder.show()
+    }
+
+    private fun updateAutoReadSpeed(cpm: Int) {
+        val snapped = ((cpm.coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM) +
+            AUTO_READ_STEP_CPM / 2) / AUTO_READ_STEP_CPM) * AUTO_READ_STEP_CPM
+        autoReadSpeedCpm = snapped.coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM)
+        savePreferences()
+        if (autoReading) {
+            if (pageTurnMode == TURN_MODE_VERTICAL) {
+                verticalAutoLastFrameNanos = 0L
+                verticalAutoPixelRemainder = 0.0
+            } else {
+                autoReadAwaitingPageCommit = false
+                scheduleAutomaticPageTurn()
+            }
+        }
+    }
+
+    private fun startAutoReading() {
+        if (readerBook?.pages.isNullOrEmpty()) return
+        stopAutoReading(false)
+        autoReading = true
+        autoReadAwaitingPageCommit = false
+        showAutoReadStopButton()
+        if (pageTurnMode == TURN_MODE_VERTICAL) startAutomaticVerticalScroll() else scheduleAutomaticPageTurn()
+    }
+
+    private fun scheduleAutomaticPageTurn() {
+        if (!autoReading || pageTurnMode == TURN_MODE_VERTICAL || autoReadAwaitingPageCommit) return
+        val page = readerBook?.pages?.getOrNull(currentPageIndex) ?: return stopAutoReading(false)
+        val text = readerBook?.text.orEmpty()
+        val chars = text.substring(page.startOffset.coerceAtLeast(0), page.endOffset.coerceAtMost(text.length))
+            .count { !it.isWhitespace() }.coerceAtLeast(1)
+        val delay = ((chars.toDouble() / autoReadSpeedCpm.toDouble()) * 60_000.0)
+            .toLong().coerceAtLeast(AUTO_READ_MIN_PAGE_DELAY_MS)
+        autoReadPageRunnable?.let(mainHandler::removeCallbacks)
+        autoReadPageRunnable = Runnable {
+            if (!autoReading) return@Runnable
+            val pages = readerBook?.pages.orEmpty()
+            if (currentPageIndex >= pages.lastIndex) {
+                stopAutoReading(true)
+            } else {
+                autoReadAwaitingPageCommit = true
+                if (!pagedReaderView.turn(1)) {
+                    autoReadAwaitingPageCommit = false
+                    if (currentPageIndex >= pages.lastIndex) stopAutoReading(true)
+                    else scheduleAutomaticPageTurn()
+                }
+            }
+        }.also { mainHandler.postDelayed(it, delay) }
+    }
+
+    private fun startAutomaticVerticalScroll() {
+        verticalAutoLastFrameNanos = 0L
+        verticalAutoPixelRemainder = 0.0
+        val callback = object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!autoReading || pageTurnMode != TURN_MODE_VERTICAL) return
+                if (verticalAutoLastFrameNanos != 0L) {
+                    val dtSeconds = (frameTimeNanos - verticalAutoLastFrameNanos).coerceAtMost(100_000_000L) / 1_000_000_000.0
+                    val linePx = readerTextSizeSp * resources.displayMetrics.scaledDensity * 1.75
+                    val charsPerLine = ((verticalRecyclerView?.width ?: readerViewport.width) / (readerTextSizeSp * resources.displayMetrics.scaledDensity * 0.95f)).coerceAtLeast(8f)
+                    val linesPerSecond = autoReadSpeedCpm / 60.0 / charsPerLine
+                    verticalAutoPixelRemainder += linesPerSecond * linePx * dtSeconds
+                    val pixels = verticalAutoPixelRemainder.toInt()
+                    if (pixels > 0) {
+                        verticalAutoPixelRemainder -= pixels
+                        if (!verticalAutoScrollBy(pixels)) return
+                    }
+                }
+                verticalAutoLastFrameNanos = frameTimeNanos
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+        verticalAutoFrameCallback = callback
+        Choreographer.getInstance().postFrameCallback(callback)
+    }
+
+    private fun verticalAutoScrollBy(pixels: Int): Boolean {
+        val rv = verticalRecyclerView ?: return false
+        if (!rv.canScrollVertically(1)) {
+            stopAutoReading(true)
+            return false
+        }
+        rv.scrollBy(0, pixels.coerceAtLeast(1))
+        return true
+    }
+
+
+    private fun stopAutoReading(showToast: Boolean) {
+        val wasActive = autoReading
+        autoReading = false
+        autoReadPageRunnable?.let(mainHandler::removeCallbacks)
+        autoReadPageRunnable = null
+        autoReadAwaitingPageCommit = false
+        verticalAutoFrameCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
+        verticalAutoFrameCallback = null
+        verticalAutoLastFrameNanos = 0L
+        verticalAutoPixelRemainder = 0.0
+        if (::autoReadStopView.isInitialized) autoReadStopView.visibility = View.GONE
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (showToast && wasActive) Toast.makeText(this, "自动阅读已关闭", Toast.LENGTH_SHORT).show()
+    }
+
+
+    private fun showAutoReadStopButton() {
+        if (::autoReadStopView.isInitialized) autoReadStopView.visibility = View.VISIBLE
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -1100,6 +1609,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key_turn"
+        private const val PREF_AUTO_READ_SPEED = "auto_read_speed_cpm"
         private const val PREF_BACKGROUND_CATEGORY = "reader_background_category"
         private const val PREF_BACKGROUND_OPTION = "reader_background_option"
         private const val TURN_MODE_OVERLAP = "overlap"
@@ -1109,10 +1619,15 @@ class ReaderActivity : AppCompatActivity() {
         private const val TURN_MODE_FADE = "fade"
         private const val MENU_ADD_BOOKMARK = 2
         private const val MENU_SEARCH = 5
-        private const val CONTINUOUS_PAGES_BEFORE = 24
-        private const val CONTINUOUS_PAGES_AFTER = 48
+        private const val CONTINUOUS_PAGES_BEFORE = 18
+        private const val CONTINUOUS_PAGES_AFTER = 18
         private const val CONTINUOUS_SHIFT_DELAY_MS = 200L
         private const val CONTINUOUS_SHIFT_IDLE_MS = 180L
         private const val CONTINUOUS_FALLBACK_CHARS = 240_000
+        private const val FONT_CHANGE_DEBOUNCE_MS = 320L
+        private const val AUTO_READ_MIN_CPM = 200
+        private const val AUTO_READ_MAX_CPM = 2000
+        private const val AUTO_READ_STEP_CPM = 50
+        private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
     }
 }

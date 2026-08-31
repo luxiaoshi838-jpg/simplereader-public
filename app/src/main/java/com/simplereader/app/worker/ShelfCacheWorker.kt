@@ -67,27 +67,57 @@ class ShelfCacheWorker(
         val loadedCheckpoint = withContext(Dispatchers.IO) {
             ShelfCacheCheckpointStore.load(applicationContext, workId)
         }
+
+        // Historical no-catalog semantics: decide the target set BEFORE publishing total/progress.
+        // Books whose current catalog+pages are already reusable are successful exclusions, not skips.
+        val initialBookIds: List<Long> = if (loadedCheckpoint == null && mode == MODE_BOOKS_WITHOUT_CATALOG) {
+            val targets = mutableListOf<Long>()
+            for (candidate in currentBooks) {
+                coroutineContext.ensureActive()
+                val source = withContext(Dispatchers.IO) {
+                    ReaderDocumentLoader.resolveDocument(applicationContext, candidate)
+                }
+                val currentFileName = source?.name?.takeIf { it.isNotBlank() } ?: candidate.fileName
+                val currentFileSize = source?.length()?.takeIf { it >= 0L } ?: candidate.fileSize
+                val reusable = hasReusableCurrentCache(
+                    bookId = candidate.id,
+                    filePath = candidate.filePath,
+                    fileName = currentFileName,
+                    fileSize = currentFileSize,
+                    loadDocument = {
+                        ReaderDocumentLoader.load(
+                            context = applicationContext,
+                            book = candidate,
+                            forceCatalogRefresh = false
+                        )
+                    }
+                )
+                if (!reusable) targets += candidate.id
+            }
+            targets
+        } else {
+            currentBooks.map { it.id }
+        }
+
         var checkpoint: ShelfCacheCheckpointStore.Checkpoint =
             if (loadedCheckpoint == null || loadedCheckpoint.mode != mode) {
-                val legacyCompleted = persistedWorkProgress.getInt(KEY_COMPLETED, 0).coerceAtLeast(0)
-                val legacySkipped = persistedWorkProgress.getInt(KEY_SKIPPED, 0).coerceAtLeast(0)
-                val legacyFailed = persistedWorkProgress.getInt(KEY_FAILED, 0).coerceAtLeast(0)
-                val legacyCurrent = persistedWorkProgress.getInt(KEY_CURRENT, 0).coerceAtLeast(0)
+                val legacyCompleted = if (mode == MODE_ALL_BOOKS) persistedWorkProgress.getInt(KEY_COMPLETED, 0).coerceAtLeast(0) else 0
+                val legacySkipped = if (mode == MODE_ALL_BOOKS) persistedWorkProgress.getInt(KEY_SKIPPED, 0).coerceAtLeast(0) else 0
+                val legacyFailed = if (mode == MODE_ALL_BOOKS) persistedWorkProgress.getInt(KEY_FAILED, 0).coerceAtLeast(0) else 0
+                val legacyCurrent = if (mode == MODE_ALL_BOOKS) persistedWorkProgress.getInt(KEY_CURRENT, 0).coerceAtLeast(0) else 0
                 val classifiedCount = (legacyCompleted + legacySkipped + legacyFailed)
-                    .coerceAtMost(currentBooks.size)
-                // v725 published the current book number before doing that book. If old counters are
-                // unavailable, current-1 safely resumes by redoing at most the interrupted book.
+                    .coerceAtMost(initialBookIds.size)
                 val legacyResumeIndex = maxOf(
                     classifiedCount,
                     (legacyCurrent - 1).coerceAtLeast(0)
-                ).coerceAtMost(currentBooks.size)
+                ).coerceAtMost(initialBookIds.size)
 
                 withContext(Dispatchers.IO) {
                     ShelfCacheCheckpointStore.create(
                         context = applicationContext,
                         workId = workId,
                         mode = mode,
-                        bookIds = currentBooks.map { it.id },
+                        bookIds = initialBookIds,
                         nextIndex = legacyResumeIndex,
                         completed = legacyCompleted,
                         skipped = legacySkipped,
@@ -223,6 +253,8 @@ class ShelfCacheWorker(
             val currentFileName = currentSource?.name?.takeIf { it.isNotBlank() } ?: book.fileName
             val currentFileSize = currentSource?.length()?.takeIf { it >= 0L } ?: book.fileSize
 
+            // Race-safe second check only: a target may have been generated in the foreground
+            // after the initial prefilter. Only this post-prefilter case is a real runtime skip.
             val alreadyReusable = if (mode == MODE_BOOKS_WITHOUT_CATALOG) {
                 hasReusableCurrentCache(
                     bookId = book.id,
