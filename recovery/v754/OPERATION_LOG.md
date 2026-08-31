@@ -34,6 +34,14 @@
 - Any transfer format used from this point must declare an exact part count and must reproduce the delta SHA-256 before files are applied.
 - Text transfer tests found 20 KB chunks can be truncated by the connector response path; 16 KB and below were observed intact. Unsafe chunk sizes must not be used.
 
+### Second stall after shortest-pipeline decision
+- At 2026-08-31 17:01 UTC+8 the user reported another stall.
+- Inspection showed `source-v754` was still at commit `7346e3dab6c59748e1a9aff4563031550243adb9`, created 2026-08-31 15:45:54 UTC+8.
+- The associated Android validation run had already completed successfully at 2026-08-31 15:50:51 UTC+8.
+- No later source-sync commit or build run existed by 17:01 UTC+8.
+- Therefore this was not a GitHub/CI stall. The assistant stopped after planning `Git blob -> tree -> commit -> ref` synchronization and failed to perform the actual Git writes.
+- Corrective rule: after a synchronization strategy is chosen, no further alternative-route exploration is allowed until at least one concrete Git object/tree/commit/ref write has been completed and verified.
+
 ### Release discipline
 - v754 is based on the user-provided original v753 source ZIP whose SHA-256 matched the historical v753 source record, plus the v754 catalog/UI changes.
 - Never upload the private keystore or password to the public repository.
