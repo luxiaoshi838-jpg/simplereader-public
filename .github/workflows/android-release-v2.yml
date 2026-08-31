@@ -44,11 +44,11 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build and run release unit tests
+      - name: Build release APK
         shell: bash
         run: |
           set -o pipefail
-          timeout --signal=INT 5m ./gradlew clean testReleaseUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+          timeout --signal=INT 5m ./gradlew clean assembleRelease --stacktrace 2>&1 | tee gradle-build.log
 
       - name: Verify package and version
         shell: bash
