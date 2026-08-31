@@ -68,7 +68,7 @@ jobs:
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
           grep -Fq "versionCode='2098000753'" apk-package-info.txt
           grep -Fq "versionName='753'" apk-package-info.txt
-          grep -Fq "sdkVersion:'26'" apk-package-info.txt
+          grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           apk_bytes="$(stat -c %s "$APK_PATH")"
           test "$apk_bytes" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
