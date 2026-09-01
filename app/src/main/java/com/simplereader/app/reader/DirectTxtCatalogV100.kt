@@ -7,7 +7,7 @@ import com.simplereader.app.reader.page.BookChapter
  * the V681/V683 -> V697 -> V722 -> V745 reading baseline. The final V745 DEX reports rule 111.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 111
+    const val RULE_VERSION = 112
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
@@ -16,7 +16,9 @@ object DirectTxtCatalogV100 {
     private val startJie = Regex("^第\\s*$NUM\\s*节(?:\\s*[:：、．—-]?\\s*.*)?$")
     private val startOther = Regex("^第\\s*$NUM\\s*(?:单元|篇|部|卷|集)(?:\\s*[:：、.．—-]?\\s*.*)?$")
     private val reverseUnit = Regex("^(?:单元|章|节|篇|部|卷|回|集)\\s*$NUM(?:\\s*[:：、.．—-]?\\s*.*)?$")
-    private val wrapped = Regex("[（(]\\s*($NUM)\\s*[）)]")
+    private val wrappedLeadingUnit = Regex("^[（(]\\s*$NUM\\s*[）)]\\s*(?:单元|章|节|篇|部|卷|回|集)(?:\\s*[:：、.．—-]?\\s*.*)?$")
+    private val wrappedChineseSuffix = Regex("^[\\p{IsHan}]{1,20}[（(]\\s*$NUM\\s*[）)]$")
+    private val numericOnly = Regex("^\\s*$NUM\\s*$")
     private val bareArabicPrefix = Regex("^([0-9０-９]+)(.*)$")
     private val bareCnPrefix = Regex("^([$CN]+)(.*)$")
     private val bareArabicSuffix = Regex("^(.*?)([0-9０-９]+)$")
@@ -62,25 +64,19 @@ object DirectTxtCatalogV100 {
         val visible = s.count { !it.isWhitespace() }
         if (visible !in 1..MAX_VISIBLE_TITLE_CHARS) return null
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
+        if (numericOnly.matches(s)) return null
 
         // V745: 第N章/话 are allowed at any position; 第N回 at line start follows the same
         // terminator guard, while embedded 第N回 is retained as an explicit marker.
         for (m in diZhangHuaHui.findAll(s)) {
-            val unit = m.groupValues[1].firstOrNull() ?: continue
-            if (unit == '回' && m.range.first != 0) return s
             if (!hasTerminator(s)) return s
         }
         if (startJie.matches(s) && !hasTerminator(s)) return s
         if (startOther.matches(s)) return s
         if (reverseUnit.matches(s) && !hasTerminatorIgnoringSeparatorAt(s, 0)) return s
 
-        for (m in wrapped.findAll(s)) {
-            if (m.range.first == 0) {
-                if (!hasTerminator(s)) return s
-            } else if (!hasTerminatorIgnoringSeparatorAt(s, m.range.last + 1)) {
-                return s
-            }
-        }
+        if (wrappedLeadingUnit.matches(s) && !hasTerminator(s)) return s
+        if (wrappedChineseSuffix.matches(s) && !hasTerminator(s)) return s
 
         // V745 deliberately does not classify ellipsis-bearing prose through bare number rules.
         if ('…' !in s) {

@@ -56,8 +56,10 @@ pass 4 "reader top/bottom bounds and zero body vertical padding"
 need "$R" 'ReaderCacheProfile.createSettings' && need "$W" 'ReaderCacheProfile.createSettings' && need "$R" 'TxtParser.CATALOG_RULE_VERSION' && need "$W" 'TxtParser.CATALOG_RULE_VERSION' || fail 5 "shared cache identity"
 pass 5 "foreground/background pagination cache identity"
 # 6 rule111
-need "$T" 'CATALOG_RULE_VERSION = 111' && need "$D" 'RULE_VERSION = 111' || fail 6 "catalog rule 111"
-pass 6 "catalog rule version 111"
+T_RULE="$(grep -Eo 'CATALOG_RULE_VERSION = [0-9]+' "$T" | head -n1 | grep -Eo '[0-9]+')"
+D_RULE="$(grep -Eo 'RULE_VERSION = [0-9]+' "$D" | head -n1 | grep -Eo '[0-9]+')"
+[ -n "$T_RULE" ] && [ "$T_RULE" = "$D_RULE" ] && [ "$T_RULE" -ge 111 ] || fail 6 "catalog rule version mismatch/below v745 baseline"
+pass 6 "catalog rule version $T_RULE, matched and >=111 baseline"
 # 7 final recognition/normalization chain
 need "$D" 'MAX_VISIBLE_TITLE_CHARS = 25' && need "$D" 'fun detect' && need "$D" 'fun recognize' && need "$N" 'object CatalogTitleNormalizerV103' && need "$B" 'object ReaderBodyTitleNormalizerV104' && need "$L" 'DirectTxtCatalogV100.detect' && need "$T" 'DirectTxtCatalogV100.recognize' || fail 7 "catalog chain"
 pass 7 "DirectTxtCatalogV100 + V103 recognizer + V104 render-only chain"

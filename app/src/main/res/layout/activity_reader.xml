@@ -54,21 +54,21 @@
             android:layout_height="28dp"
             android:layout_gravity="bottom"
             android:visibility="gone" />
-    </FrameLayout>
 
-    <TextView
-        android:id="@+id/autoReadStopButton"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="58dp"
-        android:background="@android:drawable/btn_default_small"
-        android:gravity="center"
-        android:text="停"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
-        android:visibility="gone" />
+        <TextView
+            android:id="@+id/autoReadStopButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="10dp"
+            android:background="@android:drawable/btn_default_small"
+            android:gravity="center"
+            android:text="停"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/readerProgressLabel"

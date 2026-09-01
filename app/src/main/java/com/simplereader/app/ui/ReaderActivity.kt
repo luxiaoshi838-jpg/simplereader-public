@@ -125,6 +125,7 @@ class ReaderActivity : AppCompatActivity() {
     private var pendingTurnMode: String? = null
     private var suspendedAnchorOffset: Int? = null
     private var suspendedAnchorViewportPx: Int? = null
+    private var lastStableSourceOffset: Int? = null
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -257,6 +258,7 @@ class ReaderActivity : AppCompatActivity() {
             val target = (currentPageIndex + direction).coerceIn(0, pages.lastIndex.coerceAtLeast(0))
             if (target != currentPageIndex) {
                 currentPageIndex = target
+                lastStableSourceOffset = pages[target].startOffset
                 bindHorizontalPages()
                 updateProgressUi()
                 saveProgress()
@@ -425,6 +427,7 @@ class ReaderActivity : AppCompatActivity() {
                 pendingFontRollback = null
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
                 val stableOffset = preserveOffset
+                    ?: lastStableSourceOffset
                     ?: progress?.startOffset
                     ?: progress?.txtCharOffset
                     ?: progress?.position?.toIntOrNull()
@@ -434,6 +437,7 @@ class ReaderActivity : AppCompatActivity() {
                     else -> 0
                 }
                 currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
+                lastStableSourceOffset = paged.pages.getOrNull(currentPageIndex)?.startOffset
                 paginationInProgress = false
                 showActiveReader()
                 pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
@@ -604,6 +608,7 @@ class ReaderActivity : AppCompatActivity() {
         val offset = targetOffset ?: paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
         val page = paged.pageForOffset(offset)
         currentPageIndex = page.globalPageIndex
+        lastStableSourceOffset = page.startOffset
         continuousWindowStartOffset = page.startOffset
         continuousWindowEndOffset = page.endOffset
         verticalRecyclerView?.visibility = View.VISIBLE
@@ -659,6 +664,7 @@ class ReaderActivity : AppCompatActivity() {
         val pages = readerBook?.pages.orEmpty()
         if (index !in pages.indices) return
         currentPageIndex = index
+        lastStableSourceOffset = pages[index].startOffset
         continuousWindowStartOffset = pages[index].startOffset
         continuousWindowEndOffset = pages[index].endOffset
         updateProgressUi()
@@ -712,16 +718,26 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showContinuousFallback(reason: String) {
         val loaded = document ?: return showFatal(reason)
+        val anchor = (lastStableSourceOffset ?: currentVisibleSourceOffset()).coerceIn(0, loaded.text.length)
+        var start = (anchor - CONTINUOUS_FALLBACK_CHARS / 2).coerceAtLeast(0)
+        val end = (start + CONTINUOUS_FALLBACK_CHARS).coerceAtMost(loaded.text.length)
+        start = (end - CONTINUOUS_FALLBACK_CHARS).coerceAtLeast(0)
         pagedReaderView.visibility = View.GONE
         readerScrollView.visibility = View.VISIBLE
-        continuousWindowStartOffset = 0
-        continuousWindowEndOffset = loaded.text.length.coerceAtMost(CONTINUOUS_FALLBACK_CHARS)
-        continuousTextView.text = loaded.text.substring(continuousWindowStartOffset, continuousWindowEndOffset)
+        continuousWindowStartOffset = start
+        continuousWindowEndOffset = end
+        continuousTextView.text = loaded.text.substring(start, end)
         continuousTextView.textSize = readerTextSizeSp
         continuousTextView.setTextColor(activePalette().textColor)
         readerScrollView.background = activeBackgroundDrawable()
         progressLabel.text = "可读模式"
-        Toast.makeText(this, "分页失败，已打开有限文本窗口：$reason", Toast.LENGTH_LONG).show()
+        continuousTextView.post {
+            val layout = continuousTextView.layout ?: return@post
+            val localOffset = (anchor - start).coerceIn(0, continuousTextView.text.length)
+            val line = layout.getLineForOffset(localOffset)
+            readerScrollView.scrollTo(0, layout.getLineTop(line).coerceAtLeast(0))
+        }
+        Toast.makeText(this, "分页失败，已在当前位置打开有限文本窗口：$reason", Toast.LENGTH_LONG).show()
     }
 
     private fun sourceOffsetAtScroll(scrollY: Int): Int {
@@ -812,6 +828,7 @@ class ReaderActivity : AppCompatActivity() {
         if (pages.isEmpty()) return
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
+        lastStableSourceOffset = pages[currentPageIndex].startOffset
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             ensureVerticalReader()
             verticalProgrammaticScroll = true
@@ -848,7 +865,10 @@ class ReaderActivity : AppCompatActivity() {
             val bookmarkButton = buttonLikeText("书签")
             tabs.addView(catalogButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             tabs.addView(bookmarkButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            val listView = ListView(this@ReaderActivity)
+            val listView = ListView(this@ReaderActivity).apply {
+                isFastScrollEnabled = true
+                isFastScrollAlwaysVisible = true
+            }
             container.addView(tabs)
             container.addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             var dialog: AlertDialog? = null
@@ -880,9 +900,9 @@ class ReaderActivity : AppCompatActivity() {
                     }
                     val currentChapter = paged.pages.getOrNull(currentPageIndex)?.chapterIndex ?: 0
                     val highlighted = visible.indexOfFirst { it.first == currentChapter }
-                    val labels = visible.mapIndexed { rowIndex, (chapterIndex, chapter) ->
+                    val labels = visible.map { (chapterIndex, chapter) ->
                         val page = paged.firstPageOfChapter(chapterIndex)
-                        val label = "${rowIndex + 1}.${chapter.title}\n第 ${page + 1}/${paged.pages.size} 页"
+                        val label = "${chapter.title}\n第 ${page + 1}/${paged.pages.size} 页"
                         if (chapterIndex != currentChapter) label else SpannableString(label).apply {
                             val end = label.indexOf('\n').let { if (it < 0) label.length else it }
                             setSpan(StyleSpan(Typeface.BOLD), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -1229,7 +1249,9 @@ class ReaderActivity : AppCompatActivity() {
             val index = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
             if (index in paged.pages.indices) return paged.pages[index].startOffset
         }
-        return paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
+        return paged.pages.getOrNull(currentPageIndex)?.startOffset
+            ?: lastStableSourceOffset?.coerceIn(0, paged.text.length)
+            ?: 0
     }
 
 
@@ -1418,18 +1440,43 @@ class ReaderActivity : AppCompatActivity() {
         super.onWindowFocusChanged(hasFocus)
         val rv = verticalRecyclerView
         if (!hasFocus) {
+            if (rv != null && pageTurnMode == TURN_MODE_VERTICAL) {
+                val pages = readerBook?.pages.orEmpty()
+                val index = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
+                if (index in pages.indices) {
+                    suspendedAnchorOffset = pages[index].startOffset
+                    suspendedAnchorViewportPx = verticalLayoutManager?.findViewByPosition(index)?.top ?: 0
+                    lastStableSourceOffset = suspendedAnchorOffset
+                }
+            }
             verticalWindowSuspended = true
             stopAutoReading(false)
             rv?.stopScroll()
-        } else if (rv != null) {
+        } else if (rv != null && pageTurnMode == TURN_MODE_VERTICAL) {
             verticalWindowSuspended = true
             rv.stopScroll()
+            val anchorOffset = suspendedAnchorOffset
+            val viewportOffset = suspendedAnchorViewportPx ?: 0
+            if (anchorOffset != null) {
+                val pageIndex = readerBook?.pageForOffset(anchorOffset)?.globalPageIndex
+                if (pageIndex != null) {
+                    verticalProgrammaticScroll = true
+                    currentPageIndex = pageIndex
+                    lastStableSourceOffset = anchorOffset
+                    verticalLayoutManager?.scrollToPositionWithOffset(pageIndex, viewportOffset)
+                }
+            }
             rv.postOnAnimation {
                 rv.stopScroll()
+                verticalProgrammaticScroll = false
                 verticalWindowSuspended = false
+                suspendedAnchorOffset = null
+                suspendedAnchorViewportPx = null
             }
         } else {
             verticalWindowSuspended = false
+            suspendedAnchorOffset = null
+            suspendedAnchorViewportPx = null
         }
     }
 
@@ -1505,6 +1552,7 @@ class ReaderActivity : AppCompatActivity() {
         stopAutoReading(false)
         autoReading = true
         autoReadAwaitingPageCommit = false
+        setReaderChromeVisible(false)
         showAutoReadStopButton()
         if (pageTurnMode == TURN_MODE_VERTICAL) startAutomaticVerticalScroll() else scheduleAutomaticPageTurn()
     }

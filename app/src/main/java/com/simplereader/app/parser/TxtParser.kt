@@ -50,7 +50,7 @@ data class TxtTranscodeResult(
 
 object TxtParser {
     /** Bump this whenever TXT catalog recognition rules change. */
-    const val CATALOG_RULE_VERSION = 111
+    const val CATALOG_RULE_VERSION = 112
 
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
