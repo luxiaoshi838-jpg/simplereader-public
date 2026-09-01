@@ -1,43 +1,35 @@
-name: Apply 简阅 v754
+name: Build 简阅 v754
 
 on:
   push:
     branches:
       - source-v754
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   SIMPLE_READER_VERSION_CODE: "2098000754"
   SIMPLE_READER_VERSION_NAME: "754"
   APK_PATH: "app/build/outputs/apk/release/SimpleReader_v754_github_unsigned.apk"
+  MAX_APK_BYTES: "52428800"
 
 jobs:
-  apply:
+  build-apk:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: source-v754
-          fetch-depth: 0
-      - name: Apply exact v754 patch
-        run: |
-          python3 tools/fix-v754-validation.py
-          python3 tools/fix-apply-v754.py
-          python3 tools/apply-v754.py
-          python3 tools/fix-v754-gate6.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Run v754 gates
-        run: |
-          chmod +x ./gradlew tools/v754-40-gates.sh
-          bash tools/v754-40-gates.sh
-      - name: Test changed behavior and build
+      - run: chmod +x ./gradlew tools/v754-40-gates.sh
+      - name: Run v754 40 gates
+        run: bash tools/v754-40-gates.sh
+      - name: Test changed behavior and build v754
         shell: bash
         run: |
           set -o pipefail
@@ -51,30 +43,19 @@ jobs:
           cp "$src" "$APK_PATH"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
+          grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
           grep -Fq "versionCode='2098000754'" apk-package-info.txt
           grep -Fq "versionName='754'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
+          test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
-      - name: Commit verified v754
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f tools/fix-apply-v754.py tools/fix-v754-gate6.py tools/fix-v754-validation.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app tools .github/workflows/android-release-v2.yml
-          git commit -m "v754: catalog auto-read and position rollback fixes [v754-applied]"
-          git push origin HEAD:source-v754
-          test -z "$(git status --porcelain)"
-          git rev-parse HEAD | tee v754-commit.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v754-verified-${{ github.run_number }}
+          name: SimpleReader-v754-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
             gradle-build.log
-            v754-commit.txt
           if-no-files-found: error
           retention-days: 7
