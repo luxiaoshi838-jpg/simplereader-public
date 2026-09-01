@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 tools/fix-apply-v754.py
           python3 tools/apply-v754.py
+          python3 tools/fix-v754-gate6.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -57,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f tools/fix-apply-v754.py
+          rm -f tools/fix-apply-v754.py tools/fix-v754-gate6.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app tools .github/workflows/android-release-v2.yml
