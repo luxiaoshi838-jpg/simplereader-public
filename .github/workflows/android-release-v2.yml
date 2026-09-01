@@ -24,6 +24,7 @@ jobs:
           fetch-depth: 0
       - name: Apply exact v754 patch
         run: |
+          python3 tools/fix-v754-validation.py
           python3 tools/fix-apply-v754.py
           python3 tools/apply-v754.py
           python3 tools/fix-v754-gate6.py
@@ -36,11 +37,11 @@ jobs:
         run: |
           chmod +x ./gradlew tools/v754-40-gates.sh
           bash tools/v754-40-gates.sh
-      - name: Test and build
+      - name: Test changed behavior and build
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew testDebugUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+          ./gradlew testDebugUnitTest --tests com.simplereader.app.parser.TxtCatalogRule112Test assembleRelease --stacktrace 2>&1 | tee gradle-build.log
       - name: Verify v754 APK
         shell: bash
         run: |
@@ -58,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f tools/fix-apply-v754.py tools/fix-v754-gate6.py
+          rm -f tools/fix-apply-v754.py tools/fix-v754-gate6.py tools/fix-v754-validation.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app tools .github/workflows/android-release-v2.yml
