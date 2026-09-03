@@ -1,0 +1,32 @@
+name: Apply v756 catalog fallback fix
+
+on:
+  push:
+    branches: [source-v756]
+    paths:
+      - 'tools/v756-catalog-fallback-fix.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source-v756
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply fallback boundary patch
+        run: python tools/v756-catalog-fallback-fix.py
+      - name: Commit patched parser
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          git diff --cached --quiet && exit 1
+          git commit -m 'v756 reject glued prefixed structural phrases in fallback catalog'
+          git push origin HEAD:source-v756
