@@ -597,6 +597,13 @@ object TxtParser {
         return !next.isWhitespace() && next !in "、.．:：—-"
     }
 
+    private fun startsWithNumeralToken(value: String): Boolean {
+        val numeralChars = "0123456789０１２３４５６７８９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
+        var index = 0
+        while (value.getOrNull(index)?.isWhitespace() == true) index++
+        return value.getOrNull(index)?.let { it in numeralChars } == true
+    }
+
     fun extractFallbackChapterTitle(line: String): String? {
         val normalized = CatalogTitleNormalizerV103.normalize(line)
         if (normalized.length !in 2..40) return null
@@ -604,6 +611,7 @@ object TxtParser {
         if (normalized.all(Char::isDigit)) return null
         // Rule 113: if a line begins with Arabic/Chinese numerals and then ordinary text without
         // a catalog separator, it is prose/quantity wording, not a fallback chapter title.
+        if (startsWithNumeralToken(normalized)) return null
         if (numeralLeadingOrdinaryText.matches(normalized)) return null
         if (hasGluedPrefixedStructuralText(normalized)) return null
         if (normalized.any(::isTitlePunctuation)) return null
