@@ -3,6 +3,7 @@ package com.simplereader.app.ui
 import android.util.LruCache
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.reader.page.ReaderPage
 
@@ -61,11 +62,27 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
         rendered.evictAll()
         notifyDataSetChanged()
     }
+
+    /**
+     * v756: search highlighting is transient. ReaderActivity clears activeSearchHit as soon as the
+     * user starts dragging; then discard cached highlighted CharSequences and rebind only the
+     * currently visible ReaderPage rows. Item count/order and LayoutManager position are untouched,
+     * so this cannot become a source-offset restore or reading-position jump.
+     */
+    fun clearTransientSearchHighlight(recyclerView: RecyclerView) {
+        rendered.evictAll()
+        val manager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+        val first = manager.findFirstVisibleItemPosition()
+        val last = manager.findLastVisibleItemPosition()
+        if (first >= 0 && last >= first) {
+            notifyItemRangeChanged(first, last - first + 1)
+        }
+    }
 }
 
 class VerticalScrollListener(
     private val activity: ReaderActivity,
-    private val layoutManager: androidx.recyclerview.widget.LinearLayoutManager
+    private val layoutManager: LinearLayoutManager
 ) : RecyclerView.OnScrollListener() {
     override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
         if (activity.verticalShouldIgnoreScroll()) return
@@ -78,7 +95,14 @@ class VerticalScrollListener(
     }
 
     override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-        if (newState == RecyclerView.SCROLL_STATE_DRAGGING) activity.verticalOnUserDrag()
+        if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+            activity.verticalOnUserDrag()
+            // Post the adapter rebind outside RecyclerView's scroll callback to avoid mutating
+            // adapter state while RecyclerView may still be computing a layout.
+            recyclerView.post {
+                (recyclerView.adapter as? VerticalPageAdapter)?.clearTransientSearchHighlight(recyclerView)
+            }
+        }
     }
 }
 
