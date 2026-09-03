@@ -13,15 +13,16 @@ object DirectTxtCatalogV100 {
     private const val NUM = "[0-9０-９$CN]+"
     private const val STRUCTURE = "(?:单元|章|节|篇|部|卷|回|集)"
 
-    private val diZhangHuaHui = Regex("第\\s*$NUM\\s*([章话回])")
-    private val startJie = Regex("^第\\s*$NUM\\s*节(?:$|\\s+\\S.*|\\s*[:：、．—-]\\s*\\S.*)$")
-    private val startOther = Regex("^第\\s*$NUM\\s*(?:单元|篇|部|卷|集)(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
-    private val reverseUnit = Regex("^(?:单元|章|节|篇|部|卷|回|集)\\s*$NUM(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
-    private val numberLeadingUnit = Regex("^($NUM)\\s*$STRUCTURE(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
-    private val wrappedLeadingUnit = Regex("^[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
-    private val wrappedChineseSuffix = Regex("^[\\p{IsHan}]{1,20}[（(]\\s*$NUM\\s*[）)]$")
+    // Rule113 intentionally keeps structural regexes short. Whether the structural unit is
+    // independent is checked in code by [hasValidStructuralTail], so "3节课" and "3节 课"
+    // cannot accidentally collapse into the same regex case.
+    private val prefixedStructural = Regex("第\\s*$NUM\\s*$STRUCTURE")
+    private val numberLeadingUnit = Regex("^\\s*$NUM\\s*$STRUCTURE")
+    private val reverseUnit = Regex("^\\s*$STRUCTURE\\s*$NUM")
+    private val wrappedLeadingUnit = Regex("^\\s*[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE")
+    private val wrappedChineseSuffix = Regex("^[\\u4E00-\\u9FFF]{1,20}[（(]\\s*$NUM\\s*[）)]$")
     private val numericOnly = Regex("^\\s*$NUM\\s*$")
-    private val explicitNumberedTitle = Regex("^($NUM)\\s*([、.．:：—-])\\s*(\\S.*)$")
+    private val explicitNumberedTitle = Regex("^\\s*$NUM\\s*[、.．:：—-]\\s*\\S.*$")
     private val englishChapter = Regex("^(?:Chapter|CHAPTER|chapter)\\s+[0-9IVXLCDMivxlcdm]+\\b.*$")
     private val special = Regex("^(?:正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇)(?:\\s+.*)?$")
     private val sentenceTerminators = charArrayOf('。', '.', '？', '?', '！', '!')
@@ -65,40 +66,54 @@ object DirectTxtCatalogV100 {
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
         if (numericOnly.matches(s)) return null
 
-        // “章/节/回/卷/篇/部/集/单元” is structural only when it is an independent unit.
-        // Immediate ordinary text makes the token part of a normal word/phrase: 第3节课、12章鱼等。
-        for (m in diZhangHuaHui.findAll(s)) {
-            val unitEnd = m.range.last + 1
-            if (hasStructuralBoundaryAfter(s, unitEnd) && !hasTerminator(s)) return s
+        // 第N章/节/回... may occur after a short title prefix in historical books, but the
+        // structural unit itself must be followed by end-of-line, whitespace, or a catalog
+        // separator. Immediate ordinary text means it is part of a normal word: 第3节课/第12章鱼.
+        for (m in prefixedStructural.findAll(s)) {
+            val end = m.range.last + 1
+            if (hasValidStructuralTail(s, end) && !hasTerminatorIgnoringSeparatorAt(s, end)) return s
         }
-        if (startJie.matches(s) && !hasTerminator(s)) return s
-        if (startOther.matches(s) && !hasTerminator(s)) return s
-        if (reverseUnit.matches(s) && !hasTerminatorIgnoringSeparatorAt(s, 0)) return s
-        if (numberLeadingUnit.matches(s) && !hasTerminator(s)) return s
-        if (wrappedLeadingUnit.matches(s) && !hasTerminator(s)) return s
+
+        listOf(numberLeadingUnit, reverseUnit, wrappedLeadingUnit).forEach { pattern ->
+            pattern.find(s)?.let { m ->
+                val end = m.range.last + 1
+                if (hasValidStructuralTail(s, end) && !hasTerminatorIgnoringSeparatorAt(s, end)) return s
+            }
+        }
+
+        // Historical "大道之上（一）" style has no structural unit and remains explicitly valid.
         if (wrappedChineseSuffix.matches(s) && !hasTerminator(s)) return s
 
-        // Rule 113: bare Arabic/Chinese numerals require an explicit catalog separator.
+        // Bare Arabic/Chinese numerals require an explicit catalog separator.
         // Therefore 1天、2人、一条、三朵、十年等 cannot become chapters by number alone.
-        if ('…' !in s) {
-            explicitNumberedTitle.matchEntire(s)?.let { m ->
-                val markerEnd = m.groupValues[1].length
-                if (!hasTerminatorIgnoringSeparatorAt(s, markerEnd)) return s
-            }
+        if ('…' !in s && explicitNumberedTitle.matches(s)) {
+            val firstSeparator = s.indexOfFirst { it in separators }
+            if (firstSeparator >= 0 && !hasTerminatorIgnoringSeparatorAt(s, firstSeparator)) return s
         }
         if (englishChapter.matches(s)) return s
         if (special.matches(s)) return s
         return null
     }
 
-    private fun hasStructuralBoundaryAfter(s: String, endExclusive: Int): Boolean {
+    /**
+     * The chapter unit is independent only when the next source character is a boundary.
+     * Examples: "3节" / "3节 课" / "3节：课" are valid structures; "3节课" is not.
+     */
+    private fun hasValidStructuralTail(s: String, endExclusive: Int): Boolean {
         if (endExclusive >= s.length) return true
         val next = s[endExclusive]
-        return next.isWhitespace() || next in separators
+        if (next.isWhitespace()) return s.substring(endExclusive).trim().isNotEmpty()
+        if (next in separators) {
+            var index = endExclusive + 1
+            while (index < s.length && s[index].isWhitespace()) index++
+            return index < s.length
+        }
+        return false
     }
 
     private fun hasTerminator(s: String): Boolean = s.any { it in sentenceTerminators }
 
+    /** Ignore at most the single catalog separator immediately following the marker/unit. */
     private fun hasTerminatorIgnoringSeparatorAt(s: String, markerEnd: Int): Boolean {
         var separatorIndex = markerEnd.coerceIn(0, s.length)
         while (separatorIndex < s.length && s[separatorIndex].isWhitespace()) separatorIndex++
