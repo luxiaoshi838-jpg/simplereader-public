@@ -34,6 +34,7 @@ class TxtCatalogRule112Test {
     }
 
     @Test fun rejectsNumeralPlusOrdinaryClassifierOrNounWithoutChapterStructure() {
+        // Rule113 fallback uses code-based numeral boundaries; no regex initializer is required.
         val falseTitles = listOf(
             "一条", "一朵", "一天", "两人", "三次", "十年", "百里",
             "一 条", "三 天", "两 人", "十 年", "百 里",
