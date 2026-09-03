@@ -31,9 +31,15 @@ grep -q 'ReaderBackgrounds.Selection' "$reader" || fail "v625 single-background 
 grep -q 'PagedReaderView.TurnMode.OVERLAP' "$reader" || fail "overlap mode missing"
 grep -q 'PagedReaderView.TurnMode.SIMULATE' "$reader" || fail "simulation mode missing"
 grep -q 'PagedReaderView.TurnMode.SLIDE' "$reader" || fail "slide mode missing"
-grep -q 'readerScrollView.visibility = View.VISIBLE' "$reader" || fail "continuous reader missing"
+
+# v632+ vertical architecture is locked: RecyclerView + LinearLayoutManager + ReaderPage adapter.
+# The old NestedScrollView/TextView renderer may remain only as pagination-failure fallback.
+grep -q 'private var verticalRecyclerView: RecyclerView?' "$reader" || fail "v632 RecyclerView continuous reader missing"
+grep -q 'private var verticalLayoutManager: LinearLayoutManager?' "$reader" || fail "v632 LinearLayoutManager missing"
+grep -q 'private var verticalAdapter: VerticalPageAdapter?' "$reader" || fail "v632 ReaderPage adapter missing"
+grep -q 'verticalAdapter?.setPages(paged.pages)' "$reader" || fail "v632 ReaderPage virtualized list missing"
+grep -q 'readerScrollView.visibility = View.VISIBLE' "$reader" || fail "continuous fallback reader missing"
 ! grep -q 'PagerSnapHelper' "$reader" || fail "vertical/page snap helper is forbidden"
-! grep -q 'RecyclerView' "$reader" || fail "reader page containers are forbidden in ReaderActivity"
 
 grep -q 'CONTENT_BOTTOM_PADDING_DP = 24' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "reader bottom guard must be one character"
 grep -q 'bottomPaddingPx = settings.contentPaddingBottomPx' "$reader" || fail "horizontal renderer must honor the bottom guard"
@@ -44,8 +50,8 @@ grep -q 'navigationBarInsetPx + oneCharacterPx' "$reader" || fail "reader lower 
 ! grep -A14 '@+id/readerProgressLabel' "$layout" | grep -q 'android:background=' || fail "progress indicator must be plain text without a box"
 
 grep -q 'styledWholeText' "$engine" || fail "continuous styling missing"
-grep -q 'renderContinuousWindow' "$reader" || fail "bounded continuous window missing"
-grep -q 'CONTINUOUS_PAGES_AFTER' "$reader" || fail "bounded continuous window size missing"
+grep -q 'renderContinuousWindow' "$reader" || fail "bounded fallback continuous window missing"
+grep -q 'CONTINUOUS_PAGES_AFTER' "$reader" || fail "bounded fallback window size missing"
 ! grep -q 'TxtParser.isLikelyChapterTitle' "$engine" || fail "non-chapter title guessing is forbidden"
 
 test -e app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt || fail "confirmed v625 background source missing"
