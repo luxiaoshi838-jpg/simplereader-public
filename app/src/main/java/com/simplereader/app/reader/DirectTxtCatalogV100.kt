@@ -3,26 +3,25 @@ package com.simplereader.app.reader
 import com.simplereader.app.reader.page.BookChapter
 
 /**
- * Source restoration of the direct TXT catalog detector introduced in V677 and carried through
- * the V681/V683 -> V697 -> V722 -> V745 reading baseline. The final V745 DEX reports rule 111.
+ * Direct TXT catalog detector. Rule 113 tightens numeral-based headings so ordinary
+ * numeral + classifier/noun phrases are not promoted to catalog entries.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 112
+    const val RULE_VERSION = 113
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
+    private const val STRUCTURE = "(?:单元|章|节|篇|部|卷|回|集)"
 
     private val diZhangHuaHui = Regex("第\\s*$NUM\\s*([章话回])")
-    private val startJie = Regex("^第\\s*$NUM\\s*节(?:\\s*[:：、．—-]?\\s*.*)?$")
-    private val startOther = Regex("^第\\s*$NUM\\s*(?:单元|篇|部|卷|集)(?:\\s*[:：、.．—-]?\\s*.*)?$")
-    private val reverseUnit = Regex("^(?:单元|章|节|篇|部|卷|回|集)\\s*$NUM(?:\\s*[:：、.．—-]?\\s*.*)?$")
-    private val wrappedLeadingUnit = Regex("^[（(]\\s*$NUM\\s*[）)]\\s*(?:单元|章|节|篇|部|卷|回|集)(?:\\s*[:：、.．—-]?\\s*.*)?$")
+    private val startJie = Regex("^第\\s*$NUM\\s*节(?:$|\\s+\\S.*|\\s*[:：、．—-]\\s*\\S.*)$")
+    private val startOther = Regex("^第\\s*$NUM\\s*(?:单元|篇|部|卷|集)(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
+    private val reverseUnit = Regex("^(?:单元|章|节|篇|部|卷|回|集)\\s*$NUM(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
+    private val numberLeadingUnit = Regex("^($NUM)\\s*$STRUCTURE(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
+    private val wrappedLeadingUnit = Regex("^[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE(?:$|\\s+\\S.*|\\s*[:：、.．—-]\\s*\\S.*)$")
     private val wrappedChineseSuffix = Regex("^[\\p{IsHan}]{1,20}[（(]\\s*$NUM\\s*[）)]$")
     private val numericOnly = Regex("^\\s*$NUM\\s*$")
-    private val bareArabicPrefix = Regex("^([0-9０-９]+)(.*)$")
-    private val bareCnPrefix = Regex("^([$CN]+)(.*)$")
-    private val bareArabicSuffix = Regex("^(.*?)([0-9０-９]+)$")
-    private val bareCnSuffix = Regex("^(.*?)([$CN]+)$")
+    private val explicitNumberedTitle = Regex("^($NUM)\\s*([、.．:：—-])\\s*(\\S.*)$")
     private val englishChapter = Regex("^(?:Chapter|CHAPTER|chapter)\\s+[0-9IVXLCDMivxlcdm]+\\b.*$")
     private val special = Regex("^(?:正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|番外篇)(?:\\s+.*)?$")
     private val sentenceTerminators = charArrayOf('。', '.', '？', '?', '！', '!')
@@ -66,40 +65,36 @@ object DirectTxtCatalogV100 {
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
         if (numericOnly.matches(s)) return null
 
-        // V745: 第N章/话 are allowed at any position; 第N回 at line start follows the same
-        // terminator guard, while embedded 第N回 is retained as an explicit marker.
+        // “章/节/回/卷/篇/部/集/单元” is structural only when it is an independent unit.
+        // Immediate ordinary text makes the token part of a normal word/phrase: 第3节课、12章鱼等。
         for (m in diZhangHuaHui.findAll(s)) {
-            if (!hasTerminator(s)) return s
+            val unitEnd = m.range.last + 1
+            if (hasStructuralBoundaryAfter(s, unitEnd) && !hasTerminator(s)) return s
         }
         if (startJie.matches(s) && !hasTerminator(s)) return s
-        if (startOther.matches(s)) return s
+        if (startOther.matches(s) && !hasTerminator(s)) return s
         if (reverseUnit.matches(s) && !hasTerminatorIgnoringSeparatorAt(s, 0)) return s
-
+        if (numberLeadingUnit.matches(s) && !hasTerminator(s)) return s
         if (wrappedLeadingUnit.matches(s) && !hasTerminator(s)) return s
         if (wrappedChineseSuffix.matches(s) && !hasTerminator(s)) return s
 
-        // V745 deliberately does not classify ellipsis-bearing prose through bare number rules.
+        // Rule 113: bare Arabic/Chinese numerals require an explicit catalog separator.
+        // Therefore 1天、2人、一条、三朵、十年等 cannot become chapters by number alone.
         if ('…' !in s) {
-            bareArabicPrefix.matchEntire(s)?.let { m ->
-                val body = m.groupValues[2]
-                if (body.isNotEmpty() && !startsWithNumericChar(body) &&
-                    !hasTerminatorIgnoringSeparatorAt(s, m.groupValues[1].length)) return s
-            }
-            bareCnPrefix.matchEntire(s)?.let { m ->
-                val body = m.groupValues[2]
-                if (body.isNotEmpty() && !startsWithNumericChar(body) &&
-                    !hasTerminatorIgnoringSeparatorAt(s, m.groupValues[1].length)) return s
-            }
-            bareArabicSuffix.matchEntire(s)?.let { m ->
-                if (m.groupValues[1].trim().isNotEmpty() && !hasTerminator(s)) return s
-            }
-            bareCnSuffix.matchEntire(s)?.let { m ->
-                if (m.groupValues[1].trim().isNotEmpty() && !hasTerminator(s)) return s
+            explicitNumberedTitle.matchEntire(s)?.let { m ->
+                val markerEnd = m.groupValues[1].length
+                if (!hasTerminatorIgnoringSeparatorAt(s, markerEnd)) return s
             }
         }
         if (englishChapter.matches(s)) return s
         if (special.matches(s)) return s
         return null
+    }
+
+    private fun hasStructuralBoundaryAfter(s: String, endExclusive: Int): Boolean {
+        if (endExclusive >= s.length) return true
+        val next = s[endExclusive]
+        return next.isWhitespace() || next in separators
     }
 
     private fun hasTerminator(s: String): Boolean = s.any { it in sentenceTerminators }
@@ -109,10 +104,5 @@ object DirectTxtCatalogV100 {
         while (separatorIndex < s.length && s[separatorIndex].isWhitespace()) separatorIndex++
         if (separatorIndex < s.length && s[separatorIndex] in separators) separatorIndex++
         return s.indices.any { i -> i != separatorIndex - 1 && s[i] in sentenceTerminators }
-    }
-
-    private fun startsWithNumericChar(s: String): Boolean {
-        val c = s.firstOrNull() ?: return false
-        return c in '0'..'9' || c in '０'..'９' || c in CN
     }
 }
