@@ -22,13 +22,13 @@ pass 35 'v756 version + catalog rule113'
 for token in 'explicitNumberedTitle' 'numberLeadingUnit' 'hasValidStructuralTail' 'numericOnly.matches(s)'; do
   grep -Fq "$token" "$D" || fail 36 "rule113 direct structural-boundary guard missing: $token"
 done
-for token in 'hasGluedPrefixedStructuralText' 'if (hasGluedPrefixedStructuralText(normalized)) return null'; do
+for token in 'hasGluedPrefixedStructuralText' 'if (hasGluedPrefixedStructuralText(normalized)) return null' 'startsWithNumeralToken' 'if (startsWithNumeralToken(normalized)) return null'; do
   grep -Fq "$token" "$T" || fail 36 "rule113 fallback structural-boundary guard missing: $token"
 done
-for token in '3节课' '3节 课' '3节：课' '第3节课' '第3节 课' '12章鱼' '12章 鱼' '一条' '1天'; do
+for token in '3节课' '3节 课' '3节：课' '第3节课' '第3节 课' '12章鱼' '12章 鱼' '一条' '1天' '3 天' '三 天' '12 公里'; do
   grep -Fq "$token" "$TEST" || fail 36 "rule113 boundary regression test missing: $token"
 done
-pass 36 'rule113 rejects glued numeral+noun phrases in direct+fallback; accepts independent chapter units'
+pass 36 'rule113 rejects glued/spaced numeral+noun phrases in direct+fallback; accepts independent chapter units'
 
 grep -Fq 'isFastScrollEnabled = true' "$R" && grep -Fq 'isFastScrollAlwaysVisible = true' "$R" || fail 37 'catalog-only fast scroll missing'
 ! grep -Fq '${rowIndex + 1}.${chapter.title}' "$R" || fail 37 'artificial catalog row numbering returned'
