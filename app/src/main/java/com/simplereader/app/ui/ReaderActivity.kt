@@ -828,7 +828,13 @@ class ReaderActivity : AppCompatActivity() {
         if (pages.isEmpty()) return
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
-        lastStableSourceOffset = pages[currentPageIndex].startOffset
+        val targetPage = pages[currentPageIndex]
+        lastStableSourceOffset = targetPage.startOffset
+        // v755: explicit navigation while a dialog owns focus replaces the pre-dialog restore anchor.
+        if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended) {
+            suspendedAnchorOffset = targetPage.startOffset
+            suspendedAnchorViewportPx = 0
+        }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             ensureVerticalReader()
             verticalProgrammaticScroll = true
