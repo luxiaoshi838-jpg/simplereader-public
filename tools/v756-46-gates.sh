@@ -1,71 +1,130 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
-bash tools/v755-42-gates.sh
+bash tools/v753-34-gates.sh
 
-BUILD="app/build.gradle.kts"
-ADAPTER="app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt"
-READER="app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt"
+pass(){ printf 'PASS %02d %s\n' "$1" "$2"; }
+fail(){ printf 'FAIL %02d %s\n' "$1" "$2" >&2; exit 1; }
+R=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+D=app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+T=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+X=app/src/main/res/layout/activity_reader.xml
+B=app/build.gradle.kts
+A=app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt
 
-fail() { echo "FAIL gate $1: $2" >&2; exit 1; }
-pass() { echo "PASS gate $1: $2"; }
+# 35-42: carry forward v754/v755 behavior without hard-coding an older app version.
+grep -Fq '2098000756' "$B" && grep -Fq '"756"' "$B" && grep -Fq 'CATALOG_RULE_VERSION = 112' "$T" && grep -Fq 'RULE_VERSION = 112' "$D" || fail 35 'v756/rule112 versions missing'
+pass 35 'v756 version + catalog rule112'
 
-# Gate 43: v756 identity must be the source default as well as the release workflow override.
-grep -Fq '"2098000756"' "$BUILD" || fail 43 "versionCode 2098000756 missing"
-grep -Fq '"756"' "$BUILD" || fail 43 "versionName 756 missing"
-pass 43 "v756 identity"
+grep -Fq 'wrappedChineseSuffix' "$D" && grep -Fq 'wrappedLeadingUnit' "$D" && grep -Fq 'numericOnly.matches(s)' "$D" || fail 36 'rule112 false-positive guards missing'
+! grep -Fq "unit == '回' && m.range.first != 0" "$D" || fail 36 'embedded 回 terminator bypass returned'
+pass 36 'rule112 parenthetical/numeric/terminator guards'
 
-# Gate 44: a user drag must clear search state and then refresh only RecyclerView rendering.
-python3 - "$ADAPTER" <<'PY'
+grep -Fq 'isFastScrollEnabled = true' "$R" && grep -Fq 'isFastScrollAlwaysVisible = true' "$R" || fail 37 'catalog-only fast scroll missing'
+! grep -Fq '${rowIndex + 1}.${chapter.title}' "$R" || fail 37 'artificial catalog row numbering returned'
+grep -Fq 'jumpToPage(paged.firstPageOfChapter(chapterIndex), false)' "$R" || fail 37 'catalog click navigation missing'
+pass 37 'catalog scroll only browses catalog; click navigates body; no artificial numbering'
+
+python3 - <<'PY'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+root=ET.parse('app/src/main/res/layout/activity_reader.xml').getroot()
+ns='{http://schemas.android.com/apk/res/android}'
+parent={c:p for p in root.iter() for c in p}
+stop=next(e for e in root.iter() if e.get(ns+'id')=='@+id/autoReadStopButton')
+viewport=next(e for e in root.iter() if e.get(ns+'id')=='@+id/readerViewport')
+assert parent[stop] is viewport
+r=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+s=r.index('    private fun startAutoReading()')
+e=r.index('    private fun scheduleAutomaticPageTurn()',s)
+b=r[s:e]
+assert 'setReaderChromeVisible(false)' in b
+assert b.index('setReaderChromeVisible(false)') < b.index('showAutoReadStopButton()')
+PY
+pass 38 'auto-reading hides chrome; stop control is inside guarded viewport'
+
+for token in 'suspendedAnchorOffset = pages[index].startOffset' 'suspendedAnchorViewportPx = verticalLayoutManager?.findViewByPosition(index)?.top ?: 0' 'scrollToPositionWithOffset(pageIndex, viewportOffset)' 'lastStableSourceOffset = anchorOffset'; do
+  grep -Fq "$token" "$R" || fail 39 "focus anchor behavior missing: $token"
+done
+pass 39 'focus loss captures/restores source + pixel anchor'
+
+grep -Fq '?: lastStableSourceOffset' "$R" || fail 40 'stable source fallback missing'
+grep -Fq 'val anchor = (lastStableSourceOffset ?: currentVisibleSourceOffset())' "$R" || fail 40 'fallback not anchored'
+python3 - <<'PY'
+from pathlib import Path
+r=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+s=r.index('    private fun showContinuousFallback(')
+e=r.index('    private fun sourceOffsetAtScroll(',s)
+b=r[s:e]
+assert 'continuousWindowStartOffset = 0' not in b
+assert 'loaded.text.substring(start, end)' in b
+PY
+pass 40 'pagination/fallback cannot hard-reset active reading to page 1'
+
+grep -Fq 'onHit = { hit -> jumpToPage(hit.globalPageIndex, false, hit) }' "$R" || fail 41 'search hit navigation missing'
+python3 - <<'P2'
+from pathlib import Path
+r=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+s=r.index('    private fun jumpToPage(')
+e=r.index('    private fun jumpChapter(', s)
+b=r[s:e]
+assert 'val targetPage = pages[currentPageIndex]' in b
+assert 'if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended)' in b
+assert 'suspendedAnchorOffset = targetPage.startOffset' in b
+assert 'suspendedAnchorViewportPx = 0' in b
+P2
+pass 41 'explicit search/navigation replaces stale dialog restore anchor'
+
+for token in 'RecyclerView(this)' 'LinearLayoutManager(this, RecyclerView.VERTICAL, false)' 'verticalAdapter?.setPages(paged.pages)' 'suspendedAnchorOffset = pages[index].startOffset' 'scrollToPositionWithOffset(pageIndex, viewportOffset)'; do
+  grep -Fq "$token" "$R" || fail 42 "anti-rollback architecture missing: $token"
+done
+pass 42 'RecyclerView virtualized reader and focus anti-rollback preserved'
+
+# Gate 43: user drag must clear the active search state before any visual rebind.
+python3 - "$A" <<'PY'
 from pathlib import Path
 import re, sys
-s = Path(sys.argv[1]).read_text(encoding='utf-8')
-m = re.search(r'override fun onScrollStateChanged\(.*?\n    \}', s, re.S)
-if not m:
-    raise SystemExit('onScrollStateChanged missing')
-b = m.group(0)
-required = [
-    'RecyclerView.SCROLL_STATE_DRAGGING',
-    'activity.verticalOnUserDrag()',
-    'recyclerView.post',
-    'clearTransientSearchHighlight(recyclerView)'
-]
-for token in required:
-    if token not in b:
-        raise SystemExit(f'missing drag highlight contract: {token}')
+s=Path(sys.argv[1]).read_text(encoding='utf-8')
+m=re.search(r'override fun onScrollStateChanged\(.*?\n    \}',s,re.S)
+if not m: raise SystemExit('onScrollStateChanged missing')
+b=m.group(0)
+for token in ['RecyclerView.SCROLL_STATE_DRAGGING','activity.verticalOnUserDrag()','recyclerView.post','clearTransientSearchHighlight(recyclerView)']:
+    if token not in b: raise SystemExit(f'missing drag highlight contract: {token}')
 if b.index('activity.verticalOnUserDrag()') > b.index('clearTransientSearchHighlight(recyclerView)'):
-    raise SystemExit('search state must clear before adapter cache rebind')
+    raise SystemExit('search state must clear before adapter rebind')
 PY
-pass 44 "drag clears transient search highlight"
+pass 43 'drag clears active search state before visual rebind'
 
-# Gate 45: clearing highlight may rebind visible rows, but it must never move/restore reader position.
-python3 - "$ADAPTER" <<'PY'
+# Gate 44: stale highlighted CharSequences must be discarded and only visible rows rebound.
+python3 - "$A" <<'PY'
 from pathlib import Path
 import re, sys
-s = Path(sys.argv[1]).read_text(encoding='utf-8')
-m = re.search(r'fun clearTransientSearchHighlight\(recyclerView: RecyclerView\) \{(.*?)\n    \}', s, re.S)
-if not m:
-    raise SystemExit('clearTransientSearchHighlight missing')
-b = m.group(1)
-for token in ['rendered.evictAll()', 'findFirstVisibleItemPosition()', 'findLastVisibleItemPosition()', 'notifyItemRangeChanged']:
-    if token not in b:
-        raise SystemExit(f'missing visible-only rebind contract: {token}')
-for forbidden in [
-    'scrollToPosition', 'scrollToPositionWithOffset', 'smoothScroll', 'scrollBy(',
-    'jumpToPage', 'currentPageIndex =', 'suspendedAnchorOffset', 'lastStableSourceOffset'
-]:
-    if forbidden in b:
-        raise SystemExit(f'highlight clear must not mutate reader position: {forbidden}')
+s=Path(sys.argv[1]).read_text(encoding='utf-8')
+m=re.search(r'fun clearTransientSearchHighlight\(recyclerView: RecyclerView\) \{(.*?)\n    \}',s,re.S)
+if not m: raise SystemExit('clearTransientSearchHighlight missing')
+b=m.group(1)
+for token in ['rendered.evictAll()','findFirstVisibleItemPosition()','findLastVisibleItemPosition()','notifyItemRangeChanged']:
+    if token not in b: raise SystemExit(f'missing visible-only rebind contract: {token}')
 PY
-pass 45 "highlight clear cannot move reader position"
+pass 44 'search highlight cache discarded; visible rows rebound'
 
-# Gate 46: Android 15/16 dataSync foreground timeout handling must use a WorkManager generation
-# that contains the upstream SystemForegroundService stopSelf timeout fix (2.10.0+); pin current stable.
-grep -Fq 'androidx.work:work-runtime-ktx:2.11.2' "$BUILD" || fail 46 "WorkManager 2.11.2 required"
-# Keep v632/v755 protections explicitly visible in this newest gate as well.
-grep -Fq 'private var verticalRecyclerView: RecyclerView?' "$READER" || fail 46 "RecyclerView reader missing"
-grep -Fq 'private var verticalLayoutManager: LinearLayoutManager?' "$READER" || fail 46 "LinearLayoutManager reader missing"
-grep -Fq 'suspendedAnchorOffset = targetPage.startOffset' "$READER" || fail 46 "v755 explicit-navigation anchor replacement missing"
-pass 46 "Android 15/16 WorkManager + reader rollback protections"
+# Gate 45: highlight removal is presentation-only and cannot mutate reading position.
+python3 - "$A" <<'PY'
+from pathlib import Path
+import re, sys
+s=Path(sys.argv[1]).read_text(encoding='utf-8')
+m=re.search(r'fun clearTransientSearchHighlight\(recyclerView: RecyclerView\) \{(.*?)\n    \}',s,re.S)
+if not m: raise SystemExit('clearTransientSearchHighlight missing')
+b=m.group(1)
+for forbidden in ['scrollToPosition','scrollToPositionWithOffset','smoothScroll','scrollBy(','jumpToPage','currentPageIndex =','suspendedAnchorOffset','lastStableSourceOffset']:
+    if forbidden in b: raise SystemExit(f'highlight clear must not mutate reader position: {forbidden}')
+PY
+pass 45 'highlight clear cannot move/restore reader position'
 
-echo "PASS v756 46/46 gates"
+# Gate 46: pin a WorkManager generation containing the upstream foreground dataSync timeout fix.
+grep -Fq 'androidx.work:work-runtime-ktx:2.11.2' "$B" || fail 46 'WorkManager 2.11.2 required'
+pass 46 'Android 15/16 SystemForegroundService timeout fix generation'
+
+printf 'ALL_46_GATES_PASS\n'
