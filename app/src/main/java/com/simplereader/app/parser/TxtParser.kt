@@ -50,7 +50,7 @@ data class TxtTranscodeResult(
 
 object TxtParser {
     /** Bump this whenever TXT catalog recognition rules change. */
-    const val CATALOG_RULE_VERSION = 112
+    const val CATALOG_RULE_VERSION = 113
 
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
@@ -116,11 +116,6 @@ object TxtParser {
         }
     }
 
-    /**
-     * Converts a source TXT once into a persistent UTF-8 text cache. Each raw line
-     * is decoded independently, so a file that switches between UTF-8 and
-     * GBK/GB18030 midway does not turn the remaining book into mojibake.
-     */
     fun transcodeToUtf8(
         inputStream: InputStream,
         outputStream: OutputStream,
@@ -170,26 +165,17 @@ object TxtParser {
                     val read = stream.read()
                     if (read == -1) {
                         if (lineBytes.size() > 0) {
-                            writeLine(
-                                decodeBestEffort(lineBytes.toByteArray(), detected.name()),
-                                appendNewline = false
-                            )
+                            writeLine(decodeBestEffort(lineBytes.toByteArray(), detected.name()), appendNewline = false)
                         }
                         break
                     }
                     if (read == '\n'.code) {
-                        writeLine(
-                            decodeBestEffort(lineBytes.toByteArray(), detected.name()),
-                            appendNewline = true
-                        )
+                        writeLine(decodeBestEffort(lineBytes.toByteArray(), detected.name()), appendNewline = true)
                         lineBytes.reset()
                     } else if (lineBytes.size() < MAX_LINE_BYTES) {
                         lineBytes.write(read)
                     } else {
-                        writeLine(
-                            decodeBestEffort(lineBytes.toByteArray(), detected.name()),
-                            appendNewline = false
-                        )
+                        writeLine(decodeBestEffort(lineBytes.toByteArray(), detected.name()), appendNewline = false)
                         lineBytes.reset()
                         lineBytes.write(read)
                     }
@@ -209,15 +195,9 @@ object TxtParser {
         detectBomCharset(bytes)?.let { charset ->
             return String(bytes, charset).removePrefix("\uFEFF")
         }
-
-        // Valid UTF-8 must win before trying permissive Chinese legacy encodings.
-        // GB18030 can decode many UTF-8 byte sequences into plausible-looking Han
-        // characters, which previously caused correct UTF-8 paragraphs to become
-        // mojibake in the middle of a mixed or incorrectly labelled TXT file.
         decodeStrict(bytes, Charsets.UTF_8)?.let { utf8 ->
             if (!looksMojibake(utf8)) return utf8
         }
-
         val preferred = preferredCharsetName
             ?.let { runCatching { Charset.forName(normalizeCharsetName(it)) }.getOrNull() }
         preferred?.let { charset ->
@@ -231,7 +211,6 @@ object TxtParser {
         listOf("GB18030", "Big5", "windows-1252")
             .mapNotNull { runCatching { Charset.forName(it) }.getOrNull() }
             .forEach(candidates::add)
-
         val decoded = candidates.mapNotNull { charset ->
             decodeStrict(bytes, charset)?.let { text ->
                 var score = normalizedDecodedQuality(text)
@@ -244,15 +223,6 @@ object TxtParser {
             ?: String(bytes, preferred ?: Charset.forName("GB18030"))
     }
 
-    /**
-     * Reads a source window without exposing raw byte boundaries to the reader.
-     *
-     * For UTF-8/GBK/GB18030/Big5 text, windows are aligned to complete lines and
-     * each line is decoded independently. This prevents a multi-byte character
-     * or a local encoding switch from turning the rest of the visible buffer
-     * into mojibake. Returned [TxtWindowResult.nextByte] is always a safe start
-     * for the following window, so sequential windows have no gap or overlap.
-     */
     fun readWindow(
         inputStream: InputStream,
         charsetName: String,
@@ -262,7 +232,6 @@ object TxtParser {
         require(maxBytes > 0) { "maxBytes must be positive" }
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val safeStart = startByte.coerceAtLeast(0L)
-
         if (charset.name().startsWith("UTF-16", ignoreCase = true)) {
             val alignedStart = safeStart - (safeStart % 2L)
             inputStream.use { stream ->
@@ -275,15 +244,11 @@ object TxtParser {
                 )
             }
         }
-
         val probeStart = (safeStart - WINDOW_LINE_CONTEXT_BYTES).coerceAtLeast(0L)
         inputStream.use { stream ->
             stream.skipFully(probeStart)
-            val bytes = stream.readUpTo(
-                maxBytes + WINDOW_LINE_CONTEXT_BYTES * 2
-            )
+            val bytes = stream.readUpTo(maxBytes + WINDOW_LINE_CONTEXT_BYTES * 2)
             if (bytes.isEmpty()) return TxtWindowResult("", safeStart, safeStart)
-
             val requestedIndex = (safeStart - probeStart).toInt().coerceIn(0, bytes.size)
             val startIndex = alignWindowStart(bytes, requestedIndex, safeStart == 0L, charset)
             if (startIndex >= bytes.size) {
@@ -291,8 +256,7 @@ object TxtParser {
                 return TxtWindowResult("", absolute, absolute)
             }
             val desiredEnd = (startIndex + maxBytes).coerceAtMost(bytes.size)
-            val endIndex = alignWindowEnd(bytes, startIndex, desiredEnd, charset)
-                .coerceIn(startIndex, bytes.size)
+            val endIndex = alignWindowEnd(bytes, startIndex, desiredEnd, charset).coerceIn(startIndex, bytes.size)
             val raw = bytes.copyOfRange(startIndex, endIndex)
             return TxtWindowResult(
                 text = decodeLineWise(raw, charset.name()).removePrefix("\uFEFF"),
@@ -302,7 +266,6 @@ object TxtParser {
         }
     }
 
-    /** Reads the complete-line window immediately before [endByte]. */
     fun readWindowBefore(
         inputStream: InputStream,
         charsetName: String,
@@ -312,23 +275,15 @@ object TxtParser {
         require(maxBytes > 0) { "maxBytes must be positive" }
         val safeEnd = endByte.coerceAtLeast(0L)
         if (safeEnd == 0L) return TxtWindowResult("", 0L, 0L)
-
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val probeStart = (safeEnd - maxBytes - WINDOW_LINE_CONTEXT_BYTES).coerceAtLeast(0L)
-        val probeLength = (safeEnd - probeStart)
-            .coerceAtMost(Int.MAX_VALUE.toLong())
-            .toInt()
+        val probeLength = (safeEnd - probeStart).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         inputStream.use { stream ->
             stream.skipFully(probeStart)
             val bytes = stream.readUpTo(probeLength)
             if (bytes.isEmpty()) return TxtWindowResult("", safeEnd, safeEnd)
             val desiredStart = (bytes.size - maxBytes).coerceAtLeast(0)
-            val alignedStart = alignWindowStart(
-                bytes = bytes,
-                requestedIndex = desiredStart,
-                atFileStart = probeStart == 0L,
-                charset = charset
-            ).coerceIn(0, bytes.size)
+            val alignedStart = alignWindowStart(bytes, desiredStart, probeStart == 0L, charset).coerceIn(0, bytes.size)
             val raw = bytes.copyOfRange(alignedStart, bytes.size)
             return TxtWindowResult(
                 text = if (charset.name().startsWith("UTF-16", ignoreCase = true)) {
@@ -342,12 +297,7 @@ object TxtParser {
         }
     }
 
-    private fun alignWindowStart(
-        bytes: ByteArray,
-        requestedIndex: Int,
-        atFileStart: Boolean,
-        charset: Charset
-    ): Int {
+    private fun alignWindowStart(bytes: ByteArray, requestedIndex: Int, atFileStart: Boolean, charset: Charset): Int {
         if (atFileStart || requestedIndex <= 0) return 0
         if (bytes.getOrNull(requestedIndex - 1) == '\n'.code.toByte()) return requestedIndex
         val limit = (requestedIndex + WINDOW_LINE_CONTEXT_BYTES).coerceAtMost(bytes.size)
@@ -357,12 +307,7 @@ object TxtParser {
         return alignCharacterStart(bytes, requestedIndex, charset)
     }
 
-    private fun alignWindowEnd(
-        bytes: ByteArray,
-        startIndex: Int,
-        desiredEnd: Int,
-        charset: Charset
-    ): Int {
+    private fun alignWindowEnd(bytes: ByteArray, startIndex: Int, desiredEnd: Int, charset: Charset): Int {
         if (desiredEnd >= bytes.size) return bytes.size
         val limit = (desiredEnd + WINDOW_LINE_CONTEXT_BYTES).coerceAtMost(bytes.size)
         for (index in desiredEnd until limit) {
@@ -389,19 +334,13 @@ object TxtParser {
         var lineStart = 0
         bytes.forEachIndexed { index, value ->
             if (value == '\n'.code.toByte()) {
-                val lineEnd = if (index > lineStart && bytes[index - 1] == '\r'.code.toByte()) {
-                    index - 1
-                } else {
-                    index
-                }
+                val lineEnd = if (index > lineStart && bytes[index - 1] == '\r'.code.toByte()) index - 1 else index
                 output.append(decodeBestEffort(bytes.copyOfRange(lineStart, lineEnd), preferredCharsetName))
                 output.append('\n')
                 lineStart = index + 1
             }
         }
-        if (lineStart < bytes.size) {
-            output.append(decodeBestEffort(bytes.copyOfRange(lineStart, bytes.size), preferredCharsetName))
-        }
+        if (lineStart < bytes.size) output.append(decodeBestEffort(bytes.copyOfRange(lineStart, bytes.size), preferredCharsetName))
         return output.toString()
     }
 
@@ -414,18 +353,14 @@ object TxtParser {
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val structured = mutableListOf<TxtChapterHit>()
         val fallback = mutableListOf<TxtChapterHit>()
-
         fun collect(line: String, lineStartOffset: Long) {
             val structuredTitle = extractStructuredChapterTitle(line)
             val target = if (structuredTitle != null) structured else fallback
             val title = structuredTitle ?: extractFallbackChapterTitle(line) ?: return
             if (target.size >= maxChapters) return
             val last = target.lastOrNull()
-            if (last == null || lineStartOffset - last.byteOffset > 80L) {
-                target += TxtChapterHit(title, lineStartOffset)
-            }
+            if (last == null || lineStartOffset - last.byteOffset > 80L) target += TxtChapterHit(title, lineStartOffset)
         }
-
         inputStream.use { stream ->
             val lineBytes = ByteArrayOutputStream()
             var absoluteOffset = 0L
@@ -433,20 +368,12 @@ object TxtParser {
             while (structured.size < maxChapters && absoluteOffset < maxScanBytes) {
                 val read = stream.read()
                 if (read == -1) {
-                    if (lineBytes.size() > 0) {
-                        collect(
-                            decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(),
-                            lineStartOffset
-                        )
-                    }
+                    if (lineBytes.size() > 0) collect(decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(), lineStartOffset)
                     break
                 }
                 absoluteOffset += 1L
                 if (read == '\n'.code) {
-                    collect(
-                        decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(),
-                        lineStartOffset
-                    )
+                    collect(decodeBestEffort(lineBytes.toByteArray(), charset.name()).trim(), lineStartOffset)
                     lineBytes.reset()
                     lineStartOffset = absoluteOffset
                 } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) {
@@ -457,12 +384,7 @@ object TxtParser {
         return structured.ifEmpty { fallback }.take(maxChapters)
     }
 
-    fun findTextOffset(
-        inputStream: InputStream,
-        charsetName: String,
-        query: String,
-        startByte: Long
-    ): Long? {
+    fun findTextOffset(inputStream: InputStream, charsetName: String, query: String, startByte: Long): Long? {
         if (query.isBlank()) return null
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val normalizedQuery = query.lowercase()
@@ -484,9 +406,7 @@ object TxtParser {
                     if (line.lowercase().contains(normalizedQuery)) return lineStartOffset
                     lineBytes.reset()
                     lineStartOffset = absoluteOffset
-                } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) {
-                    lineBytes.write(read)
-                }
+                } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) lineBytes.write(read)
             }
         }
     }
@@ -498,16 +418,13 @@ object TxtParser {
         startByte: Long,
         pageSize: Int = 40
     ): TxtSearchPage {
-        if (query.isBlank() || pageSize <= 0) {
-            return TxtSearchPage(emptyList(), startByte.coerceAtLeast(0L), true)
-        }
+        if (query.isBlank() || pageSize <= 0) return TxtSearchPage(emptyList(), startByte.coerceAtLeast(0L), true)
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val normalizedQuery = query.lowercase()
         val safeStart = startByte.coerceAtLeast(0L)
         val hits = mutableListOf<TxtSearchHit>()
         var nextByte = safeStart
         var endReached = false
-
         fun collectLine(lineBytes: ByteArray, lineStartOffset: Long) {
             if (lineBytes.isEmpty()) return
             val line = decodeBestEffort(lineBytes, charset.name()).trimEnd('\r')
@@ -519,17 +436,11 @@ object TxtParser {
                 val prefixBytes = line.substring(0, index).toByteArray(charset).size
                 val contextStart = (index - 36).coerceAtLeast(0)
                 val contextEnd = (index + query.length + 72).coerceAtMost(line.length)
-                val preview = line.substring(contextStart, contextEnd)
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                hits += TxtSearchHit(
-                    byteOffset = lineStartOffset + prefixBytes,
-                    preview = preview.ifBlank { "位置 ${lineStartOffset + prefixBytes}" }
-                )
+                val preview = line.substring(contextStart, contextEnd).replace(Regex("\\s+"), " ").trim()
+                hits += TxtSearchHit(lineStartOffset + prefixBytes, preview.ifBlank { "位置 ${lineStartOffset + prefixBytes}" })
                 fromIndex = index + query.length.coerceAtLeast(1)
             }
         }
-
         inputStream.use { stream ->
             stream.skipFully(safeStart)
             val lineBytes = ByteArrayOutputStream()
@@ -550,45 +461,31 @@ object TxtParser {
                     lineStartOffset = absoluteOffset
                     nextByte = absoluteOffset
                     if (hits.size >= pageSize) break
-                } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) {
-                    lineBytes.write(read)
-                }
+                } else if (read != '\r'.code && lineBytes.size() < MAX_LINE_BYTES) lineBytes.write(read)
             }
         }
-
-        return TxtSearchPage(
-            hits = hits,
-            nextByte = nextByte,
-            endReached = endReached
-        )
+        return TxtSearchPage(hits, nextByte, endReached)
     }
 
-    fun readChapter(file: File, charset: Charset = Charsets.UTF_8): String {
-        return try {
-            file.readText(charset)
-        } catch (_: Exception) {
-            file.readBytes().let { bytes -> decodeBestEffort(bytes, charset.name()) }
-        }
+    fun readChapter(file: File, charset: Charset = Charsets.UTF_8): String = try {
+        file.readText(charset)
+    } catch (_: Exception) {
+        file.readBytes().let { bytes -> decodeBestEffort(bytes, charset.name()) }
     }
 
-    fun getChapterText(content: String, start: Int = 0, end: Int = content.length): String {
-        return content.substring(start.coerceIn(0, content.length), end.coerceIn(0, content.length))
-    }
+    fun getChapterText(content: String, start: Int = 0, end: Int = content.length): String =
+        content.substring(start.coerceIn(0, content.length), end.coerceIn(0, content.length))
 
-    fun getTotalLength(file: File, charset: Charset = Charsets.UTF_8): Int {
-        return readChapter(file, charset).length
-    }
+    fun getTotalLength(file: File, charset: Charset = Charsets.UTF_8): Int = readChapter(file, charset).length
 
-    private fun decodeStrict(bytes: ByteArray, charset: Charset): String? {
-        return try {
-            charset.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (_: CharacterCodingException) {
-            null
-        }
+    private fun decodeStrict(bytes: ByteArray, charset: Charset): String? = try {
+        charset.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
+    } catch (_: CharacterCodingException) {
+        null
     }
 
     private val commonSimplifiedChineseCharacters: Set<Char> by lazy {
@@ -603,8 +500,7 @@ object TxtParser {
     private fun looksMojibake(text: String): Boolean {
         if (text.contains('\uFFFD') || text.contains('\u0000')) return true
         if (text.any { it.code in 0x3100..0x312F || it.code in 0xFE30..0xFE4F }) return true
-        return listOf("锟斤拷", "烫烫烫", "屯屯屯", "娴嬭瘯", "鐨勭", "鏂囨湰")
-            .any(text::contains)
+        return listOf("锟斤拷", "烫烫烫", "屯屯屯", "娴嬭瘯", "鐨勭", "鏂囨湰").any(text::contains)
     }
 
     private fun decodedQuality(text: String): Long {
@@ -616,8 +512,7 @@ object TxtParser {
                 char.code in 0..31 && char !in setOf('\n', '\r', '\t') -> -500L
                 char.code in 0x3100..0x312F -> -400L
                 char.code in 0xFE30..0xFE4F -> -300L
-                Character.UnicodeScript.of(char.code) == Character.UnicodeScript.HAN ->
-                    if (char in commonSimplifiedChineseCharacters) 24L else 8L
+                Character.UnicodeScript.of(char.code) == Character.UnicodeScript.HAN -> if (char in commonSimplifiedChineseCharacters) 24L else 8L
                 char.code in 0x80..0xFF -> -6L
                 char.isLetterOrDigit() -> 3L
                 char.isWhitespace() -> 1L
@@ -630,40 +525,27 @@ object TxtParser {
         return score
     }
 
-    private fun normalizeCharsetName(name: String): String {
-        return when (name.trim().uppercase()) {
-            "GB2312", "HZ-GB-2312", "GBK", "CP936", "WINDOWS-936" -> "GB18030"
-            "UTF8" -> "UTF-8"
-            else -> name.trim()
-        }
+    private fun normalizeCharsetName(name: String): String = when (name.trim().uppercase()) {
+        "GB2312", "HZ-GB-2312", "GBK", "CP936", "WINDOWS-936" -> "GB18030"
+        "UTF8" -> "UTF-8"
+        else -> name.trim()
     }
 
-    private fun detectBomCharset(bytes: ByteArray): Charset? {
-        return when {
-            hasUtf8Bom(bytes) -> Charsets.UTF_8
-            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
-                Charset.forName("UTF-16LE")
-            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
-                Charset.forName("UTF-16BE")
-            else -> null
-        }
+    private fun detectBomCharset(bytes: ByteArray): Charset? = when {
+        hasUtf8Bom(bytes) -> Charsets.UTF_8
+        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> Charset.forName("UTF-16LE")
+        bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> Charset.forName("UTF-16BE")
+        else -> null
     }
 
-    private fun hasUtf8Bom(bytes: ByteArray): Boolean {
-        return bytes.size >= 3 &&
-            bytes[0] == 0xEF.toByte() &&
-            bytes[1] == 0xBB.toByte() &&
-            bytes[2] == 0xBF.toByte()
-    }
+    private fun hasUtf8Bom(bytes: ByteArray): Boolean =
+        bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()
 
-    private fun hasUtf16Bom(bytes: ByteArray): Boolean {
-        return bytes.size >= 2 &&
-            ((bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) ||
-                (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()))
-    }
+    private fun hasUtf16Bom(bytes: ByteArray): Boolean =
+        bytes.size >= 2 && ((bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) ||
+            (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()))
 
-    private fun isUtf8Continuation(value: Byte): Boolean =
-        (value.toInt() and 0xC0) == 0x80
+    private fun isUtf8Continuation(value: Byte): Boolean = (value.toInt() and 0xC0) == 0x80
 
     private fun InputStream.readUpTo(maxBytes: Int): ByteArray {
         val buffer = ByteArray(maxBytes)
@@ -683,9 +565,7 @@ object TxtParser {
             if (skipped <= 0) {
                 if (read() == -1) break
                 remaining -= 1
-            } else {
-                remaining -= skipped
-            }
+            } else remaining -= skipped
         }
     }
 
@@ -693,16 +573,18 @@ object TxtParser {
 
     fun extractStructuredChapterTitle(line: String): String? = DirectTxtCatalogV100.recognize(line)
 
+    private val numeralLeadingOrdinaryText = Regex(
+        "^[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+[^、.．:：—-\\s].*$"
+    )
 
-    /**
-     * Last-resort rule. Callers that scan a whole book must only use these hits
-     * when no structured chapter heading was found anywhere in that book.
-     */
     fun extractFallbackChapterTitle(line: String): String? {
         val normalized = CatalogTitleNormalizerV103.normalize(line)
         if (normalized.length !in 2..40) return null
         if (normalized.contains("http", ignoreCase = true)) return null
         if (normalized.all(Char::isDigit)) return null
+        // Rule 113: if a line begins with Arabic/Chinese numerals and then ordinary text without
+        // a catalog separator, it is prose/quantity wording, not a fallback chapter title.
+        if (numeralLeadingOrdinaryText.matches(normalized)) return null
         if (normalized.any(::isTitlePunctuation)) return null
         if (normalized.count(Char::isWhitespace) > 4) return null
         if (normalized.none { it.isLetterOrDigit() }) return null
@@ -716,7 +598,6 @@ object TxtParser {
         "可以", "需要", "应该", "如果", "并且", "以及"
     )
 
-    /** Kept for isolated-line callers and compatibility tests. */
     fun extractChapterTitle(line: String): String? =
         extractStructuredChapterTitle(line) ?: extractFallbackChapterTitle(line)
 
@@ -737,17 +618,14 @@ object TxtParser {
     private class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {
         var count: Long = 0L
             private set
-
         override fun write(value: Int) {
             delegate.write(value)
             count += 1L
         }
-
         override fun write(buffer: ByteArray, offset: Int, length: Int) {
             delegate.write(buffer, offset, length)
             count += length.toLong()
         }
-
         override fun flush() = delegate.flush()
         override fun close() = delegate.close()
     }
