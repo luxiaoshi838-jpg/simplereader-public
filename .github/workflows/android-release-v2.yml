@@ -34,7 +34,7 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew testDebugUnitTest --tests com.simplereader.app.parser.TxtCatalogRule112Test assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v756 APK
+      - name: Verify v756 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -49,6 +49,10 @@ jobs:
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
+          mkdir -p signing-tools/lib
+          cp "${build_tools}/apksigner" signing-tools/apksigner
+          cp "${build_tools}/lib/apksigner.jar" signing-tools/lib/apksigner.jar
+          chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
           name: SimpleReader-v756-${{ github.run_number }}
@@ -57,5 +61,7 @@ jobs:
             apk-sha256.txt
             apk-package-info.txt
             gradle-build.log
+            signing-tools/apksigner
+            signing-tools/lib/apksigner.jar
           if-no-files-found: error
           retention-days: 7
