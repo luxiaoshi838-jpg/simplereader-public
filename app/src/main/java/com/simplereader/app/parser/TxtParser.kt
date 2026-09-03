@@ -573,9 +573,6 @@ object TxtParser {
 
     fun extractStructuredChapterTitle(line: String): String? = DirectTxtCatalogV100.recognize(line)
 
-    private val numeralLeadingOrdinaryText = Regex(
-        "^[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+[^、.．:：—-\\s].*$"
-    )
 
     private fun hasGluedPrefixedStructuralText(value: String): Boolean {
         var index = 0
@@ -612,7 +609,6 @@ object TxtParser {
         // Rule 113: if a line begins with Arabic/Chinese numerals and then ordinary text without
         // a catalog separator, it is prose/quantity wording, not a fallback chapter title.
         if (startsWithNumeralToken(normalized)) return null
-        if (numeralLeadingOrdinaryText.matches(normalized)) return null
         if (hasGluedPrefixedStructuralText(normalized)) return null
         if (normalized.any(::isTitlePunctuation)) return null
         if (normalized.count(Char::isWhitespace) > 4) return null
