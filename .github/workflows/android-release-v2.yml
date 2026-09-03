@@ -1,18 +1,18 @@
-name: Build 简阅 v755
+name: Build 简阅 v756
 
 on:
   push:
     branches:
-      - source-v755
+      - source-v756
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000755"
-  SIMPLE_READER_VERSION_NAME: "755"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v755_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000756"
+  SIMPLE_READER_VERSION_NAME: "756"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v756_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -26,15 +26,15 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x ./gradlew tools/v755-42-gates.sh
-      - name: Run v755 42 gates
-        run: bash tools/v755-42-gates.sh
-      - name: Test changed behavior and build v755
+      - run: chmod +x ./gradlew tools/v756-46-gates.sh
+      - name: Run v756 46 gates
+        run: bash tools/v756-46-gates.sh
+      - name: Test changed behavior and build v756
         shell: bash
         run: |
           set -o pipefail
           ./gradlew testDebugUnitTest --tests com.simplereader.app.parser.TxtCatalogRule112Test assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v755 APK
+      - name: Verify v756 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -44,14 +44,14 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000755'" apk-package-info.txt
-          grep -Fq "versionName='755'" apk-package-info.txt
+          grep -Fq "versionCode='2098000756'" apk-package-info.txt
+          grep -Fq "versionName='756'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v755-${{ github.run_number }}
+          name: SimpleReader-v756-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
