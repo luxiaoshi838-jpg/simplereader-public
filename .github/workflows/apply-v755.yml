@@ -54,8 +54,7 @@ jobs:
           w = w.replace('SimpleReader-v754-', 'SimpleReader-v755-')
           wpath.write_text(w)
 
-          g = Path('tools/v755-42-gates.sh')
-          g.write_text(r'''#!/usr/bin/env bash
+          gate_text = r'''#!/usr/bin/env bash
           set -euo pipefail
           ROOT="$(cd "$(dirname "$0")/.." && pwd)"
           cd "$ROOT"
@@ -96,7 +95,9 @@ jobs:
           P2
           pass 42 'RecyclerView virtualized continuous reader + focus anti-rollback preserved'
           printf 'ALL_42_GATES_PASS\n'
-          ''').replace('          ', '')
+          '''.replace('          ', '')
+          g = Path('tools/v755-42-gates.sh')
+          g.write_text(gate_text)
           g.chmod(0o755)
           PY
       - name: Commit v755 source changes
