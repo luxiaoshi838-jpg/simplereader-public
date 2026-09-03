@@ -26,9 +26,9 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x ./gradlew tools/v756-46-gates.sh
-      - name: Run v756 46 gates
-        run: bash tools/v756-46-gates.sh
+      - run: chmod +x ./gradlew tools/v756-46-gates.sh tools/v756-48-gates.sh
+      - name: Run v756 48 gates
+        run: bash tools/v756-48-gates.sh
       - name: Test changed behavior and build v756
         shell: bash
         run: |
