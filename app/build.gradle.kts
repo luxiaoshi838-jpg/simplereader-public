@@ -111,7 +111,9 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.fragment:fragment-ktx:1.6.0")
     implementation("androidx.webkit:webkit:1.7.0")
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    // 2.10.x contains the upstream dataSync/shortService foreground-timeout stopSelf fix
+    // while remaining compatible with this project's AGP 8.1.x build line.
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
 
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
