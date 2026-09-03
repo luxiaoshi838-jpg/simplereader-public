@@ -126,8 +126,9 @@ for forbidden in ['scrollToPosition','scrollToPositionWithOffset','smoothScroll'
 PY
 pass 45 'highlight clear cannot move/restore reader position'
 
-# Gate 46: pin a WorkManager generation containing the upstream foreground dataSync timeout fix.
-grep -Fq 'androidx.work:work-runtime-ktx:2.11.2' "$B" || fail 46 'WorkManager 2.11.2 required'
-pass 46 'Android 15/16 SystemForegroundService timeout fix generation'
+# Gate 46: use the WorkManager 2.10 stable line containing the upstream foreground
+# dataSync/shortService stopSelf timeout fix without forcing this AGP 8.1.x project to AGP 8.6.
+grep -Fq 'androidx.work:work-runtime-ktx:2.10.5' "$B" || fail 46 'WorkManager 2.10.5 required'
+pass 46 'Android foreground SystemForegroundService timeout fix on AGP-compatible WorkManager line'
 
 printf 'ALL_46_GATES_PASS\n'
