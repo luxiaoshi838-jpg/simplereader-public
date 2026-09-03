@@ -5,6 +5,7 @@ fail() { echo "UI POLICY FAILURE: $*" >&2; exit 1; }
 reader=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 engine=app/src/main/java/com/simplereader/app/reader/page/PageEngine.kt
 layout=app/src/main/res/layout/activity_reader.xml
+profile=app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt
 
 # Rejected replacement implementations must be absent.
 for path in \
@@ -41,11 +42,13 @@ grep -q 'verticalAdapter?.setPages(paged.pages)' "$reader" || fail "v632 ReaderP
 grep -q 'readerScrollView.visibility = View.VISIBLE' "$reader" || fail "continuous fallback reader missing"
 ! grep -q 'PagerSnapHelper' "$reader" || fail "vertical/page snap helper is forbidden"
 
-grep -q 'CONTENT_BOTTOM_PADDING_DP = 24' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "reader bottom guard must be one character"
-grep -q 'bottomPaddingPx = settings.contentPaddingBottomPx' "$reader" || fail "horizontal renderer must honor the bottom guard"
+# v722/current layout uses zero internal body padding. The guarded viewport itself starts one
+# character below the status bar and ends three characters above the navigation bar.
+grep -q 'CONTENT_BOTTOM_PADDING_DP = 0' "$profile" || fail "reader body bottom padding must remain zero"
+grep -q 'bottomPaddingPx = settings.contentPaddingBottomPx' "$reader" || fail "horizontal renderer must honor zero internal bottom padding"
 ! grep -q 'paddingBottom="118dp"' "$layout" || fail "118dp page gap is forbidden"
 grep -q 'android:paddingBottom="0dp"' "$layout" || fail "reader XML bottom padding must defer to runtime navigation-bar insets"
-grep -q 'navigationBarInsetPx + oneCharacterPx' "$reader" || fail "reader lower limit must leave one character above navigation bar"
+grep -q 'val bottomGuardPx = navigationBarInsetPx + oneCharacterPx \* 3' "$reader" || fail "reader lower viewport guard must remain navigation bar plus three characters"
 ! grep -q '#33FFFFFF' "$layout" || fail "progress indicator background block is forbidden"
 ! grep -A14 '@+id/readerProgressLabel' "$layout" | grep -q 'android:background=' || fail "progress indicator must be plain text without a box"
 
@@ -60,10 +63,9 @@ test -e app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt || fail "co
 
 grep -q 'android:paddingTop="0dp"' "$layout" || fail "reader XML padding must defer to runtime system-bar insets"
 grep -q 'WindowCompat.setDecorFitsSystemWindows(window, false)' "$reader" || fail "reader root must receive real system-bar insets"
-grep -q 'statusBarInsetPx + oneCharacterPx' "$reader" || fail "reader upper limit must be notification-bar bottom plus one character"
-grep -q 'navigationBarInsetPx + oneCharacterPx' "$reader" || fail "reader lower limit must leave one character above navigation bar"
+grep -q 'val topGuardPx = statusBarInsetPx + oneCharacterPx' "$reader" || fail "reader upper limit must be notification-bar bottom plus one character"
 ! sed -n '1,8p' "$layout" | grep -q 'android:paddingTop=' || fail "reader root layout must keep the v612 top boundary"
-grep -q 'TITLE_SIZE_DELTA_SP = 2f' app/src/main/java/com/simplereader/app/reader/page/ReaderCacheProfile.kt || fail "chapter title must be exactly 2sp larger"
+grep -q 'TITLE_SIZE_DELTA_SP = 2f' "$profile" || fail "chapter title must be exactly 2sp larger"
 grep -q 'updateCurrentChapterTitle' "$reader" || fail "reader chrome must use current chapter title"
 grep -q '目录　${book?.title.orEmpty()}' "$reader" || fail "catalog must show book title beside 目录"
 test -e app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt || fail "shelf catalog cache worker missing"
