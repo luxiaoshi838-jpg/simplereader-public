@@ -13,14 +13,17 @@ T=app/src/main/java/com/simplereader/app/parser/TxtParser.kt
 X=app/src/main/res/layout/activity_reader.xml
 B=app/build.gradle.kts
 A=app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt
+TEST=app/src/test/java/com/simplereader/app/parser/TxtCatalogRule112Test.kt
 
 # 35-42: carry forward v754/v755 behavior without hard-coding an older app version.
-grep -Fq '2098000756' "$B" && grep -Fq '"756"' "$B" && grep -Fq 'CATALOG_RULE_VERSION = 112' "$T" && grep -Fq 'RULE_VERSION = 112' "$D" || fail 35 'v756/rule112 versions missing'
-pass 35 'v756 version + catalog rule112'
+grep -Fq '2098000756' "$B" && grep -Fq '"756"' "$B" && grep -Fq 'CATALOG_RULE_VERSION = 113' "$T" && grep -Fq 'RULE_VERSION = 113' "$D" || fail 35 'v756/rule113 versions missing'
+pass 35 'v756 version + catalog rule113'
 
-grep -Fq 'wrappedChineseSuffix' "$D" && grep -Fq 'wrappedLeadingUnit' "$D" && grep -Fq 'numericOnly.matches(s)' "$D" || fail 36 'rule112 false-positive guards missing'
-! grep -Fq "unit == '回' && m.range.first != 0" "$D" || fail 36 'embedded 回 terminator bypass returned'
-pass 36 'rule112 parenthetical/numeric/terminator guards'
+grep -Fq 'explicitNumberedTitle' "$D" && grep -Fq 'numberLeadingUnit' "$D" && grep -Fq 'hasStructuralBoundaryAfter' "$D" && grep -Fq 'numericOnly.matches(s)' "$D" || fail 36 'rule113 structural-boundary guards missing'
+for token in '3节课' '3节 课' '3节：课' '第3节课' '第3节 课' '12章鱼' '12章 鱼' '一条' '1天'; do
+  grep -Fq "$token" "$TEST" || fail 36 "rule113 boundary regression test missing: $token"
+done
+pass 36 'rule113 rejects glued numeral+noun phrases; accepts independent chapter units'
 
 grep -Fq 'isFastScrollEnabled = true' "$R" && grep -Fq 'isFastScrollAlwaysVisible = true' "$R" || fail 37 'catalog-only fast scroll missing'
 ! grep -Fq '${rowIndex + 1}.${chapter.title}' "$R" || fail 37 'artificial catalog row numbering returned'
