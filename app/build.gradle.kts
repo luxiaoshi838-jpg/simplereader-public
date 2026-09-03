@@ -19,10 +19,10 @@ android {
     namespace = "com.simplereader.app"
     compileSdk = 35
 
-    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000755")
+    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000756")
         .toIntOrNull()
-        ?: 2098000755
-    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "755"
+        ?: 2098000756
+    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "756"
 
     defaultConfig {
         applicationId = "com.simplereader.app"
@@ -111,7 +111,7 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.fragment:fragment-ktx:1.6.0")
     implementation("androidx.webkit:webkit:1.7.0")
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
 
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
