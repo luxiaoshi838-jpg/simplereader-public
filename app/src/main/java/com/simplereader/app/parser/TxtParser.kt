@@ -577,6 +577,26 @@ object TxtParser {
         "^[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+[^、.．:：—-\\s].*$"
     )
 
+    private fun hasGluedPrefixedStructuralText(value: String): Boolean {
+        var index = 0
+        if (value.getOrNull(index) != '第') return false
+        index++
+        while (value.getOrNull(index)?.isWhitespace() == true) index++
+
+        val numeralChars = "0123456789０１２３４５６７８９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
+        val numeralStart = index
+        while (value.getOrNull(index)?.let { it in numeralChars } == true) index++
+        if (index == numeralStart) return false
+        while (value.getOrNull(index)?.isWhitespace() == true) index++
+
+        val unit = listOf("单元", "章", "节", "篇", "部", "卷", "回", "集")
+            .firstOrNull { value.startsWith(it, index) } ?: return false
+        val tailIndex = index + unit.length
+        if (tailIndex >= value.length) return false
+        val next = value[tailIndex]
+        return !next.isWhitespace() && next !in "、.．:：—-"
+    }
+
     fun extractFallbackChapterTitle(line: String): String? {
         val normalized = CatalogTitleNormalizerV103.normalize(line)
         if (normalized.length !in 2..40) return null
@@ -585,6 +605,7 @@ object TxtParser {
         // Rule 113: if a line begins with Arabic/Chinese numerals and then ordinary text without
         // a catalog separator, it is prose/quantity wording, not a fallback chapter title.
         if (numeralLeadingOrdinaryText.matches(normalized)) return null
+        if (hasGluedPrefixedStructuralText(normalized)) return null
         if (normalized.any(::isTitlePunctuation)) return null
         if (normalized.count(Char::isWhitespace) > 4) return null
         if (normalized.none { it.isLetterOrDigit() }) return null
