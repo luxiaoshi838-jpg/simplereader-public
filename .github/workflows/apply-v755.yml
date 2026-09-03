@@ -1,0 +1,114 @@
+name: Apply 简阅 v755
+
+on:
+  push:
+    branches:
+      - source-v755
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-v755:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source-v755
+          fetch-depth: 0
+      - name: Apply v755 search-navigation fix without weakening anti-rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rpath = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt')
+          r = rpath.read_text()
+          old = '''        currentPageIndex = index.coerceIn(0, pages.lastIndex)\n        lastStableSourceOffset = pages[currentPageIndex].startOffset\n        if (pageTurnMode == TURN_MODE_VERTICAL) {\n'''
+          new = '''        currentPageIndex = index.coerceIn(0, pages.lastIndex)\n        val targetPage = pages[currentPageIndex]\n        lastStableSourceOffset = targetPage.startOffset\n        // v755: an explicit user navigation while a dialog owns focus must replace the\n        // pre-dialog restore anchor. Otherwise onWindowFocusChanged(true) would undo\n        // search/catalog/progress navigation and appear to jump back to the old reading spot.\n        if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended) {\n            suspendedAnchorOffset = targetPage.startOffset\n            suspendedAnchorViewportPx = 0\n        }\n        if (pageTurnMode == TURN_MODE_VERTICAL) {\n'''
+          if new not in r:
+              if old not in r:
+                  raise SystemExit('jumpToPage anchor patch target not found')
+              r = r.replace(old, new, 1)
+          if 'onHit = { hit -> jumpToPage(hit.globalPageIndex, false, hit) }' not in r:
+              raise SystemExit('search hit navigation contract missing before v755 patch')
+          rpath.write_text(r)
+
+          bpath = Path('app/build.gradle.kts')
+          b = bpath.read_text().replace('2098000754', '2098000755').replace('?: "754"', '?: "755"')
+          bpath.write_text(b)
+
+          wpath = Path('.github/workflows/android-release-v2.yml')
+          w = wpath.read_text()
+          w = w.replace('Build 简阅 v754', 'Build 简阅 v755')
+          w = w.replace('source-v754', 'source-v755')
+          w = w.replace('2098000754', '2098000755')
+          w = w.replace('"754"', '"755"')
+          w = w.replace('SimpleReader_v754_github_unsigned.apk', 'SimpleReader_v755_github_unsigned.apk')
+          w = w.replace('v754-40-gates.sh', 'v755-42-gates.sh')
+          w = w.replace('Run v754 40 gates', 'Run v755 42 gates')
+          w = w.replace('build v754', 'build v755')
+          w = w.replace('Verify v754 APK', 'Verify v755 APK')
+          w = w.replace('SimpleReader-v754-', 'SimpleReader-v755-')
+          wpath.write_text(w)
+
+          g = Path('tools/v755-42-gates.sh')
+          g.write_text(r'''#!/usr/bin/env bash
+          set -euo pipefail
+          ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+          cd "$ROOT"
+          bash tools/v754-40-gates.sh
+          pass(){ printf 'PASS %02d %s\n' "$1" "$2"; }
+          fail(){ printf 'FAIL %02d %s\n' "$1" "$2" >&2; exit 1; }
+          R=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          B=app/build.gradle.kts
+
+          grep -Fq '2098000755' "$B" && grep -Fq '"755"' "$B" || fail 41 'v755 version missing'
+          grep -Fq 'onHit = { hit -> jumpToPage(hit.globalPageIndex, false, hit) }' "$R" || fail 41 'search hit no longer navigates by stable page hit'
+          python3 - <<'P2'
+          from pathlib import Path
+          r=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+          s=r.index('    private fun jumpToPage(')
+          e=r.index('    private fun jumpChapter(', s)
+          b=r[s:e]
+          assert 'val targetPage = pages[currentPageIndex]' in b
+          assert 'if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended)' in b
+          assert 'suspendedAnchorOffset = targetPage.startOffset' in b
+          assert 'suspendedAnchorViewportPx = 0' in b
+          assert b.index('suspendedAnchorOffset = targetPage.startOffset') < b.index('verticalLayoutManager?.scrollToPositionWithOffset')
+          P2
+          pass 41 'explicit search/navigation replaces stale dialog restore anchor'
+
+          for token in 'RecyclerView(this)' 'LinearLayoutManager(this, RecyclerView.VERTICAL, false)' 'verticalAdapter?.setPages(paged.pages)' 'verticalLayoutManager?.scrollToPositionWithOffset' 'suspendedAnchorOffset = pages[index].startOffset' 'scrollToPositionWithOffset(pageIndex, viewportOffset)'; do
+            grep -Fq "$token" "$R" || fail 42 "v632/v754 anti-rollback architecture missing: $token"
+          done
+          python3 - <<'P2'
+          from pathlib import Path
+          r=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+          s=r.index('    private fun showContinuousBook(')
+          e=r.index('    internal fun verticalRenderPage', s)
+          b=r[s:e]
+          assert 'readerScrollView.visibility = View.GONE' in b
+          assert 'verticalRecyclerView?.visibility = View.VISIBLE' in b
+          assert 'renderContinuousWindow(' not in b
+          P2
+          pass 42 'RecyclerView virtualized continuous reader + focus anti-rollback preserved'
+          printf 'ALL_42_GATES_PASS\n'
+          ''').replace('          ', '')
+          g.chmod(0o755)
+          PY
+      - name: Commit v755 source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/build.gradle.kts .github/workflows/android-release-v2.yml tools/v755-42-gates.sh
+          if git diff --cached --quiet; then
+            echo "v755 patch already applied"
+            exit 0
+          fi
+          git commit -m "v755: preserve explicit search navigation across focus restore"
+          git push origin HEAD:source-v755
