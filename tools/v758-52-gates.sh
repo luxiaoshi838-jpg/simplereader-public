@@ -6,8 +6,9 @@ cd "$ROOT"
 # V758 intentionally inherits every V757 gate. Only two assertions need version-aware adaptation:
 # 1) version 757 -> 758;
 # 2) V757's `if (changed)` checkpoint shape becomes an equivalent same-page early-return shape.
-# The generated temporary script otherwise remains byte-for-byte the V757 suite.
-TMP="$(mktemp)"
+# Keep the generated script under tools/ so the inherited suite resolves its repository root exactly
+# like the original v757 script.
+TMP="$(mktemp tools/v758-52-generated.XXXXXX.sh)"
 trap 'rm -f "$TMP"' EXIT
 python3 - "$TMP" <<'PY'
 from pathlib import Path
