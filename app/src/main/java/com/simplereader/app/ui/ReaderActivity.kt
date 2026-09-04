@@ -128,6 +128,7 @@ class ReaderActivity : AppCompatActivity() {
     private var suspendedAnchorViewportPx: Int? = null
     private var lastStableSourceOffset: Int? = null
     private var verticalStateUnlockRunnable: Runnable? = null
+    private var progressCheckpointRunnable: Runnable? = null
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -204,6 +205,8 @@ class ReaderActivity : AppCompatActivity() {
         pagedReaderView.cancelNavigation()
         verticalRecyclerView?.stopScroll()
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
+        progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
+        progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
         stopAutoReading(false)
         super.onDestroy()
@@ -668,13 +671,19 @@ class ReaderActivity : AppCompatActivity() {
     internal fun verticalOnPageVisible(index: Int) {
         val pages = readerBook?.pages.orEmpty()
         if (index !in pages.indices) return
+        val changed = currentPageIndex != index
         currentPageIndex = index
         lastStableSourceOffset = pages[index].startOffset
         continuousWindowStartOffset = pages[index].startOffset
         continuousWindowEndOffset = pages[index].endOffset
         updateProgressUi()
+        if (changed) scheduleProgressCheckpoint(pages[index].startOffset)
     }
-    internal fun verticalOnUserDrag() { clearSearchHighlight() }
+    internal fun verticalOnUserDrag(): Int? {
+        val hitPage = activeSearchHit?.globalPageIndex
+        clearSearchHighlight()
+        return hitPage
+    }
     internal fun verticalHandleTouch(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             if (autoReading) stopAutoReading(false)
@@ -1186,27 +1195,26 @@ class ReaderActivity : AppCompatActivity() {
         val suspended = suspendedAnchorOffset?.coerceIn(0, paged.text.length)
         val visibleIndex = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
         val visible = paged.pages.getOrNull(visibleIndex)?.startOffset
-        if (verticalWindowSuspended) return suspended ?: visible ?: stable ?: current
+        if (verticalWindowSuspended || verticalProgrammaticScroll) {
+            return stable ?: suspended ?: visible ?: current
+        }
 
-        // If RecyclerView transiently reports position 0 while our last committed source anchor is
-        // later in the book, keep the committed anchor. A real user return to page 1 updates
-        // lastStableSourceOffset to 0 through verticalOnPageVisible before pause.
+        // Stable source is authoritative if RecyclerView is transiently reporting an older/zero row
+        // during layout. A genuine user move commits through verticalOnPageVisible first.
         return when {
             visible == 0 && stable != null && stable > 0 -> stable
             visible != null -> visible
-            suspended != null -> suspended
             stable != null -> stable
+            suspended != null -> suspended
             else -> current
         }
     }
 
-    private fun saveProgress() {
-        val paged = readerBook ?: return
-        val sourceOffset = stableProgressSourceOffset() ?: return
+    private fun progressSnapshotForOffset(sourceOffset: Int): ReadProgress? {
+        val paged = readerBook ?: return null
+        if (paged.pages.isEmpty()) return null
         val page = paged.pageForOffset(sourceOffset.coerceIn(0, paged.text.length))
-        currentPageIndex = page.globalPageIndex
-        lastStableSourceOffset = page.startOffset
-        val snapshot = ReadProgress(
+        return ReadProgress(
             bookId = bookId,
             position = page.startOffset.toString(),
             locatorType = "PAGE_ENGINE_V3",
@@ -1220,8 +1228,27 @@ class ReaderActivity : AppCompatActivity() {
             pageIndexInChapter = page.pageIndexInChapter,
             startOffset = page.startOffset
         )
-        // Do not bind this final write to Activity lifecycle: a user may leave immediately after a
-        // freeze/focus transition and onDestroy must not cancel the last valid progress snapshot.
+    }
+
+    private fun scheduleProgressCheckpoint(sourceOffset: Int) {
+        progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
+        progressCheckpointRunnable = Runnable {
+            progressCheckpointRunnable = null
+            val snapshot = progressSnapshotForOffset(sourceOffset) ?: return@Runnable
+            lifecycleScope.launch(Dispatchers.IO) {
+                database.readProgressDao().insert(snapshot)
+                database.bookDao().updateLastReadTime(bookId, System.currentTimeMillis())
+            }
+        }.also { mainHandler.postDelayed(it, PROGRESS_CHECKPOINT_DELAY_MS) }
+    }
+
+    private fun saveProgress() {
+        progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
+        progressCheckpointRunnable = null
+        val sourceOffset = stableProgressSourceOffset() ?: return
+        val snapshot = progressSnapshotForOffset(sourceOffset) ?: return
+        // Final write survives Activity destruction. The snapshot is immutable and does not rewrite
+        // currentPageIndex/lastStableSourceOffset, so persistence cannot move the live reader.
         (application as App).applicationScope.launch {
             database.readProgressDao().insert(snapshot)
             database.bookDao().updateLastReadTime(bookId, System.currentTimeMillis())
@@ -1294,11 +1321,14 @@ class ReaderActivity : AppCompatActivity() {
     private fun currentVisibleSourceOffset(): Int {
         val paged = readerBook ?: return 0
         if (pageTurnMode == TURN_MODE_VERTICAL) {
+            if (verticalWindowSuspended || verticalProgrammaticScroll) {
+                lastStableSourceOffset?.coerceIn(0, paged.text.length)?.let { return it }
+            }
             val index = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
             if (index in paged.pages.indices) return paged.pages[index].startOffset
         }
-        return paged.pages.getOrNull(currentPageIndex)?.startOffset
-            ?: lastStableSourceOffset?.coerceIn(0, paged.text.length)
+        return lastStableSourceOffset?.coerceIn(0, paged.text.length)
+            ?: paged.pages.getOrNull(currentPageIndex)?.startOffset
             ?: 0
     }
 
@@ -1525,10 +1555,15 @@ class ReaderActivity : AppCompatActivity() {
             if (rv != null && pageTurnMode == TURN_MODE_VERTICAL) {
                 val pages = readerBook?.pages.orEmpty()
                 val index = verticalLayoutManager?.findFirstVisibleItemPosition() ?: -1
-                if (index in pages.indices) {
-                    suspendedAnchorOffset = pages[index].startOffset
-                    suspendedAnchorViewportPx = verticalLayoutManager?.findViewByPosition(index)?.top ?: 0
-                    lastStableSourceOffset = suspendedAnchorOffset
+                val visibleOffset = pages.getOrNull(index)?.startOffset
+                val anchorOffset = lastStableSourceOffset?.coerceIn(0, readerBook?.text?.length ?: Int.MAX_VALUE)
+                    ?: visibleOffset
+                if (anchorOffset != null) {
+                    suspendedAnchorOffset = anchorOffset
+                    val anchorPageIndex = readerBook?.pageForOffset(anchorOffset)?.globalPageIndex
+                    suspendedAnchorViewportPx = if (anchorPageIndex == index) {
+                        verticalLayoutManager?.findViewByPosition(index)?.top ?: 0
+                    } else 0
                 }
             }
             verticalWindowSuspended = true
@@ -1544,7 +1579,6 @@ class ReaderActivity : AppCompatActivity() {
                 if (pageIndex != null) {
                     verticalProgrammaticScroll = true
                     currentPageIndex = pageIndex
-                    lastStableSourceOffset = anchorOffset
                     verticalLayoutManager?.scrollToPositionWithOffset(pageIndex, viewportOffset)
                 }
             }

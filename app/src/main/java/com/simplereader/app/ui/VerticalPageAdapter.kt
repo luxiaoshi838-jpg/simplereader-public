@@ -1,5 +1,8 @@
 package com.simplereader.app.ui
 
+import android.graphics.Color
+import android.text.Spannable
+import android.text.style.BackgroundColorSpan
 import android.util.LruCache
 import android.view.ViewGroup
 import android.widget.TextView
@@ -69,14 +72,16 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
      * currently visible ReaderPage rows. Item count/order and LayoutManager position are untouched,
      * so this cannot become a source-offset restore or reading-position jump.
      */
-    fun clearTransientSearchHighlight(recyclerView: RecyclerView) {
-        rendered.evictAll()
-        val manager = recyclerView.layoutManager as? LinearLayoutManager ?: return
-        val first = manager.findFirstVisibleItemPosition()
-        val last = manager.findLastVisibleItemPosition()
-        if (first >= 0 && last >= first) {
-            notifyItemRangeChanged(first, last - first + 1)
-        }
+    fun clearTransientSearchHighlight(recyclerView: RecyclerView, position: Int) {
+        if (position < 0) return
+        rendered.remove(position)
+        val holder = recyclerView.findViewHolderForAdapterPosition(position) as? VerticalPageHolder ?: return
+        val text = holder.textView.text as? Spannable ?: return
+        val searchColor = Color.rgb(255, 226, 105)
+        text.getSpans(0, text.length, BackgroundColorSpan::class.java)
+            .filter { it.backgroundColor == searchColor }
+            .forEach(text::removeSpan)
+        holder.textView.invalidate()
     }
 }
 
@@ -96,11 +101,10 @@ class VerticalScrollListener(
 
     override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
         if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-            activity.verticalOnUserDrag()
-            // Post the adapter rebind outside RecyclerView's scroll callback to avoid mutating
-            // adapter state while RecyclerView may still be computing a layout.
-            recyclerView.post {
-                (recyclerView.adapter as? VerticalPageAdapter)?.clearTransientSearchHighlight(recyclerView)
+            val hitPage = activity.verticalOnUserDrag()
+            if (hitPage != null) {
+                (recyclerView.adapter as? VerticalPageAdapter)
+                    ?.clearTransientSearchHighlight(recyclerView, hitPage)
             }
         }
     }
