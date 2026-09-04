@@ -1789,5 +1789,6 @@ class ReaderActivity : AppCompatActivity() {
         private const val AUTO_READ_STEP_CPM = 50
         private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
         private const val VERTICAL_STATE_UNLOCK_GUARD_MS = 900L
+        private const val PROGRESS_CHECKPOINT_DELAY_MS = 600L
     }
 }
