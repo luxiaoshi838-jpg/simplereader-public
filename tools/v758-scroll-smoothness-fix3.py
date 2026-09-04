@@ -2,11 +2,18 @@ from pathlib import Path
 import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
+release_workflow_path = ROOT / '.github/workflows/android-release-v2.yml'
+original_release_workflow = release_workflow_path.read_text(encoding='utf-8')
 
-# Apply the hardened V758 patch, then deliberately restore V757's validated 32-page bounded
-# render-cache contract. Cache expansion was optional and is not required for the jank fix.
+# Apply the hardened V758 source patch. The helper also drafts the v758 release workflow, but a
+# GitHub Actions token is not allowed to push workflow-file changes in this repository. Preserve
+# the validated source/build/log changes here and restore the workflow byte-for-byte; the workflow
+# is updated separately through the authorized GitHub file API after the source commit lands.
 runpy.run_path(str(ROOT / 'tools/v758-scroll-smoothness-fix2.py'), run_name='__main__')
+release_workflow_path.write_text(original_release_workflow, encoding='utf-8')
 
+# Deliberately preserve V757's validated 32-page bounded render-cache contract. Cache expansion
+# was optional and is not required for the jank fix.
 adapter_path = ROOT / 'app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt'
 adapter = adapter_path.read_text(encoding='utf-8')
 adapter = adapter.replace(
@@ -16,22 +23,6 @@ adapter = adapter.replace(
 if 'LruCache<Int, CharSequence>(32)' not in adapter:
     raise SystemExit('v758: failed to restore V757 bounded render-cache contract')
 adapter_path.write_text(adapter, encoding='utf-8')
-
-# The V757 suite hard-codes version 757 and one old checkpoint source shape. The V758 wrapper
-# inherits all 52 gates while adapting only those two assertions. Use it in the release workflow.
-workflow_path = ROOT / '.github/workflows/android-release-v2.yml'
-workflow = workflow_path.read_text(encoding='utf-8')
-workflow = workflow.replace(
-    'chmod +x ./gradlew tools/v757-52-gates.sh tools/v758-scroll-smoothness-gates.sh',
-    'chmod +x ./gradlew tools/v758-52-gates.sh tools/v758-scroll-smoothness-gates.sh',
-)
-workflow = workflow.replace(
-    '      - name: Run v757 stability gates\n        run: bash tools/v757-52-gates.sh',
-    '      - name: Run v758 inherited 52 stability gates\n        run: bash tools/v758-52-gates.sh',
-)
-if 'bash tools/v758-52-gates.sh' not in workflow:
-    raise SystemExit('v758: release workflow did not switch to inherited 52-gate wrapper')
-workflow_path.write_text(workflow, encoding='utf-8')
 
 log_path = ROOT / 'TXT_READER_RENDERING_MAINTENANCE_LOG.md'
 log = log_path.read_text(encoding='utf-8')
@@ -45,4 +36,4 @@ log = log.replace(
 )
 log_path.write_text(log, encoding='utf-8')
 
-print('v758 smoothness patch v3 applied; V757 cache contract preserved; V758 52 gates wired')
+print('v758 smoothness source patch applied; V757 cache contract preserved; release workflow deferred')
