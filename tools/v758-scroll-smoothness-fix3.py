@@ -17,6 +17,22 @@ if 'LruCache<Int, CharSequence>(32)' not in adapter:
     raise SystemExit('v758: failed to restore V757 bounded render-cache contract')
 adapter_path.write_text(adapter, encoding='utf-8')
 
+# The V757 suite hard-codes version 757 and one old checkpoint source shape. The V758 wrapper
+# inherits all 52 gates while adapting only those two assertions. Use it in the release workflow.
+workflow_path = ROOT / '.github/workflows/android-release-v2.yml'
+workflow = workflow_path.read_text(encoding='utf-8')
+workflow = workflow.replace(
+    'chmod +x ./gradlew tools/v757-52-gates.sh tools/v758-scroll-smoothness-gates.sh',
+    'chmod +x ./gradlew tools/v758-52-gates.sh tools/v758-scroll-smoothness-gates.sh',
+)
+workflow = workflow.replace(
+    '      - name: Run v757 stability gates\n        run: bash tools/v757-52-gates.sh',
+    '      - name: Run v758 inherited 52 stability gates\n        run: bash tools/v758-52-gates.sh',
+)
+if 'bash tools/v758-52-gates.sh' not in workflow:
+    raise SystemExit('v758: release workflow did not switch to inherited 52-gate wrapper')
+workflow_path.write_text(workflow, encoding='utf-8')
+
 log_path = ROOT / 'TXT_READER_RENDERING_MAINTENANCE_LOG.md'
 log = log_path.read_text(encoding='utf-8')
 log = log.replace(
@@ -29,4 +45,4 @@ log = log.replace(
 )
 log_path.write_text(log, encoding='utf-8')
 
-print('v758 smoothness patch v3 applied; V757 cache contract preserved')
+print('v758 smoothness patch v3 applied; V757 cache contract preserved; V758 52 gates wired')
