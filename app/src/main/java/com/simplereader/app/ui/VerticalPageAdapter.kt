@@ -1,6 +1,7 @@
 package com.simplereader.app.ui
 
 import android.graphics.Color
+import android.text.Layout
 import android.text.Spannable
 import android.text.style.BackgroundColorSpan
 import android.util.LruCache
@@ -24,6 +25,10 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
                 RecyclerView.LayoutParams.WRAP_CONTENT
             )
             includeFontPadding = false
+            // Chinese novel rows do not need balanced breaking or hyphenation. SIMPLE keeps
+            // TextView measurement cheap when RecyclerView prepares the next page.
+            breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         }
         return VerticalPageHolder(text)
     }
@@ -89,11 +94,14 @@ class VerticalScrollListener(
     private val activity: ReaderActivity,
     private val layoutManager: LinearLayoutManager
 ) : RecyclerView.OnScrollListener() {
+    private var lastReportedIndex = RecyclerView.NO_POSITION
+
     override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
         if (activity.verticalShouldIgnoreScroll()) return
         val index = layoutManager.findFirstCompletelyVisibleItemPosition().takeIf { it >= 0 }
             ?: layoutManager.findFirstVisibleItemPosition()
-        if (index >= 0) {
+        if (index >= 0 && index != lastReportedIndex) {
+            lastReportedIndex = index
             activity.verticalShowBoundaryHaze()
             activity.verticalOnPageVisible(index)
         }

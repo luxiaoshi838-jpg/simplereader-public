@@ -129,6 +129,7 @@ class ReaderActivity : AppCompatActivity() {
     private var lastStableSourceOffset: Int? = null
     private var verticalStateUnlockRunnable: Runnable? = null
     private var progressCheckpointRunnable: Runnable? = null
+    private var lastDisplayedChapterTitle: String? = null
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -670,14 +671,15 @@ class ReaderActivity : AppCompatActivity() {
     }
     internal fun verticalOnPageVisible(index: Int) {
         val pages = readerBook?.pages.orEmpty()
-        if (index !in pages.indices) return
-        val changed = currentPageIndex != index
+        // RecyclerView emits pixel-level onScrolled callbacks. Reader state changes only when a
+        // different ReaderPage becomes the first visible page, so do no UI work inside one page.
+        if (index !in pages.indices || currentPageIndex == index) return
         currentPageIndex = index
         lastStableSourceOffset = pages[index].startOffset
         continuousWindowStartOffset = pages[index].startOffset
         continuousWindowEndOffset = pages[index].endOffset
         updateProgressUi()
-        if (changed) scheduleProgressCheckpoint(pages[index].startOffset)
+        scheduleProgressCheckpoint(pages[index].startOffset)
     }
     internal fun verticalOnUserDrag(): Int? {
         val hitPage = activeSearchHit?.globalPageIndex
@@ -1416,13 +1418,13 @@ class ReaderActivity : AppCompatActivity() {
         val paged = readerBook ?: return
         val page = paged.pages.getOrNull(currentPageIndex) ?: return
         val rawTitle = paged.chapters.getOrNull(page.chapterIndex)?.title.orEmpty().trim()
-        val explicitChapter = Regex(
-            "第\\s*[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*(?:单元|章|节|篇|部|卷|回|集)"
-        ).find(rawTitle)
+        val explicitChapter = EXPLICIT_CHAPTER_REGEX.find(rawTitle)
         val chapterTitle = (explicitChapter?.let { rawTitle.substring(it.range.first) }
-            ?: rawTitle.replace(Regex("^\\s*\\d+[.、．]\\s*"), ""))
+            ?: LEADING_NUMERIC_TITLE_REGEX.replace(rawTitle, ""))
             .trim()
             .ifBlank { book?.title.orEmpty() }
+        if (chapterTitle == lastDisplayedChapterTitle) return
+        lastDisplayedChapterTitle = chapterTitle
         title = chapterTitle
         supportActionBar?.title = chapterTitle
     }
@@ -1790,5 +1792,9 @@ class ReaderActivity : AppCompatActivity() {
         private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
         private const val VERTICAL_STATE_UNLOCK_GUARD_MS = 900L
         private const val PROGRESS_CHECKPOINT_DELAY_MS = 600L
+        private val EXPLICIT_CHAPTER_REGEX = Regex(
+            "第\\s*[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*(?:单元|章|节|篇|部|卷|回|集)"
+        )
+        private val LEADING_NUMERIC_TITLE_REGEX = Regex("^\\s*\\d+[.、．]\\s*")
     }
 }

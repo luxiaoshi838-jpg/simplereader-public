@@ -66,3 +66,29 @@ V756 仍可能出现：
 - 分支：`source-v757`
 - V757 相对 `source-v756` 的修改已全部提交到 GitHub 公开仓库。
 - V757 新增 `tools/v757-52-gates.sh`，用于锁定卡死修复、稳定进度锚点、高亮清除和原有防回弹架构。
+
+
+## 2026-09-04 — V758
+
+### 问题
+V757 已解决“滑动后偶发卡死/异常退出进度回退”，但用户真机继续反馈：竖向正常滑动时卡顿感很强，连续滑动和快速甩动不够跟手。
+
+### 审计定位
+1. `VerticalScrollListener.onScrolled()` 在像素级滚动回调里反复调用 `verticalShowBoundaryHaze()`，持续 cancel/start 两个 View 动画并 remove/post Handler 回调。
+2. 同一回调持续调用 `verticalOnPageVisible()`；即使可见页未变化，V757 仍执行 `updateProgressUi()`，重复刷新进度 TextView、SeekBar、章节标题和 action bar。
+3. `updateCurrentChapterTitle()` 每次重新构造两个 Regex，并重复写入相同标题。
+4. RecyclerView 页 TextView 使用默认段落断行/连字符策略，中文小说滚动无需这部分布局成本。
+5. 审计曾考虑扩大 32 页 LRU，但该容量属于 V757 已验证的稳定性契约；V758 最终不改容量，把优化集中在每帧主线程工作。
+
+### V758 修法
+- `VerticalScrollListener` 增加 `lastReportedIndex`，只有第一可见 `ReaderPage` 真正改变时才提交页位置与边界雾效果；同一页内像素滚动不做这些工作。
+- `verticalOnPageVisible()` 对相同 `currentPageIndex` 立即返回，只在跨页时更新稳定 source offset、进度 UI 与 600 ms checkpoint；V757 进度稳定规则不变。
+- 章节正则提升为 companion 单例并缓存 `lastDisplayedChapterTitle`；章节不变时不再重复写 Activity/action bar。
+- 垂直页 TextView 使用 `BREAK_STRATEGY_SIMPLE` 与 `HYPHENATION_FREQUENCY_NONE`，降低 RecyclerView 预取/测量下一页时的文字布局开销，不改变字体、行距、分页 offset 或章节样式。
+- 页渲染 LRU 保持 V757 已验证的 32 页有界缓存；本次不通过扩大缓存换取流畅度，避免增加内存压力并保持旧稳定性 Gate 13。
+
+### 禁止回归
+- 禁止同一可见页内每个 `onScrolled` 回调刷新进度、章节标题或重启边界雾动画。
+- 禁止恢复每像素 `verticalShowBoundaryHaze()`。
+- 禁止退回 `NestedScrollView + 整本 TextView` 主路径。
+- 必须继续通过 V757 稳定性 gates，搜索高亮清除、稳定进度锚点与 checkpoint 不得退化。
