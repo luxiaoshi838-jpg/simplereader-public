@@ -70,6 +70,6 @@ PY
 
 grep -Fq 'versionCode = generatedVersionCode' "$build"
 grep -Fq 'applicationId = "com.simplereader.app"' "$build"
-grep -Fq 'bash tools/v757-52-gates.sh' "$workflow"
+grep -Fq 'bash tools/v758-52-gates.sh' "$workflow"
 
 echo 'v758 all static gates passed'
