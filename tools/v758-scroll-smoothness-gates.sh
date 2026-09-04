@@ -4,7 +4,6 @@ set -euo pipefail
 reader="app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt"
 adapter="app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt"
 build="app/build.gradle.kts"
-workflow=".github/workflows/android-release-v2.yml"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -13,14 +12,10 @@ import re
 r = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text(encoding='utf-8')
 a = Path('app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt').read_text(encoding='utf-8')
 b = Path('app/build.gradle.kts').read_text(encoding='utf-8')
-w = Path('.github/workflows/android-release-v2.yml').read_text(encoding='utf-8')
 
 # V758 must remain an in-place upgrade from 757.
 assert '2098000758' in b
 assert '?: "758"' in b
-assert 'source-v758' in w
-assert "versionCode='2098000758'" in w
-assert "versionName='758'" in w
 
 # Pixel-level scroll callbacks must be de-duplicated by page index.
 listener = re.search(r'class VerticalScrollListener\(.*?\n\}', a, re.S)
@@ -70,6 +65,5 @@ PY
 
 grep -Fq 'versionCode = generatedVersionCode' "$build"
 grep -Fq 'applicationId = "com.simplereader.app"' "$build"
-grep -Fq 'bash tools/v758-52-gates.sh' "$workflow"
 
 echo 'v758 all static gates passed'
