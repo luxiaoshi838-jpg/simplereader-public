@@ -53,7 +53,10 @@ assert 'private val LEADING_NUMERIC_TITLE_REGEX' in r
 # Vertical row layout should use the cheap, deterministic Android text-break path.
 assert 'breakStrategy = Layout.BREAK_STRATEGY_SIMPLE' in a
 assert 'hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE' in a
-assert 'LruCache<Int, CharSequence>(64)' in a
+
+# Preserve V757's validated bounded-cache contract rather than increasing memory pressure.
+assert 'LruCache<Int, CharSequence>(32)' in a
+assert 'LruCache<Int, CharSequence>(64)' not in a
 
 # V757's critical anti-freeze behavior must remain intact.
 clear = re.search(r'fun clearTransientSearchHighlight\(recyclerView: RecyclerView, position: Int\) \{(.*?)\n    \}', a, re.S)
