@@ -7,6 +7,7 @@ on:
     paths:
       - tools/v758-scroll-smoothness-fix3.py
       - tools/v758-scroll-smoothness-fix2.py
+      - tools/v758-52-gates.sh
       - tools/v758-scroll-smoothness-gates.sh
       - .github/workflows/v758-apply-scroll-smoothness.yml
   workflow_dispatch:
@@ -27,10 +28,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Verify v757 baseline before modification
+        run: bash tools/v757-52-gates.sh
       - name: Apply v758 source patch
         run: python3 tools/v758-scroll-smoothness-fix3.py
-      - name: Preserve v757 stability gates
-        run: bash tools/v757-52-gates.sh
+      - name: Run v758 inherited 52 stability gates
+        run: bash tools/v758-52-gates.sh
       - name: Verify v758 smoothness gates
         run: bash tools/v758-scroll-smoothness-gates.sh
       - name: Diff check
