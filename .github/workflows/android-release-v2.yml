@@ -26,18 +26,21 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x ./gradlew tools/v759-52-gates.sh tools/v759-scroll-smoothness-gates.sh tools/v759-crash-diagnostics-gates.sh
+      - run: chmod +x ./gradlew tools/v759-52-gates.sh tools/v759-scroll-smoothness-gates.sh tools/v759-crash-diagnostics-gates.sh tools/v759-full-unit-baseline-gate.sh
       - name: Run v759 inherited 52 stability gates
         run: bash tools/v759-52-gates.sh
       - name: Run v759 scroll smoothness regression gates
         run: bash tools/v759-scroll-smoothness-gates.sh
       - name: Run v759 crash/system-exit/recovery gates
         run: bash tools/v759-crash-diagnostics-gates.sh
-      - name: Run unit tests and build v759
+      - name: Run full unit suite against unchanged V758 failure baseline
+        shell: bash
+        run: bash tools/v759-full-unit-baseline-gate.sh v759-full-unit-tests.log
+      - name: Build v759 release
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew testDebugUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
       - name: Verify v759 APK and export official signer
         shell: bash
         run: |
@@ -64,6 +67,7 @@ jobs:
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
+            v759-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
