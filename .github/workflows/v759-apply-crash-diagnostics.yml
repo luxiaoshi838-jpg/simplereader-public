@@ -1,0 +1,63 @@
+name: Apply 简阅 v759 异常退出诊断与位置保护
+
+on:
+  push:
+    branches:
+      - source-v759
+    paths:
+      - app/src/main/java/com/simplereader/app/App.kt
+      - app/src/main/java/com/simplereader/app/crash/CrashLogStore.kt
+      - tools/v759-crash-diagnostics-fix.py
+      - tools/v759-52-gates.sh
+      - tools/v759-scroll-smoothness-gates.sh
+      - tools/v759-crash-diagnostics-gates.sh
+      - .github/workflows/v759-apply-crash-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[v759 applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source-v759
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify V758 reader stability before V759 position patch
+        run: |
+          bash tools/v758-52-gates.sh
+          bash tools/v758-scroll-smoothness-gates.sh
+      - name: Apply V759 crash diagnostics and recovery patch
+        run: python3 tools/v759-crash-diagnostics-fix.py
+      - name: Run V759 inherited stability gates
+        run: bash tools/v759-52-gates.sh
+      - name: Run V759 smoothness regression gates
+        run: bash tools/v759-scroll-smoothness-gates.sh
+      - name: Run V759 crash/system-exit/recovery gates
+        run: bash tools/v759-crash-diagnostics-gates.sh
+      - name: Diff check
+        run: git diff --check
+      - name: Commit patched V759 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/build.gradle.kts \
+                  app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+                  app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
+                  app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+                  TXT_READER_RENDERING_MAINTENANCE_LOG.md
+          git commit -m 'v759 persist abnormal exits and protect recovery anchor [v759 applied]'
+          git push origin HEAD:source-v759
