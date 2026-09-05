@@ -1,18 +1,18 @@
-name: Build 简阅 v759
+name: Build 简阅 v760
 
 on:
   push:
     branches:
-      - source-v759
+      - source-v760
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000759"
-  SIMPLE_READER_VERSION_NAME: "759"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v759_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000760"
+  SIMPLE_READER_VERSION_NAME: "760"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v760_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -21,27 +21,44 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: source-v760
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x ./gradlew tools/v759-52-gates.sh tools/v759-scroll-smoothness-gates.sh tools/v759-crash-diagnostics-gates.sh tools/v759-full-unit-baseline-gate.sh
-      - name: Run v759 inherited 52 stability gates
-        run: bash tools/v759-52-gates.sh
-      - name: Run v759 scroll smoothness regression gates
-        run: bash tools/v759-scroll-smoothness-gates.sh
-      - name: Run v759 crash/system-exit/recovery gates
-        run: bash tools/v759-crash-diagnostics-gates.sh
+      - name: Apply v760 hot-path isolation patch
+        run: python3 tools/apply-v760-hotpath.py
+      - run: chmod +x ./gradlew tools/v760-52-gates.sh tools/v760-scroll-hotpath-gates.sh tools/v760-crash-diagnostics-gates.sh tools/v760-full-unit-baseline-gate.sh
+      - name: Run v760 inherited 52 stability gates
+        run: bash tools/v760-52-gates.sh
+      - name: Run v760 scroll hot-path isolation gates
+        run: bash tools/v760-scroll-hotpath-gates.sh
+      - name: Run v760 crash/system-exit/recovery gates
+        run: bash tools/v760-crash-diagnostics-gates.sh
+      - name: Persist verified v760 source changes
+        shell: bash
+        run: |
+          if git diff --quiet -- app/build.gradle.kts app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt; then
+            echo 'v760 source already persisted.'
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/build.gradle.kts app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt
+          git commit -m 'v760：移除滚动热路径诊断IO并改为空闲落盘 [skip ci]'
+          git push origin HEAD:source-v760
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v759-full-unit-baseline-gate.sh v759-full-unit-tests.log
-      - name: Build v759 release
+        run: bash tools/v760-full-unit-baseline-gate.sh v760-full-unit-tests.log
+      - name: Build v760 release
         shell: bash
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v759 APK and export official signer
+      - name: Verify v760 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -51,8 +68,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000759'" apk-package-info.txt
-          grep -Fq "versionName='759'" apk-package-info.txt
+          grep -Fq "versionCode='2098000760'" apk-package-info.txt
+          grep -Fq "versionName='760'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -62,12 +79,12 @@ jobs:
           chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v759-${{ github.run_number }}
+          name: SimpleReader-v760-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v759-full-unit-tests.log
+            v760-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
