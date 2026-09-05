@@ -1,0 +1,52 @@
+name: Apply 简阅 v759 全量单测兼容修正
+
+on:
+  push:
+    branches:
+      - source-v759
+    paths:
+      - tools/v759-baseline-compat-fix.py
+      - .github/workflows/v759-apply-baseline-compat.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[v759 baseline compat applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source-v759
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply V759 baseline compatibility fix
+        run: python3 tools/v759-baseline-compat-fix.py
+      - name: Re-run V759 diagnostic and stability gates
+        run: |
+          bash tools/v759-52-gates.sh
+          bash tools/v759-scroll-smoothness-gates.sh
+          bash tools/v759-crash-diagnostics-gates.sh
+      - name: Diff check
+        run: git diff --check
+      - name: Commit fixed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+                  tools/v759-crash-diagnostics-gates.sh \
+                  tools/v759-crash-diagnostics-fix.py \
+                  TXT_READER_RENDERING_MAINTENANCE_LOG.md
+          git commit -m 'v759 keep crash-log title backward-compatible [v759 baseline compat applied]'
+          git push origin HEAD:source-v759
