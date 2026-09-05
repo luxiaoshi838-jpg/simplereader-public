@@ -131,6 +131,7 @@ class ReaderActivity : AppCompatActivity() {
     private var verticalStateUnlockRunnable: Runnable? = null
     private var progressCheckpointRunnable: Runnable? = null
     private var lastDisplayedChapterTitle: String? = null
+    private var pendingVerticalDiagnosticEvent: String? = null
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -199,6 +200,9 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onPause() {
         stopAutoReading(false)
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            persistVerticalDiagnosticState("vertical_pause", force = true)
+        }
         CrashLogStore.recordEvent(this, "ReaderActivity.onPause book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset")
         saveProgress()
         super.onPause()
@@ -706,10 +710,6 @@ class ReaderActivity : AppCompatActivity() {
         lastStableSourceOffset = pages[index].startOffset
         continuousWindowStartOffset = pages[index].startOffset
         continuousWindowEndOffset = pages[index].endOffset
-        CrashLogStore.recordReaderPosition(
-            this, bookId, index, pages.size, pages[index].startOffset,
-            pageTurnMode, "vertical_page", force = false
-        )
         updateProgressUi()
         scheduleProgressCheckpoint(pages[index].startOffset)
     }
@@ -721,11 +721,27 @@ class ReaderActivity : AppCompatActivity() {
             (dy < 0 && index > previousIndex + 2)
         val zeroTeleport = index == 0 && previousIndex >= 4 && dy >= 0
         if (!wrongDirectionJump && !zeroTeleport) return false
-        CrashLogStore.recordEvent(
-            this,
+        pendingVerticalDiagnosticEvent =
             "vertical_suppressed_position_reset book=$bookId from=$previousIndex to=$index dy=$dy current=$currentPageIndex stable=$lastStableSourceOffset"
-        )
         return true
+    }
+
+    private fun persistVerticalDiagnosticState(event: String, force: Boolean = false) {
+        val pages = readerBook?.pages.orEmpty()
+        val page = pages.getOrNull(currentPageIndex) ?: return
+        CrashLogStore.recordReaderPosition(
+            this, bookId, page.globalPageIndex, pages.size, page.startOffset,
+            pageTurnMode, event, force = force
+        )
+        pendingVerticalDiagnosticEvent?.let { diagnostic ->
+            pendingVerticalDiagnosticEvent = null
+            CrashLogStore.recordEvent(this, diagnostic)
+        }
+    }
+
+    internal fun verticalOnScrollIdle() {
+        if (pageTurnMode != TURN_MODE_VERTICAL || verticalShouldIgnoreScroll()) return
+        persistVerticalDiagnosticState("vertical_idle", force = false)
     }
 
     internal fun verticalOnUserDrag(): Int? {

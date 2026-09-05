@@ -115,6 +115,8 @@ class VerticalScrollListener(
                 (recyclerView.adapter as? VerticalPageAdapter)
                     ?.clearTransientSearchHighlight(recyclerView, hitPage)
             }
+        } else if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+            activity.verticalOnScrollIdle()
         }
     }
 }
