@@ -244,7 +244,7 @@ class MainActivity : AppCompatActivity() {
             addView(logView)
         }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("闪退/崩溃日志")
+            .setTitle("异常退出/闪退日志")
             .setView(content)
             .setPositiveButton("复制并清除", null)
             .setNegativeButton("暂不复制", null)
@@ -252,7 +252,7 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("简阅闪退日志", crashLog))
+                clipboard.setPrimaryClip(ClipData.newPlainText("简阅异常退出日志", crashLog))
                 CrashLogStore.clear(this)
                 Toast.makeText(this, "日志已复制并清除", Toast.LENGTH_SHORT).show()
                 dialog.dismiss()

@@ -43,6 +43,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.App
 import com.simplereader.app.R
+import com.simplereader.app.crash.CrashLogStore
 import com.simplereader.app.data.db.SimpleReaderDatabase
 import com.simplereader.app.data.entity.Book
 import com.simplereader.app.data.entity.Bookmark
@@ -185,6 +186,8 @@ class ReaderActivity : AppCompatActivity() {
         bookId = intent.getLongExtra("bookId", 0L)
 
         loadPreferences()
+        CrashLogStore.beginReaderSession(this, bookId, pageTurnMode)
+        CrashLogStore.recordEvent(this, "ReaderActivity.onCreate book=$bookId mode=$pageTurnMode")
         bindReaderInsets()
         applyReaderContentPadding()
         bindPagedReader()
@@ -196,6 +199,7 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onPause() {
         stopAutoReading(false)
+        CrashLogStore.recordEvent(this, "ReaderActivity.onPause book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset")
         saveProgress()
         super.onPause()
     }
@@ -210,6 +214,10 @@ class ReaderActivity : AppCompatActivity() {
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
         stopAutoReading(false)
+        CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
+        if (isFinishing && !isChangingConfigurations) {
+            CrashLogStore.finishReaderSession(this, bookId)
+        }
         super.onDestroy()
     }
 
@@ -370,6 +378,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun loadBook() {
         if (bookId <= 0L) return showFatal("书籍记录不存在")
+        CrashLogStore.recordEvent(this, "loadBook:start book=$bookId")
         lifecycleScope.launch {
             try {
                 val selected = withContext(Dispatchers.IO) { database.bookDao().getBook(bookId) }
@@ -391,6 +400,7 @@ class ReaderActivity : AppCompatActivity() {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
                 }
             } catch (error: Throwable) {
+                CrashLogStore.recordEvent(this@ReaderActivity, "loadBook:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()}")
                 showFatal(error.message ?: "打开书籍失败")
             }
         }
@@ -406,6 +416,7 @@ class ReaderActivity : AppCompatActivity() {
         paginationJob?.cancel()
         paginationInProgress = true
         progressLabel.text = "分页中…"
+        CrashLogStore.recordEvent(this, "paginate:start book=$bookId preserve=$preserveOffset stable=$lastStableSourceOffset")
         paginationJob = lifecycleScope.launch {
             try {
                 val settings = createLayoutSettings()
@@ -435,6 +446,7 @@ class ReaderActivity : AppCompatActivity() {
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
                 val stableOffset = preserveOffset
                     ?: lastStableSourceOffset
+                    ?: CrashLogStore.recoveryOffset(this@ReaderActivity, bookId)
                     ?: progress?.startOffset
                     ?: progress?.txtCharOffset
                     ?: progress?.position?.toIntOrNull()
@@ -445,6 +457,13 @@ class ReaderActivity : AppCompatActivity() {
                 }
                 currentPageIndex = target.coerceIn(0, paged.pages.lastIndex)
                 lastStableSourceOffset = paged.pages.getOrNull(currentPageIndex)?.startOffset
+                paged.pages.getOrNull(currentPageIndex)?.let { restored ->
+                    CrashLogStore.recordReaderPosition(
+                        this@ReaderActivity, bookId, restored.globalPageIndex, paged.pages.size,
+                        restored.startOffset, pageTurnMode, "paginate_success", force = true
+                    )
+                }
+                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:success book=$bookId pages=${paged.pages.size} target=$currentPageIndex stable=$lastStableSourceOffset cached=${cached != null}")
                 paginationInProgress = false
                 showActiveReader()
                 pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
@@ -464,6 +483,7 @@ class ReaderActivity : AppCompatActivity() {
                     }
                 }
             } catch (error: Throwable) {
+                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()} page=$currentPageIndex stable=$lastStableSourceOffset")
                 val rollback = pendingFontRollback
                 if (rollback != null) {
                     pendingFontRollback = null
@@ -612,12 +632,20 @@ class ReaderActivity : AppCompatActivity() {
         readerBottomHaze.visibility = View.GONE
         verticalProgrammaticScroll = true
         verticalAdapter?.setPages(paged.pages)
-        val offset = targetOffset ?: paged.pages.getOrNull(currentPageIndex)?.startOffset ?: 0
+        val offset = targetOffset
+            ?: lastStableSourceOffset?.takeIf { it in 0..paged.text.length }
+            ?: CrashLogStore.recoveryOffset(this, bookId)
+            ?: paged.pages.getOrNull(currentPageIndex)?.startOffset
+            ?: 0
         val page = paged.pageForOffset(offset)
         currentPageIndex = page.globalPageIndex
         lastStableSourceOffset = page.startOffset
         continuousWindowStartOffset = page.startOffset
         continuousWindowEndOffset = page.endOffset
+        CrashLogStore.recordReaderPosition(
+            this, bookId, page.globalPageIndex, paged.pages.size, page.startOffset,
+            pageTurnMode, "vertical_show", force = true
+        )
         verticalRecyclerView?.visibility = View.VISIBLE
         verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
         scheduleVerticalStateUnlockGuard()
@@ -678,9 +706,28 @@ class ReaderActivity : AppCompatActivity() {
         lastStableSourceOffset = pages[index].startOffset
         continuousWindowStartOffset = pages[index].startOffset
         continuousWindowEndOffset = pages[index].endOffset
+        CrashLogStore.recordReaderPosition(
+            this, bookId, index, pages.size, pages[index].startOffset,
+            pageTurnMode, "vertical_page", force = false
+        )
         updateProgressUi()
         scheduleProgressCheckpoint(pages[index].startOffset)
     }
+
+    internal fun verticalShouldSuppressReportedIndex(previousIndex: Int, index: Int, dy: Int): Boolean {
+        if (previousIndex < 0 || index < 0 || previousIndex == index) return false
+        val wrongDirectionJump =
+            (dy > 0 && index + 2 < previousIndex) ||
+            (dy < 0 && index > previousIndex + 2)
+        val zeroTeleport = index == 0 && previousIndex >= 4 && dy >= 0
+        if (!wrongDirectionJump && !zeroTeleport) return false
+        CrashLogStore.recordEvent(
+            this,
+            "vertical_suppressed_position_reset book=$bookId from=$previousIndex to=$index dy=$dy current=$currentPageIndex stable=$lastStableSourceOffset"
+        )
+        return true
+    }
+
     internal fun verticalOnUserDrag(): Int? {
         val hitPage = activeSearchHit?.globalPageIndex
         clearSearchHighlight()
@@ -740,7 +787,9 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showContinuousFallback(reason: String) {
         val loaded = document ?: return showFatal(reason)
-        val anchor = (lastStableSourceOffset ?: currentVisibleSourceOffset()).coerceIn(0, loaded.text.length)
+        val anchor = (lastStableSourceOffset
+            ?: CrashLogStore.recoveryOffset(this, bookId)
+            ?: currentVisibleSourceOffset()).coerceIn(0, loaded.text.length)
         var start = (anchor - CONTINUOUS_FALLBACK_CHARS / 2).coerceAtLeast(0)
         val end = (start + CONTINUOUS_FALLBACK_CHARS).coerceAtMost(loaded.text.length)
         start = (end - CONTINUOUS_FALLBACK_CHARS).coerceAtLeast(0)
@@ -1249,6 +1298,13 @@ class ReaderActivity : AppCompatActivity() {
         progressCheckpointRunnable = null
         val sourceOffset = stableProgressSourceOffset() ?: return
         val snapshot = progressSnapshotForOffset(sourceOffset) ?: return
+        readerBook?.let { paged ->
+            val page = paged.pageForOffset(sourceOffset)
+            CrashLogStore.recordReaderPosition(
+                this, bookId, page.globalPageIndex, paged.pages.size, page.startOffset,
+                pageTurnMode, "save_progress", force = true
+            )
+        }
         // Final write survives Activity destruction. The snapshot is immutable and does not rewrite
         // currentPageIndex/lastStableSourceOffset, so persistence cannot move the live reader.
         (application as App).applicationScope.launch {
@@ -1330,6 +1386,7 @@ class ReaderActivity : AppCompatActivity() {
             if (index in paged.pages.indices) return paged.pages[index].startOffset
         }
         return lastStableSourceOffset?.coerceIn(0, paged.text.length)
+            ?: CrashLogStore.recoveryOffset(this, bookId)?.coerceIn(0, paged.text.length)
             ?: paged.pages.getOrNull(currentPageIndex)?.startOffset
             ?: 0
     }
@@ -1551,6 +1608,7 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        CrashLogStore.recordEvent(this, "reader_focus hasFocus=$hasFocus book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset suspended=$verticalWindowSuspended programmatic=$verticalProgrammaticScroll")
         val rv = verticalRecyclerView
         if (!hasFocus) {
             cancelVerticalStateUnlockGuard()
@@ -1757,6 +1815,7 @@ class ReaderActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun showFatal(message: String) {
+        CrashLogStore.recordEvent(this, "showFatal book=$bookId message=${message.replace("\n", " ").take(500)}")
         AlertDialog.Builder(this)
             .setTitle("无法打开书籍")
             .setMessage("$message\n\n请恢复文件访问权限或重新导入该书。")

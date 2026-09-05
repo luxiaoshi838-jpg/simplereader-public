@@ -92,3 +92,28 @@ V757 已解决“滑动后偶发卡死/异常退出进度回退”，但用户�
 - 禁止恢复每像素 `verticalShowBoundaryHaze()`。
 - 禁止退回 `NestedScrollView + 整本 TextView` 主路径。
 - 必须继续通过 V757 稳定性 gates，搜索高亮清除、稳定进度锚点与 checkpoint 不得退化。
+
+
+## 2026-09-05 — V759
+
+### 用户仍然观察到的问题
+V758 真机仍会偶发“先突然明显卡顿，然后阅读位置闪到第一页，随后应用直接退出”。V758 已有的 CrashLogStore 只覆盖 Java/Kotlin `uncaughtException`，因此 ANR、native/signal 退出、系统低内存终止等进程级异常可能没有可见日志。
+
+### V759 诊断与保护
+- Android 11+ 启动时读取 `ApplicationExitInfo` 历史退出原因，记录 ANR、Java/native crash、signal、low-memory、excessive-resource 等系统级退出信息。
+- Java/Kotlin 未捕获异常日志继续保留，并新增 Java heap、系统内存、设备、线程、最后阅读状态。
+- 新增 `reader_recovery_state.json`：最后书籍、ReaderPage、sourceOffset、翻页模式独立于 Room 保存；写入通过单线程后台 executor 且限频，禁止在滚动主线程直接做磁盘 IO。
+- 新增 `reader_diagnostic_journal.txt` 保存关键生命周期/分页事件；异常退出后与系统退出原因一起展示。
+- 恢复顺序调整为：显式 preserveOffset → 内存稳定 offset → 未正常结束会话的 recovery offset → Room 进度 → 旧页号；避免异常链丢失稳定 offset 后直接回页0。
+- `showContinuousBook()`、分页失败 fallback、`currentVisibleSourceOffset()` 同样优先使用稳定/recovery offset，不再轻易落到 0。
+- RecyclerView 增加“明显违背滚动方向的跨页跳变/从高页无向下滚动依据瞬间报 row 0”保护；这种瞬时布局报告不会被提交为真实阅读位置，并写一条 `vertical_suppressed_position_reset` 诊断事件。
+- 主界面下次启动自动显示“异常退出/闪退日志”，用户可复制；暂不复制不会清除。
+
+### 仍需真机日志才能最终定位
+V759 的位置保护可以阻止一类 RecyclerView 瞬时 row-0 污染，但当前没有 V758 真机异常时的系统 exit reason/stack，因此不能把根因武断认定为某一行代码。V759 的首要目标是让下一次复现必然留下尽可能多的可用证据，然后依据 `退出原因 + 最后 ReaderPage/sourceOffset + 诊断流水 + Java stack（若有）` 做下一轮定点修复。
+
+### 禁止回归
+- 禁止把磁盘日志写入放进像素级 `onScrolled` 主线程路径。
+- 禁止异常恢复优先级退回无条件 page 0。
+- 禁止删除 V757 的稳定锚点/600 ms checkpoint 和 V758 的同页去重/轻量文本布局。
+- 禁止用扩大无界缓存解决此问题。

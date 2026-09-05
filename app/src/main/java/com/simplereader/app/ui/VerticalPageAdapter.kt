@@ -101,6 +101,7 @@ class VerticalScrollListener(
         val index = layoutManager.findFirstCompletelyVisibleItemPosition().takeIf { it >= 0 }
             ?: layoutManager.findFirstVisibleItemPosition()
         if (index >= 0 && index != lastReportedIndex) {
+            if (activity.verticalShouldSuppressReportedIndex(lastReportedIndex, index, dy)) return
             lastReportedIndex = index
             activity.verticalShowBoundaryHaze()
             activity.verticalOnPageVisible(index)
