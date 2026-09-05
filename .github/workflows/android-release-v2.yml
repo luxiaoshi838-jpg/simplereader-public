@@ -1,18 +1,18 @@
-name: Build 简阅 v758
+name: Build 简阅 v759
 
 on:
   push:
     branches:
-      - source-v758
+      - source-v759
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000758"
-  SIMPLE_READER_VERSION_NAME: "758"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v758_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000759"
+  SIMPLE_READER_VERSION_NAME: "759"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v759_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -26,17 +26,19 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x ./gradlew tools/v758-52-gates.sh tools/v758-scroll-smoothness-gates.sh
-      - name: Run v758 inherited 52 stability gates
-        run: bash tools/v758-52-gates.sh
-      - name: Run v758 scroll smoothness gates
-        run: bash tools/v758-scroll-smoothness-gates.sh
-      - name: Test changed behavior and build v758
+      - run: chmod +x ./gradlew tools/v759-52-gates.sh tools/v759-scroll-smoothness-gates.sh tools/v759-crash-diagnostics-gates.sh
+      - name: Run v759 inherited 52 stability gates
+        run: bash tools/v759-52-gates.sh
+      - name: Run v759 scroll smoothness regression gates
+        run: bash tools/v759-scroll-smoothness-gates.sh
+      - name: Run v759 crash/system-exit/recovery gates
+        run: bash tools/v759-crash-diagnostics-gates.sh
+      - name: Run unit tests and build v759
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew testDebugUnitTest --tests com.simplereader.app.parser.TxtCatalogRule112Test assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v758 APK and export official signer
+          ./gradlew testDebugUnitTest assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+      - name: Verify v759 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -46,8 +48,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000758'" apk-package-info.txt
-          grep -Fq "versionName='758'" apk-package-info.txt
+          grep -Fq "versionCode='2098000759'" apk-package-info.txt
+          grep -Fq "versionName='759'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -57,7 +59,7 @@ jobs:
           chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v758-${{ github.run_number }}
+          name: SimpleReader-v759-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
