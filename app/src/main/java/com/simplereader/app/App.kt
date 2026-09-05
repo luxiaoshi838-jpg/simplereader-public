@@ -18,6 +18,10 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // V759: Android 11+ may know that the previous process died from ANR/native crash/
+        // low-memory even when no Java uncaught-exception handler ran. Capture it before the new
+        // process starts another reader session, then install the live Java/Kotlin crash handler.
+        CrashLogStore.capturePreviousProcessExit(this)
         CrashLogStore.install(this)
     }
 }
