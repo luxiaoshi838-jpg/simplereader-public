@@ -1,0 +1,41 @@
+name: Compare V758 full unit-test baseline
+
+on:
+  push:
+    branches:
+      - source-v759
+    paths:
+      - .github/workflows/v759-v758-full-test-baseline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v758-full-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source-v758
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x ./gradlew
+      - name: Run unchanged V758 full unit-test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee v758-full-unit-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v758-full-unit-test-baseline
+          path: |
+            v758-full-unit-tests.log
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
