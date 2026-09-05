@@ -61,7 +61,7 @@ assert 'return' in body
 
 # The user must see the captured log after reopening the app.
 assert 'showPendingCrashLogIfNeeded()' in main
-assert '异常退出/闪退日志' in main
+assert '异常退出/闪退/崩溃日志' in main
 
 # Recovery/session logging is not allowed to replace the validated virtualized reader architecture.
 for token in ['RecyclerView(this)', 'LinearLayoutManager(this, RecyclerView.VERTICAL, false)', 'scrollToPositionWithOffset']:

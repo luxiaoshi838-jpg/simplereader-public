@@ -153,7 +153,7 @@ adapter_path.write_text(adapter, encoding='utf-8')
 
 main_path = ROOT / 'app/src/main/java/com/simplereader/app/ui/MainActivity.kt'
 main = main_path.read_text(encoding='utf-8')
-main = replace_once(main, '.setTitle("闪退/崩溃日志")', '.setTitle("异常退出/闪退日志")', 'crash dialog title')
+main = replace_once(main, '.setTitle("闪退/崩溃日志")', '.setTitle("异常退出/闪退/崩溃日志")', 'crash dialog title')
 main = replace_once(main, 'ClipData.newPlainText("简阅闪退日志", crashLog)', 'ClipData.newPlainText("简阅异常退出日志", crashLog)', 'clipboard crash label')
 main_path.write_text(main, encoding='utf-8')
 

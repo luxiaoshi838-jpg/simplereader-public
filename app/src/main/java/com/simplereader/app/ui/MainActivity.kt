@@ -244,7 +244,7 @@ class MainActivity : AppCompatActivity() {
             addView(logView)
         }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("异常退出/闪退日志")
+            .setTitle("异常退出/闪退/崩溃日志")
             .setView(content)
             .setPositiveButton("复制并清除", null)
             .setNegativeButton("暂不复制", null)
