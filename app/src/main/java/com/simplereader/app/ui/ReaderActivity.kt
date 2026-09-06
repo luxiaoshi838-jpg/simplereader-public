@@ -715,14 +715,21 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     internal fun verticalShouldSuppressReportedIndex(previousIndex: Int, index: Int, dy: Int): Boolean {
-        if (previousIndex < 0 || index < 0 || previousIndex == index) return false
+        if (index < 0) return false
+        val current = currentPageIndex
+        val baseline = when {
+            previousIndex >= 0 && kotlin.math.abs(previousIndex - current) <= 2 -> previousIndex
+            current >= 0 -> current
+            else -> previousIndex
+        }
+        if (baseline < 0 || baseline == index) return false
         val wrongDirectionJump =
-            (dy > 0 && index + 2 < previousIndex) ||
-            (dy < 0 && index > previousIndex + 2)
-        val zeroTeleport = index == 0 && previousIndex >= 4 && dy >= 0
+            (dy > 0 && index + 2 < baseline) ||
+            (dy < 0 && index > baseline + 2)
+        val zeroTeleport = index == 0 && baseline >= 4 && dy >= 0
         if (!wrongDirectionJump && !zeroTeleport) return false
         pendingVerticalDiagnosticEvent =
-            "vertical_suppressed_position_reset book=$bookId from=$previousIndex to=$index dy=$dy current=$currentPageIndex stable=$lastStableSourceOffset"
+            "vertical_suppressed_position_reset book=$bookId previous=$previousIndex baseline=$baseline to=$index dy=$dy current=$current stable=$lastStableSourceOffset"
         return true
     }
 
@@ -741,6 +748,21 @@ class ReaderActivity : AppCompatActivity() {
 
     internal fun verticalOnScrollIdle() {
         if (pageTurnMode != TURN_MODE_VERTICAL || verticalShouldIgnoreScroll()) return
+        val visibleIndex = verticalLayoutManager?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+        if (visibleIndex == 0 && currentPageIndex >= 4) {
+            val restoreIndex = currentPageIndex
+            pendingVerticalDiagnosticEvent =
+                "vertical_idle_recover_zero book=$bookId visible=$visibleIndex restore=$restoreIndex stable=$lastStableSourceOffset"
+            verticalProgrammaticScroll = true
+            verticalLayoutManager?.scrollToPositionWithOffset(restoreIndex, 0)
+            scheduleVerticalStateUnlockGuard()
+            verticalRecyclerView?.post {
+                verticalProgrammaticScroll = false
+                if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
+                persistVerticalDiagnosticState("vertical_idle_recovered_zero", force = false)
+            }
+            return
+        }
         persistVerticalDiagnosticState("vertical_idle", force = false)
     }
 

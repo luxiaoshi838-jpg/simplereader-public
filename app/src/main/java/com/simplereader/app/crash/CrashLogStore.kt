@@ -36,6 +36,7 @@ object CrashLogStore {
     private const val MAX_STACK_CHARS = 300_000
     private const val MAX_OOM_STACK_CHARS = 64_000
     private const val MAX_JOURNAL_CHARS = 96_000
+    private const val MAX_EXIT_TRACE_CHARS = 160_000
     private const val STATE_FLUSH_MIN_INTERVAL_MS = 850L
 
     @Volatile private var installed = false
@@ -120,6 +121,7 @@ object CrashLogStore {
 
         val state = readReaderState(appContext)
         val journal = readJournal(appContext)
+        val systemTrace = readExitTrace(abnormal)
         val section = buildString {
             appendLine("简阅异常进程退出记录（Android 系统）")
             appendLine("退出时间：${formatTimestamp(abnormal.timestamp)}")
@@ -137,9 +139,30 @@ object CrashLogStore {
                 appendLine("异常前诊断流水：")
                 append(journal.takeLast(MAX_JOURNAL_CHARS))
             }
+            if (systemTrace.isNotBlank()) {
+                appendLine()
+                appendLine()
+                appendLine("Android 系统退出 trace（截取）：")
+                append(systemTrace)
+            }
         }
         writePendingSection(appContext, section, preservePrevious = true)
     }
+
+    private fun readExitTrace(info: ApplicationExitInfo): String = runCatching {
+        val stream = info.traceInputStream ?: return@runCatching ""
+        stream.bufferedReader(Charsets.UTF_8).use { reader ->
+            val out = StringBuilder()
+            val buffer = CharArray(8192)
+            while (out.length < MAX_EXIT_TRACE_CHARS) {
+                val remaining = MAX_EXIT_TRACE_CHARS - out.length
+                val count = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                if (count <= 0) break
+                out.append(buffer, 0, count)
+            }
+            out.toString()
+        }
+    }.getOrDefault("")
 
     fun beginReaderSession(context: Context, bookId: Long, turnMode: String) {
         if (bookId <= 0L) return
