@@ -1,18 +1,18 @@
-name: Build 简阅 v762
+name: Build 简阅 v763
 
 on:
   push:
     branches:
-      - source-v762
+      - source-v763
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000762"
-  SIMPLE_READER_VERSION_NAME: "762"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v762_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000763"
+  SIMPLE_READER_VERSION_NAME: "763"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v763_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,41 +22,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v762
+          ref: source-v763
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Apply v762 memory attribution diagnostics
-        run: python3 tools/apply-v762-memory-diagnostics.py
-      - run: chmod +x ./gradlew tools/v762-52-gates.sh tools/v762-memory-diagnostic-gates.sh tools/v762-full-unit-baseline-gate.sh
-      - name: Run v762 inherited 52 stability gates
-        run: bash tools/v762-52-gates.sh
-      - name: Run v762 memory attribution and hot-path isolation gates
-        run: bash tools/v762-memory-diagnostic-gates.sh
-      - name: Persist verified v762 source changes
+      - name: Apply v763 memory release patch
+        run: python3 tools/apply-v763-memory-release.py
+      - run: chmod +x ./gradlew tools/v763-52-gates.sh tools/v763-memory-release-gates.sh tools/v763-full-unit-baseline-gate.sh
+      - name: Run v763 inherited 52 stability gates
+        run: bash tools/v763-52-gates.sh
+      - name: Run v763 memory-release and scroll-isolation gates
+        run: bash tools/v763-memory-release-gates.sh
+      - name: Verify source diff formatting
+        run: git diff --check
+      - name: Persist verified v763 source changes
         shell: bash
         run: |
-          if git diff --quiet -- app/build.gradle.kts app/src/main/java/com/simplereader/app/App.kt app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/crash/CrashLogStore.kt; then
-            echo 'v762 source already persisted.'
+          if git diff --quiet -- \
+            app/build.gradle.kts \
+            app/src/main/java/com/simplereader/app/App.kt \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/BookCoverAssets.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt \
+            app/src/main/java/com/simplereader/app/reader/ReaderImageRepository.kt \
+            app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt; then
+            echo 'v763 source already persisted.'
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/build.gradle.kts app/src/main/java/com/simplereader/app/App.kt app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt app/src/main/java/com/simplereader/app/crash/CrashLogStore.kt
-          git commit -m 'v762：记录PSS组成与阅读器退出后内存趋势 [skip ci]'
-          git push origin HEAD:source-v762
+          git add \
+            app/build.gradle.kts \
+            app/src/main/java/com/simplereader/app/App.kt \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/BookCoverAssets.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderBackgrounds.kt \
+            app/src/main/java/com/simplereader/app/reader/ReaderImageRepository.kt \
+            app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
+            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          git commit -m 'v763：释放书架与阅读器图形内存并限制背景缓存 [skip ci]'
+          git push origin HEAD:source-v763
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v762-full-unit-baseline-gate.sh v762-full-unit-tests.log
-      - name: Build v762 release
+        run: bash tools/v763-full-unit-baseline-gate.sh v763-full-unit-tests.log
+      - name: Build v763 release
         shell: bash
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v762 APK and export official signer
+      - name: Verify v763 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -66,8 +86,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000762'" apk-package-info.txt
-          grep -Fq "versionName='762'" apk-package-info.txt
+          grep -Fq "versionCode='2098000763'" apk-package-info.txt
+          grep -Fq "versionName='763'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -77,12 +97,12 @@ jobs:
           chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v762-${{ github.run_number }}
+          name: SimpleReader-v763-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v762-full-unit-tests.log
+            v763-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
