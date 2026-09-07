@@ -27,6 +27,8 @@ class ReaderImageRepository(
         return ScaledImageSpan(bitmap, maxWidth, maxHeight)
     }
 
+    fun clear() = synchronized(cache) { cache.clear() }
+
     private fun loadBitmap(href: String, maxWidth: Int, maxHeight: Int): Bitmap? {
         val file = StructuredBookCache.imageFile(context, bookId, href) ?: return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

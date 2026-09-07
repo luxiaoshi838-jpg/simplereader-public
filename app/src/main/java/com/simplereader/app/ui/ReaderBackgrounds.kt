@@ -1,6 +1,7 @@
 package com.simplereader.app.ui
 
 import android.content.Context
+import android.content.ComponentCallbacks2
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -11,6 +12,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
+import android.util.LruCache
 import com.simplereader.app.R
 
 /**
@@ -170,22 +172,72 @@ object ReaderBackgrounds {
 
     fun nightDrawable(context: Context): Drawable = drawable(context, nightSelection())
 
+    fun clearMemoryCaches() = ReaderBackgroundBitmapCache.clear()
+
+    fun trimMemory(level: Int) = ReaderBackgroundBitmapCache.trim(level)
+
     fun previewDrawable(context: Context, selection: Selection, selected: Boolean): Drawable =
         ReaderBackgroundPreviewDrawable(context, validated(selection), selected)
 }
 
 private object ReaderBackgroundBitmapCache {
-    private val cache = mutableMapOf<Int, Bitmap>()
+    private const val PREVIEW_CACHE_KB = 4 * 1024
+    private var fullResId: Int = 0
+    private var fullBitmap: Bitmap? = null
+    private val previews = object : LruCache<Int, Bitmap>(PREVIEW_CACHE_KB) {
+        override fun sizeOf(key: Int, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+    }
 
-    fun bitmap(context: Context, resId: Int): Bitmap? = synchronized(cache) {
-        cache[resId] ?: BitmapFactory.decodeResource(context.resources, resId)?.also { cache[resId] = it }
+    @Synchronized
+    fun full(context: Context, resId: Int): Bitmap? {
+        val existing = fullBitmap
+        if (fullResId == resId && existing != null && !existing.isRecycled) return existing
+        val decoded = BitmapFactory.decodeResource(context.applicationContext.resources, resId) ?: return null
+        fullResId = resId
+        fullBitmap = decoded
+        return decoded
+    }
+
+    @Synchronized
+    fun preview(context: Context, resId: Int): Bitmap? {
+        previews.get(resId)?.takeIf { !it.isRecycled }?.let { return it }
+        val resources = context.applicationContext.resources
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeResource(resources, resId, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > 384 || bounds.outHeight / sample > 256) sample *= 2
+        val decoded = BitmapFactory.decodeResource(
+            resources,
+            resId,
+            BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
+        ) ?: return null
+        previews.put(resId, decoded)
+        return decoded
+    }
+
+    @Synchronized
+    fun clear() {
+        fullResId = 0
+        fullBitmap = null
+        previews.evictAll()
+    }
+
+    @Synchronized
+    fun trim(level: Int) {
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> clear()
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> previews.evictAll()
+        }
     }
 }
 
 private class FullPageReaderBackgroundDrawable(
-    private val context: Context,
-    private val option: ReaderBackgrounds.BackgroundOption
+    context: Context,
+    private val option: ReaderBackgrounds.BackgroundOption,
+    private val preview: Boolean = false
 ) : Drawable() {
+    private val appContext = context.applicationContext
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = option.representativeColor }
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val source = Rect()
@@ -197,8 +249,11 @@ private class FullPageReaderBackgroundDrawable(
         if (area.isEmpty) return
         fillPaint.alpha = globalAlpha
         canvas.drawRect(area, fillPaint)
-        val bitmap = ReaderBackgroundBitmapCache.bitmap(context, option.drawableRes)
-            ?: error("Confirmed v625 background asset is missing: ${option.id}")
+        val bitmap = if (preview) {
+            ReaderBackgroundBitmapCache.preview(appContext, option.drawableRes)
+        } else {
+            ReaderBackgroundBitmapCache.full(appContext, option.drawableRes)
+        } ?: error("Confirmed v625 background asset is missing: ${option.id}")
         destination.set(area)
         val bitmapAspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
         val areaAspect = area.width().toFloat() / area.height().coerceAtLeast(1).toFloat()
@@ -235,7 +290,11 @@ private class ReaderBackgroundPreviewDrawable(
     selection: ReaderBackgrounds.Selection,
     private val selected: Boolean
 ) : Drawable() {
-    private val background = ReaderBackgrounds.drawable(context, selection)
+    private val safeSelection = ReaderBackgrounds.validated(selection)
+    private val option = ReaderBackgrounds.option(safeSelection)
+    private val background = if (option.category == ReaderBackgrounds.Category.COLOR) null else
+        FullPageReaderBackgroundDrawable(context, option, preview = true)
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = option.representativeColor }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = if (selected) 5f else 2f
@@ -243,20 +302,26 @@ private class ReaderBackgroundPreviewDrawable(
     }
 
     override fun draw(canvas: Canvas) {
-        background.bounds = bounds
-        background.draw(canvas)
+        if (background != null) {
+            background.bounds = bounds
+            background.draw(canvas)
+        } else {
+            canvas.drawRect(bounds, fillPaint)
+        }
         val half = borderPaint.strokeWidth / 2f
         canvas.drawRect(bounds.left + half, bounds.top + half, bounds.right - half, bounds.bottom - half, borderPaint)
     }
 
     override fun setAlpha(alpha: Int) {
-        background.alpha = alpha
+        background?.alpha = alpha
+        fillPaint.alpha = alpha.coerceIn(0, 255)
         borderPaint.alpha = alpha.coerceIn(0, 255)
         invalidateSelf()
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
-        background.colorFilter = colorFilter
+        background?.colorFilter = colorFilter
+        fillPaint.colorFilter = colorFilter
         borderPaint.colorFilter = colorFilter
         invalidateSelf()
     }

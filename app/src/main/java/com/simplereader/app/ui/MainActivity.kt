@@ -85,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     private val selectedShelfBookIds = linkedSetOf<Long>()
     private val selectedShelfGroupIds = linkedSetOf<Long>()
     private var pendingBackup: SimpleReaderBackupDecoder.DecodedBackup? = null
+    private var shelfUiVisible = false
     private val coverBitmapCache = object : LruCache<Long, Bitmap>(12 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
@@ -268,8 +269,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        shelfUiVisible = true
         applyShelfAppearance()
         updateUI()
+    }
+
+    override fun onStop() {
+        shelfUiVisible = false
+        releaseShelfUiMemory("main_onStop")
+        super.onStop()
     }
 
     override fun onCreateOptionsMenu(menu: android.view.Menu?): Boolean = false
@@ -301,6 +309,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUI() {
+        if (!shelfUiVisible) return
         applyShelfAppearance()
         shelfGrid.removeAllViews()
         val filteredBooks = books.filter {
@@ -523,21 +532,45 @@ class MainActivity : AppCompatActivity() {
                     runCatching {
                         StructuredBookCache.coverFile(this@MainActivity, book.id)
                             ?.takeIf { it.isFile }
-                            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                            ?.let(::decodeShelfCoverFile)
                             ?: contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
-                                EpubParser.readCoverImage(input)?.let { bytes ->
-                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                }
+                                EpubParser.readCoverImage(input)?.let(::decodeShelfCoverBytes)
                             }
                     }.getOrNull()
                 }
-                if (bitmap != null) {
+                if (bitmap != null && shelfUiVisible && !isFinishing && !isDestroyed) {
                     coverBitmapCache.put(book.id, bitmap)
                     showBitmap(bitmap)
                 }
             }
         }
         return frame
+    }
+
+    private fun decodeShelfCoverFile(file: File): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        return BitmapFactory.decodeFile(
+            file.absolutePath,
+            BitmapFactory.Options().apply { inSampleSize = shelfCoverSample(bounds.outWidth, bounds.outHeight) }
+        )
+    }
+
+    private fun decodeShelfCoverBytes(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        return BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = shelfCoverSample(bounds.outWidth, bounds.outHeight) }
+        )
+    }
+
+    private fun shelfCoverSample(width: Int, height: Int): Int {
+        var sample = 1
+        while (width / sample > 384 || height / sample > 512) sample *= 2
+        return sample.coerceAtLeast(1)
     }
 
     private fun wrapSelectableShelfCard(card: LinearLayout, selected: Boolean): FrameLayout {
@@ -608,7 +641,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openBook(bookId: Long) {
+        // V763: MainActivity uses a non-virtualized GridLayout. Release every card/ImageView and
+        // decoded cover before constructing ReaderActivity so the two full UI trees never overlap.
+        shelfUiVisible = false
+        releaseShelfUiMemory("before_open_reader")
         startActivity(Intent(this, ReaderActivity::class.java).putExtra("bookId", bookId))
+    }
+
+    private fun releaseShelfUiMemory(reason: String) {
+        if (::shelfGrid.isInitialized) shelfGrid.removeAllViews()
+        coverBitmapCache.evictAll()
+        BookCoverAssets.clearMemoryCache()
+        CrashLogStore.recordMemorySnapshot(
+            this,
+            "shelf_release_$reason",
+            "books=${books.size} groups=${groups.size} visible=$shelfUiVisible"
+        )
     }
 
     private fun showGroupBooks(group: BookGroup, groupBooks: List<ShelfBookItem>) {

@@ -163,6 +163,23 @@ class PagedReaderView @JvmOverloads constructor(
 
     fun currentSnapshot(): ReaderPageSnapshot? = currentPage
 
+    fun release() {
+        cancelNavigation()
+        previousPage = null
+        currentPage = null
+        nextPage = null
+        style = null
+        listOf(previousView, currentView, nextView).forEach { page ->
+            page.text = ""
+            page.background = null
+        }
+        edgeShadow.background = null
+        onTurnCommitted = null
+        onBoundaryTurn = null
+        onCenterTap = null
+        onLongPress = null
+    }
+
     fun turn(direction: Int): Boolean {
         if (isReaderChromeVisible()) {
             cancelNavigation()

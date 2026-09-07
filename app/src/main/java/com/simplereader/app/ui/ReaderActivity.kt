@@ -210,21 +210,61 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        val memoryDetails = memoryDiagnosticDetails()
+        val cleanFinish = isFinishing && !isChangingConfigurations
         paginationJob?.cancel()
         continuousRenderJob?.cancel()
-        pagedReaderView.cancelNavigation()
-        verticalRecyclerView?.stopScroll()
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
         stopAutoReading(false)
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
-        CrashLogStore.recordMemorySnapshot(this, "reader_onDestroy", memoryDiagnosticDetails())
-        if (isFinishing && !isChangingConfigurations) {
+        releaseReaderMemory()
+        CrashLogStore.recordMemorySnapshot(this, "reader_onDestroy_after_release", memoryDetails)
+        if (cleanFinish) {
             CrashLogStore.finishReaderSession(this, bookId)
         }
         super.onDestroy()
+    }
+
+    private fun releaseReaderMemory() {
+        verticalAdapter?.release()
+        verticalRecyclerView?.apply {
+            stopScroll()
+            clearOnScrollListeners()
+            setOnTouchListener(null)
+            adapter = null
+            recycledViewPool.clear()
+        }
+        verticalRecyclerView?.let { recycler ->
+            if (::readerViewport.isInitialized) readerViewport.removeView(recycler)
+        }
+        verticalRecyclerView = null
+        verticalLayoutManager = null
+        verticalAdapter = null
+
+        if (::pagedReaderView.isInitialized) pagedReaderView.release()
+        if (::continuousTextView.isInitialized) {
+            continuousTextView.text = ""
+            continuousTextView.background = null
+        }
+        if (::readerScrollView.isInitialized) readerScrollView.background = null
+        if (::readerRoot.isInitialized) readerRoot.background = null
+        findViewById<View>(android.R.id.content)?.background = null
+
+        imageRepository?.clear()
+        imageRepository = null
+        readerBook = null
+        document = null
+        book = null
+        layoutSettings = null
+        pendingFontRollback = null
+        searchHits = emptyList()
+        activeSearchHit = null
+        continuousHighlightSpan = null
+        lastDisplayedChapterTitle = null
+        ReaderBackgrounds.clearMemoryCaches()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -1477,7 +1517,7 @@ class ReaderActivity : AppCompatActivity() {
         readerScrollView.background = ColorDrawable(Color.TRANSPARENT)
         continuousTextView.setTextColor(palette.textColor)
         continuousTextView.background = ColorDrawable(Color.TRANSPARENT)
-        findViewById<View>(android.R.id.content).background = activeBackgroundDrawable()
+        findViewById<View>(android.R.id.content).background = null
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
         if (android.os.Build.VERSION.SDK_INT >= 29) {

@@ -27,6 +27,8 @@ object BookCoverAssets {
             bitmap = CoverBitmapCache.load(context, defaultCoverRes(format)),
             radiusPx = radiusPx
         )
+
+    fun clearMemoryCache() = CoverBitmapCache.clear()
 }
 
 private object CoverBitmapCache {
@@ -37,6 +39,8 @@ private object CoverBitmapCache {
             "无法读取默认封面资源：$resId"
         }.also { bitmaps[resId] = it }
     }
+
+    fun clear() = synchronized(bitmaps) { bitmaps.clear() }
 }
 
 private class DefaultBookCoverDrawable(

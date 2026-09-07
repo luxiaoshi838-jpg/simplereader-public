@@ -71,6 +71,11 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
         notifyDataSetChanged()
     }
 
+    fun release() {
+        pages = emptyList()
+        rendered.evictAll()
+    }
+
     /**
      * v756: search highlighting is transient. ReaderActivity clears activeSearchHit as soon as the
      * user starts dragging; then discard cached highlighted CharSequences and rebind only the

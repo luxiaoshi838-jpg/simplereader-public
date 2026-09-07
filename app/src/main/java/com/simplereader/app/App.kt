@@ -2,6 +2,7 @@ package com.simplereader.app
 
 import android.app.Application
 import com.simplereader.app.crash.CrashLogStore
+import com.simplereader.app.ui.ReaderBackgrounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,11 +28,13 @@ class App : Application() {
     }
 
     override fun onTrimMemory(level: Int) {
+        ReaderBackgrounds.trimMemory(level)
         CrashLogStore.recordMemorySnapshot(this, "app_onTrimMemory_$level")
         super.onTrimMemory(level)
     }
 
     override fun onLowMemory() {
+        ReaderBackgrounds.clearMemoryCaches()
         CrashLogStore.recordMemorySnapshot(this, "app_onLowMemory")
         super.onLowMemory()
     }
