@@ -23,5 +23,16 @@ class App : Application() {
         // process starts another reader session, then install the live Java/Kotlin crash handler.
         CrashLogStore.capturePreviousProcessExit(this)
         CrashLogStore.install(this)
+        CrashLogStore.recordMemorySnapshot(this, "process_start")
+    }
+
+    override fun onTrimMemory(level: Int) {
+        CrashLogStore.recordMemorySnapshot(this, "app_onTrimMemory_$level")
+        super.onTrimMemory(level)
+    }
+
+    override fun onLowMemory() {
+        CrashLogStore.recordMemorySnapshot(this, "app_onLowMemory")
+        super.onLowMemory()
     }
 }

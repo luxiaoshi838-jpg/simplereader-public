@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import android.os.Debug
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -13,6 +14,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
@@ -30,12 +32,14 @@ object CrashLogStore {
     private const val PENDING_FILE_NAME = "pending_crash_log.txt"
     private const val READER_STATE_FILE_NAME = "reader_recovery_state.json"
     private const val JOURNAL_FILE_NAME = "reader_diagnostic_journal.txt"
+    private const val MEMORY_JOURNAL_FILE_NAME = "process_memory_diagnostic.txt"
     private const val PREFS_NAME = "crash_log_store"
     private const val PREF_LAST_HANDLED_EXIT_TS = "last_handled_exit_timestamp"
     private const val MAX_LOG_CHARS = 512_000
     private const val MAX_STACK_CHARS = 300_000
     private const val MAX_OOM_STACK_CHARS = 64_000
     private const val MAX_JOURNAL_CHARS = 96_000
+    private const val MAX_MEMORY_JOURNAL_CHARS = 160_000
     private const val MAX_EXIT_TRACE_CHARS = 160_000
     private const val STATE_FLUSH_MIN_INTERVAL_MS = 850L
 
@@ -45,7 +49,7 @@ object CrashLogStore {
 
     private val pendingLock = Any()
     private val stateRef = AtomicReference<ReaderState?>(null)
-    private val ioExecutor = Executors.newSingleThreadExecutor { runnable ->
+    private val ioExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "jianyu-crash-log-io").apply { isDaemon = true }
     }
 
@@ -121,6 +125,7 @@ object CrashLogStore {
 
         val state = readReaderState(appContext)
         val journal = readJournal(appContext)
+        val memoryJournal = readMemoryJournal(appContext)
         val systemTrace = readExitTrace(abnormal)
         val section = buildString {
             appendLine("简阅异常进程退出记录（Android 系统）")
@@ -134,6 +139,11 @@ object CrashLogStore {
             abnormal.description?.takeIf { it.isNotBlank() }?.let { appendLine("系统描述：$it") }
             appendLine()
             appendReaderState(this, state)
+            if (memoryJournal.isNotBlank()) {
+                appendLine()
+                appendLine("进程退出前内存诊断流水：")
+                append(memoryJournal.takeLast(MAX_MEMORY_JOURNAL_CHARS))
+            }
             if (journal.isNotBlank()) {
                 appendLine()
                 appendLine("异常前诊断流水：")
@@ -182,6 +192,7 @@ object CrashLogStore {
         stateRef.set(state)
         enqueueStateWrite(appContext, state, force = true)
         recordEvent(appContext, "reader_session_begin book=$bookId mode=$turnMode preservedOffset=${state.sourceOffset}")
+        recordMemorySnapshot(appContext, "reader_session_begin")
     }
 
     fun recordReaderPosition(
@@ -219,6 +230,93 @@ object CrashLogStore {
         stateRef.set(state)
         enqueueStateWrite(appContext, state, force = true)
         recordEvent(appContext, "$event book=$bookId page=${state.pageIndex} offset=${state.sourceOffset}")
+        recordMemorySnapshot(appContext, event)
+        schedulePostReaderMemorySnapshots(appContext)
+    }
+
+    /**
+     * V762 memory attribution. Collection happens only on the crash-log executor, never in a
+     * RecyclerView scroll callback. Android Debug.MemoryInfo lets the next exit report distinguish
+     * Java/native/graphics/code/private-other/system PSS instead of reporting only one total PSS.
+     */
+    fun recordMemorySnapshot(context: Context, reason: String, details: String = "") {
+        val appContext = context.applicationContext
+        val safeReason = reason.replace('\n', ' ').replace('\r', ' ').take(200)
+        val safeDetails = details.replace('\n', ' ').replace('\r', ' ').take(1200)
+        ioExecutor.execute {
+            runCatching { writeMemorySnapshot(appContext, safeReason, safeDetails) }
+        }
+    }
+
+    private fun schedulePostReaderMemorySnapshots(context: Context) {
+        val appContext = context.applicationContext
+        listOf(
+            5L to TimeUnit.SECONDS,
+            30L to TimeUnit.SECONDS,
+            2L to TimeUnit.MINUTES,
+            10L to TimeUnit.MINUTES,
+            30L to TimeUnit.MINUTES
+        ).forEach { (delay, unit) ->
+            ioExecutor.schedule({
+                runCatching { writeMemorySnapshot(appContext, "post_reader_finish_${delay}_${unit.name.lowercase()}", "") }
+            }, delay, unit)
+        }
+    }
+
+    private fun writeMemorySnapshot(context: Context, reason: String, details: String) {
+        val debug = Debug.MemoryInfo()
+        Debug.getMemoryInfo(debug)
+        val stats = debug.memoryStats
+        val runtime = Runtime.getRuntime()
+        val system = ActivityManager.MemoryInfo()
+        runCatching {
+            (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(system)
+        }
+        val state = stateRef.get() ?: readReaderState(context)
+        fun stat(name: String): String = stats[name] ?: "?"
+        val javaUsedKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L
+        val javaCommittedKb = runtime.totalMemory() / 1024L
+        val javaMaxKb = runtime.maxMemory() / 1024L
+        val nativeAllocatedKb = Debug.getNativeHeapAllocatedSize() / 1024L
+        val line = buildString {
+            append(formatTimestamp(System.currentTimeMillis()))
+            append(" | memory reason=").append(reason)
+            append(" totalPss=").append(debug.totalPss).append("kB")
+            append(" javaPss=").append(stat("summary.java-heap")).append("kB")
+            append(" nativePss=").append(stat("summary.native-heap")).append("kB")
+            append(" graphicsPss=").append(stat("summary.graphics")).append("kB")
+            append(" codePss=").append(stat("summary.code")).append("kB")
+            append(" stackPss=").append(stat("summary.stack")).append("kB")
+            append(" privateOtherPss=").append(stat("summary.private-other")).append("kB")
+            append(" systemPss=").append(stat("summary.system")).append("kB")
+            append(" swapPss=").append(stat("summary.total-swap")).append("kB")
+            append(" dalvikPss=").append(debug.dalvikPss).append("kB")
+            append(" nativeRawPss=").append(debug.nativePss).append("kB")
+            append(" otherRawPss=").append(debug.otherPss).append("kB")
+            append(" javaUsed=").append(javaUsedKb).append("kB")
+            append(" javaCommitted=").append(javaCommittedKb).append("kB")
+            append(" javaMax=").append(javaMaxKb).append("kB")
+            append(" nativeAllocated=").append(nativeAllocatedKb).append("kB")
+            append(" sysAvail=").append(system.availMem / 1024L).append("kB")
+            append(" sysThreshold=").append(system.threshold / 1024L).append("kB")
+            append(" sysLow=").append(system.lowMemory)
+            if (state != null) {
+                append(" readerActive=").append(state.active)
+                append(" book=").append(state.bookId)
+                append(" page=").append(state.pageIndex)
+                append('/').append(state.totalPages)
+                append(" offset=").append(state.sourceOffset)
+                append(" event=").append(state.event)
+            }
+            if (details.isNotBlank()) append(" details=").append(details)
+            append('\n')
+        }
+        val file = memoryJournalFile(context)
+        file.parentFile?.mkdirs()
+        file.appendText(line, Charsets.UTF_8)
+        if (file.length() > MAX_MEMORY_JOURNAL_CHARS * 2L) {
+            writeAtomic(file, file.readText(Charsets.UTF_8).takeLast(MAX_MEMORY_JOURNAL_CHARS))
+        }
     }
 
     /** Returns only a non-zero anchor from an unfinished reader session. */
@@ -400,6 +498,11 @@ object CrashLogStore {
         if (!file.isFile || file.length() <= 0L) "" else file.readText(Charsets.UTF_8).takeLast(MAX_JOURNAL_CHARS)
     }.getOrDefault("")
 
+    private fun readMemoryJournal(context: Context): String = runCatching {
+        val file = memoryJournalFile(context)
+        if (!file.isFile || file.length() <= 0L) "" else file.readText(Charsets.UTF_8).takeLast(MAX_MEMORY_JOURNAL_CHARS)
+    }.getOrDefault("")
+
     private fun writePendingSection(context: Context, section: String, preservePrevious: Boolean) {
         synchronized(pendingLock) {
             val target = pendingFile(context)
@@ -432,4 +535,5 @@ object CrashLogStore {
     private fun pendingFile(context: Context): File = File(context.filesDir, PENDING_FILE_NAME)
     private fun readerStateFile(context: Context): File = File(context.filesDir, READER_STATE_FILE_NAME)
     private fun journalFile(context: Context): File = File(context.filesDir, JOURNAL_FILE_NAME)
+    private fun memoryJournalFile(context: Context): File = File(context.filesDir, MEMORY_JOURNAL_FILE_NAME)
 }

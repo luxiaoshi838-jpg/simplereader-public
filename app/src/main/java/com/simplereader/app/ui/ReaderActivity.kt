@@ -204,6 +204,7 @@ class ReaderActivity : AppCompatActivity() {
             persistVerticalDiagnosticState("vertical_pause", force = true)
         }
         CrashLogStore.recordEvent(this, "ReaderActivity.onPause book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset")
+        CrashLogStore.recordMemorySnapshot(this, "reader_onPause", memoryDiagnosticDetails())
         saveProgress()
         super.onPause()
     }
@@ -219,6 +220,7 @@ class ReaderActivity : AppCompatActivity() {
         cancelVerticalStateUnlockGuard()
         stopAutoReading(false)
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
+        CrashLogStore.recordMemorySnapshot(this, "reader_onDestroy", memoryDiagnosticDetails())
         if (isFinishing && !isChangingConfigurations) {
             CrashLogStore.finishReaderSession(this, bookId)
         }
@@ -468,6 +470,11 @@ class ReaderActivity : AppCompatActivity() {
                     )
                 }
                 CrashLogStore.recordEvent(this@ReaderActivity, "paginate:success book=$bookId pages=${paged.pages.size} target=$currentPageIndex stable=$lastStableSourceOffset cached=${cached != null}")
+                CrashLogStore.recordMemorySnapshot(
+                    this@ReaderActivity,
+                    "paginate_success",
+                    memoryDiagnosticDetails() + " cached=${cached != null}"
+                )
                 paginationInProgress = false
                 showActiveReader()
                 pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
@@ -505,6 +512,13 @@ class ReaderActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun memoryDiagnosticDetails(): String {
+        val paged = readerBook
+        val sourceTextChars = paged?.text?.length ?: document?.text?.length ?: -1
+        val rv = verticalRecyclerView
+        return "book=$bookId mode=$pageTurnMode textChars=$sourceTextChars pages=${paged?.pages?.size ?: 0} chapters=${paged?.chapters?.size ?: 0} currentPage=$currentPageIndex rvChildren=${rv?.childCount ?: 0} rvItems=${rv?.adapter?.itemCount ?: 0}"
     }
 
     private fun createLayoutSettings(): ReaderLayoutSettings {
