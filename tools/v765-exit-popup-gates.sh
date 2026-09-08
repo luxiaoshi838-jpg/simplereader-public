@@ -16,6 +16,9 @@ for token in [
     'packageInfo?.lastUpdateTime',
     'archivePendingBeforeUpgrade',
     'previousVersionCode != currentVersionCode',
+    'pendingPredatesCurrentInstall',
+    'pending.lastModified() in 1 until packageLastUpdateTime',
+    'isUpgradeLaunch || pendingPredatesCurrentInstall',
     'info.timestamp in 1 until packageLastUpdateTime',
     'description.contains("normal_mem_pressure")',
     'state?.active == false',
@@ -63,5 +66,5 @@ base_reader = subprocess.check_output([
 ], text=True)
 assert block(reader, '    private fun showContentSearch() {', '    private fun confirmDeleteBookmark(') == block(base_reader, '    private fun showContentSearch() {', '    private fun confirmDeleteBookmark('), 'ReaderActivity search block changed from V764'
 
-print('v765 exit-popup filtering + narrow-diff + search compatibility gates: PASS')
+print('v765 exit-popup filtering + upgrade-bootstrap + narrow-diff + search compatibility gates: PASS')
 PY
