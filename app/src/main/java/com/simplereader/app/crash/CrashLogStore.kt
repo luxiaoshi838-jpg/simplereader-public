@@ -120,16 +120,19 @@ object CrashLogStore {
             @Suppress("DEPRECATION")
             packageInfo?.versionCode?.toLong() ?: -1L
         }
+        val packageLastUpdateTime = packageInfo?.lastUpdateTime ?: 0L
         val previousVersionCode = prefs.getLong(PREF_LAST_SEEN_VERSION_CODE, 0L)
         val isUpgradeLaunch = previousVersionCode > 0L && currentVersionCode > 0L && previousVersionCode != currentVersionCode
-        if (isUpgradeLaunch) {
+        val pending = pendingFile(appContext)
+        val pendingPredatesCurrentInstall = pending.isFile && packageLastUpdateTime > 0L &&
+            pending.lastModified() in 1 until packageLastUpdateTime
+        if (isUpgradeLaunch || pendingPredatesCurrentInstall) {
             archivePendingBeforeUpgrade(appContext, previousVersionCode, currentVersionCode)
         }
         if (currentVersionCode > 0L) {
             prefs.edit().putLong(PREF_LAST_SEEN_VERSION_CODE, currentVersionCode).apply()
         }
         val handledTimestamp = prefs.getLong(PREF_LAST_HANDLED_EXIT_TS, 0L)
-        val packageLastUpdateTime = packageInfo?.lastUpdateTime ?: 0L
         val manager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
         val exits = runCatching {
             manager.getHistoricalProcessExitReasons(appContext.packageName, 0, 8)
