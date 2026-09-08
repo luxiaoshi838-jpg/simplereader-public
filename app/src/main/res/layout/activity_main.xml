@@ -115,20 +115,13 @@
             android:textSize="15sp" />
     </LinearLayout>
 
-    <com.simplereader.app.ui.FastScrollView
-        android:id="@+id/shelfScrollView"
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/shelfGrid"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="6dp"
         android:layout_weight="1"
-        android:fillViewport="true">
-
-        <GridLayout
-            android:id="@+id/shelfGrid"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:columnCount="3"
-            android:paddingEnd="14dp"
-            android:useDefaultMargins="false" />
-    </com.simplereader.app.ui.FastScrollView>
+        android:clipToPadding="false"
+        android:paddingEnd="14dp"
+        android:scrollbars="vertical" />
 </LinearLayout>

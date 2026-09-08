@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -58,6 +59,7 @@ import com.simplereader.app.reader.page.ReaderBook
 import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
+import com.simplereader.app.runtime.ReaderRuntimeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -132,6 +134,7 @@ class ReaderActivity : AppCompatActivity() {
     private var progressCheckpointRunnable: Runnable? = null
     private var lastDisplayedChapterTitle: String? = null
     private var pendingVerticalDiagnosticEvent: String? = null
+    private var readerGeneration: Long = 0L
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -185,10 +188,11 @@ class ReaderActivity : AppCompatActivity() {
             setColor(Color.argb(220, 48, 47, 42))
         }
         bookId = intent.getLongExtra("bookId", 0L)
+        readerGeneration = ReaderRuntimeState.claim()
 
         loadPreferences()
         CrashLogStore.beginReaderSession(this, bookId, pageTurnMode)
-        CrashLogStore.recordEvent(this, "ReaderActivity.onCreate book=$bookId mode=$pageTurnMode")
+        CrashLogStore.recordEvent(this, "ReaderActivity.onCreate book=$bookId mode=$pageTurnMode generation=$readerGeneration")
         bindReaderInsets()
         applyReaderContentPadding()
         bindPagedReader()
@@ -198,14 +202,37 @@ class ReaderActivity : AppCompatActivity() {
         pagedReaderView.post { loadBook() }
     }
 
+    override fun onResume() {
+        super.onResume()
+        ReaderRuntimeState.markResumed(readerGeneration)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val requestedBookId = intent.getLongExtra("bookId", 0L)
+        // A rapid duplicate launch is intentionally ignored by the existing top reader.
+        CrashLogStore.recordEvent(
+            this,
+            "ReaderActivity.onNewIntent requested=$requestedBookId current=$bookId generation=$readerGeneration"
+        )
+    }
+
     override fun onPause() {
+        ReaderRuntimeState.markPaused(readerGeneration)
         stopAutoReading(false)
-        if (pageTurnMode == TURN_MODE_VERTICAL) {
-            persistVerticalDiagnosticState("vertical_pause", force = true)
+        if (ownsReaderSession()) {
+            if (pageTurnMode == TURN_MODE_VERTICAL) {
+                persistVerticalDiagnosticState("vertical_pause", force = true)
+            }
+            saveProgress()
+        } else {
+            CrashLogStore.recordEvent(
+                this,
+                "stale_reader_pause_write_suppressed book=$bookId generation=$readerGeneration owner=${ReaderRuntimeState.ownerGeneration()}"
+            )
         }
-        CrashLogStore.recordEvent(this, "ReaderActivity.onPause book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset")
+        CrashLogStore.recordEvent(this, "ReaderActivity.onPause book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset generation=$readerGeneration owner=${ownsReaderSession()}")
         CrashLogStore.recordMemorySnapshot(this, "reader_onPause", memoryDiagnosticDetails())
-        saveProgress()
         super.onPause()
     }
 
@@ -222,11 +249,18 @@ class ReaderActivity : AppCompatActivity() {
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
         releaseReaderMemory()
         CrashLogStore.recordMemorySnapshot(this, "reader_onDestroy_after_release", memoryDetails)
-        if (cleanFinish) {
+        if (cleanFinish && ownsReaderSession()) {
             CrashLogStore.finishReaderSession(this, bookId)
+        } else if (cleanFinish) {
+            CrashLogStore.recordEvent(
+                this,
+                "stale_reader_finish_suppressed book=$bookId generation=$readerGeneration owner=${ReaderRuntimeState.ownerGeneration()}"
+            )
         }
         super.onDestroy()
     }
+
+    private fun ownsReaderSession(): Boolean = ReaderRuntimeState.isOwner(readerGeneration)
 
     private fun releaseReaderMemory() {
         verticalAdapter?.release()
@@ -558,7 +592,7 @@ class ReaderActivity : AppCompatActivity() {
         val paged = readerBook
         val sourceTextChars = paged?.text?.length ?: document?.text?.length ?: -1
         val rv = verticalRecyclerView
-        return "book=$bookId mode=$pageTurnMode textChars=$sourceTextChars pages=${paged?.pages?.size ?: 0} chapters=${paged?.chapters?.size ?: 0} currentPage=$currentPageIndex rvChildren=${rv?.childCount ?: 0} rvItems=${rv?.adapter?.itemCount ?: 0}"
+        return "book=$bookId mode=$pageTurnMode generation=$readerGeneration owner=${ownsReaderSession()} textChars=$sourceTextChars pages=${paged?.pages?.size ?: 0} chapters=${paged?.chapters?.size ?: 0} currentPage=$currentPageIndex rvChildren=${rv?.childCount ?: 0} rvItems=${rv?.adapter?.itemCount ?: 0}"
     }
 
     private fun createLayoutSettings(): ReaderLayoutSettings {
@@ -788,6 +822,7 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun persistVerticalDiagnosticState(event: String, force: Boolean = false) {
+        if (!ownsReaderSession()) return
         val pages = readerBook?.pages.orEmpty()
         val page = pages.getOrNull(currentPageIndex) ?: return
         CrashLogStore.recordReaderPosition(
@@ -1374,11 +1409,14 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun scheduleProgressCheckpoint(sourceOffset: Int) {
+        if (!ownsReaderSession()) return
+        val generation = readerGeneration
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = Runnable {
             progressCheckpointRunnable = null
             val snapshot = progressSnapshotForOffset(sourceOffset) ?: return@Runnable
             lifecycleScope.launch(Dispatchers.IO) {
+                if (!ReaderRuntimeState.isOwner(generation)) return@launch
                 database.readProgressDao().insert(snapshot)
                 database.bookDao().updateLastReadTime(bookId, System.currentTimeMillis())
             }
@@ -1386,6 +1424,8 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun saveProgress() {
+        if (!ownsReaderSession()) return
+        val generation = readerGeneration
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = null
         val sourceOffset = stableProgressSourceOffset() ?: return
@@ -1400,6 +1440,7 @@ class ReaderActivity : AppCompatActivity() {
         // Final write survives Activity destruction. The snapshot is immutable and does not rewrite
         // currentPageIndex/lastStableSourceOffset, so persistence cannot move the live reader.
         (application as App).applicationScope.launch {
+            if (!ReaderRuntimeState.isOwner(generation)) return@launch
             database.readProgressDao().insert(snapshot)
             database.bookDao().updateLastReadTime(bookId, System.currentTimeMillis())
         }

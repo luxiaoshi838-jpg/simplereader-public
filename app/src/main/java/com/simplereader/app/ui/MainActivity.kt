@@ -32,6 +32,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.R
 import com.simplereader.app.crash.CrashLogStore
 import com.simplereader.app.operation.OperationLogDialogs
@@ -62,16 +64,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
 
 class MainActivity : AppCompatActivity() {
     private lateinit var database: SimpleReaderDatabase
     private lateinit var bookRepository: BookRepository
     private lateinit var bookGroupRepository: BookGroupRepository
     private lateinit var mainRoot: View
-    private lateinit var shelfGrid: GridLayout
+    private lateinit var shelfGrid: RecyclerView
     private lateinit var readingStatsTextView: TextView
     private lateinit var shelfTabTextView: TextView
     private lateinit var editButton: TextView
@@ -86,6 +92,11 @@ class MainActivity : AppCompatActivity() {
     private val selectedShelfGroupIds = linkedSetOf<Long>()
     private var pendingBackup: SimpleReaderBackupDecoder.DecodedBackup? = null
     private var shelfUiVisible = false
+    private var readerLaunchInFlight = false
+    private var shelfCoverGeneration = 0L
+    private val shelfCoverJobs = Collections.synchronizedSet(mutableSetOf<Job>())
+    private val shelfCoverSemaphore = Semaphore(3)
+    private val shelfAdapter by lazy { ShelfAdapter() }
     private val coverBitmapCache = object : LruCache<Long, Bitmap>(12 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
@@ -177,6 +188,14 @@ class MainActivity : AppCompatActivity() {
             mainRoot.paddingBottom
         )
         shelfGrid = findViewById(R.id.shelfGrid)
+        val shelfLayoutManager = GridLayoutManager(this, 3)
+        shelfLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int = if (shelfAdapter.isFullSpan(position)) 3 else 1
+        }
+        shelfGrid.layoutManager = shelfLayoutManager
+        shelfGrid.adapter = shelfAdapter
+        shelfGrid.itemAnimator = null
+        shelfGrid.setItemViewCacheSize(12)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
         ShelfCacheUiController.attach(this, readingStatsTextView) { updateUI() }
         shelfTabTextView = findViewById(R.id.shelfTabTextView)
@@ -269,6 +288,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        readerLaunchInFlight = false
         shelfUiVisible = true
         applyShelfAppearance()
         updateUI()
@@ -308,10 +328,68 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private sealed interface ShelfRenderItem {
+        data class GroupItem(val group: BookGroup, val books: List<ShelfBookItem>) : ShelfRenderItem
+        data class BookItem(val book: ShelfBookItem) : ShelfRenderItem
+        data class EmptyItem(val message: String) : ShelfRenderItem
+    }
+
+    private inner class ShelfHolder(val container: FrameLayout) : RecyclerView.ViewHolder(container)
+
+    private inner class ShelfAdapter : RecyclerView.Adapter<ShelfHolder>() {
+        private var items: List<ShelfRenderItem> = emptyList()
+
+        fun submit(newItems: List<ShelfRenderItem>) {
+            items = newItems
+            notifyDataSetChanged()
+        }
+
+        fun isFullSpan(position: Int): Boolean = items.getOrNull(position) is ShelfRenderItem.EmptyItem
+
+        override fun getItemCount(): Int = items.size
+
+        override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): ShelfHolder {
+            val container = FrameLayout(parent.context).apply {
+                layoutParams = RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    RecyclerView.LayoutParams.WRAP_CONTENT
+                )
+            }
+            return ShelfHolder(container)
+        }
+
+        override fun onBindViewHolder(holder: ShelfHolder, position: Int) {
+            clearShelfImageRefs(holder.container)
+            holder.container.removeAllViews()
+            val child = when (val item = items[position]) {
+                is ShelfRenderItem.GroupItem -> buildGroupCard(item.group, item.books)
+                is ShelfRenderItem.BookItem -> buildBookCard(item.book)
+                is ShelfRenderItem.EmptyItem -> buildEmptyText(item.message)
+            }
+            child.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            holder.container.addView(child)
+        }
+
+        override fun onViewRecycled(holder: ShelfHolder) {
+            clearShelfImageRefs(holder.container)
+            holder.container.removeAllViews()
+            super.onViewRecycled(holder)
+        }
+    }
+
+    private fun clearShelfImageRefs(view: View) {
+        when (view) {
+            is ImageView -> view.setImageDrawable(null)
+            is android.view.ViewGroup -> for (i in 0 until view.childCount) clearShelfImageRefs(view.getChildAt(i))
+        }
+    }
+
     private fun updateUI() {
         if (!shelfUiVisible) return
         applyShelfAppearance()
-        shelfGrid.removeAllViews()
         val filteredBooks = books.filter {
             shelfSearchQuery.isBlank() || it.title.contains(shelfSearchQuery, ignoreCase = true)
         }
@@ -322,29 +400,28 @@ class MainActivity : AppCompatActivity() {
         }.sortedByDescending(::activityTime)
 
         val activeGroup = selectedGroupId?.let { id -> groups.firstOrNull { it.id == id } }
-        if (selectedGroupId != null && activeGroup == null) {
-            selectedGroupId = null
-        }
+        if (selectedGroupId != null && activeGroup == null) selectedGroupId = null
         shelfTabTextView.text = if (selectedGroupId == null) "书架" else "‹ 全部书架"
 
+        val renderItems = mutableListOf<ShelfRenderItem>()
         if (!showingHistory && selectedGroupId != null) {
             val group = groups.firstOrNull { it.id == selectedGroupId }
             val groupBooks = visibleBooks.filter { it.groupId == selectedGroupId }
             if (!ShelfCacheUiController.isLocked(this)) {
                 readingStatsTextView.text = "${group?.displayName?.ifBlank { group.name } ?: "分组"} · ${groupBooks.size} 本"
             }
-            groupBooks.forEach { addBookCard(it) }
-            if (groupBooks.isEmpty()) addEmptyText("该分组暂无书籍")
+            renderItems += groupBooks.map(ShelfRenderItem::BookItem)
+            if (groupBooks.isEmpty()) renderItems += ShelfRenderItem.EmptyItem("该分组暂无书籍")
+            shelfAdapter.submit(renderItems)
             return
         }
 
-        if (!ShelfCacheUiController.isLocked(this)) {
-            readingStatsTextView.text = "累计导入 ${books.size} 本"
-        }
+        if (!ShelfCacheUiController.isLocked(this)) readingStatsTextView.text = "累计导入 ${books.size} 本"
 
         if (showingHistory) {
-            visibleBooks.forEach { addBookCard(it) }
-            if (visibleBooks.isEmpty()) addEmptyText("暂无阅读历史")
+            renderItems += visibleBooks.map(ShelfRenderItem::BookItem)
+            if (visibleBooks.isEmpty()) renderItems += ShelfRenderItem.EmptyItem("暂无阅读历史")
+            shelfAdapter.submit(renderItems)
             return
         }
 
@@ -352,19 +429,19 @@ class MainActivity : AppCompatActivity() {
         groups.mapNotNull { group ->
             val groupBooks = booksByGroup[group.id].orEmpty().sortedByDescending(::activityTime)
             if (groupBooks.isEmpty()) null else group to groupBooks
-        }.sortedByDescending { (_, groupBooks) ->
-            groupBooks.maxOf(::activityTime)
-        }.forEach { (group, groupBooks) ->
-            addGroupCard(group, groupBooks)
-        }
+        }.sortedByDescending { (_, groupBooks) -> groupBooks.maxOf(::activityTime) }
+            .forEach { (group, groupBooks) -> renderItems += ShelfRenderItem.GroupItem(group, groupBooks) }
 
-        booksByGroup[null].orEmpty()
+        renderItems += booksByGroup[null].orEmpty()
             .sortedByDescending(::activityTime)
-            .forEach { addBookCard(it) }
+            .map(ShelfRenderItem::BookItem)
 
         if (visibleBooks.isEmpty()) {
-            addEmptyText(if (shelfSearchQuery.isBlank()) "点击导入选择小说文件夹" else "没有匹配的书籍")
+            renderItems += ShelfRenderItem.EmptyItem(
+                if (shelfSearchQuery.isBlank()) "点击导入选择小说文件夹" else "没有匹配的书籍"
+            )
         }
+        shelfAdapter.submit(renderItems)
     }
 
     private fun applyShelfAppearance() {
@@ -383,7 +460,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.editButton).setTextColor(primaryText)
     }
 
-    private fun addGroupCard(group: BookGroup, groupBooks: List<ShelfBookItem>) {
+    private fun buildGroupCard(group: BookGroup, groupBooks: List<ShelfBookItem>): View {
         val sortedBooks = groupBooks.sortedByDescending(::activityTime)
         val card = createShelfCard()
         val cover = GridLayout(this).apply {
@@ -431,7 +508,7 @@ class MainActivity : AppCompatActivity() {
             toggleShelfGroupSelection(group.id)
             true
         }
-        shelfGrid.addView(wrapSelectableShelfCard(card, selectedShelfGroupIds.contains(group.id)))
+        return wrapSelectableShelfCard(card, selectedShelfGroupIds.contains(group.id))
     }
 
     private fun groupPreviewLayoutParams(index: Int): GridLayout.LayoutParams {
@@ -446,7 +523,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun addBookCard(book: ShelfBookItem) {
+    private fun buildBookCard(book: ShelfBookItem): View {
         val card = createShelfCard()
         card.addView(createBookCover(book, compact = false))
         // v749: the shelf cover already carries the book title; do not repeat it below the cover.
@@ -468,7 +545,7 @@ class MainActivity : AppCompatActivity() {
             toggleShelfBookSelection(book.id)
             true
         }
-        shelfGrid.addView(wrapSelectableShelfCard(card, selectedShelfBookIds.contains(book.id)))
+        return wrapSelectableShelfCard(card, selectedShelfBookIds.contains(book.id))
     }
 
     private fun createBookCover(book: ShelfBookItem, compact: Boolean): View {
@@ -527,22 +604,27 @@ class MainActivity : AppCompatActivity() {
 
         coverBitmapCache.get(book.id)?.let(::showBitmap)
         if (book.format.equals("EPUB", ignoreCase = true) && coverBitmapCache.get(book.id) == null) {
-            lifecycleScope.launch {
+            val generation = shelfCoverGeneration
+            val job = lifecycleScope.launch {
                 val bitmap = withContext(Dispatchers.IO) {
-                    runCatching {
-                        StructuredBookCache.coverFile(this@MainActivity, book.id)
-                            ?.takeIf { it.isFile }
-                            ?.let(::decodeShelfCoverFile)
-                            ?: contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
-                                EpubParser.readCoverImage(input)?.let(::decodeShelfCoverBytes)
-                            }
-                    }.getOrNull()
+                    shelfCoverSemaphore.withPermit {
+                        runCatching {
+                            StructuredBookCache.coverFile(this@MainActivity, book.id)
+                                ?.takeIf { it.isFile }
+                                ?.let(::decodeShelfCoverFile)
+                                ?: contentResolver.openInputStream(Uri.parse(book.filePath))?.use { input ->
+                                    EpubParser.readCoverImage(input)?.let(::decodeShelfCoverBytes)
+                                }
+                        }.getOrNull()
+                    }
                 }
-                if (bitmap != null && shelfUiVisible && !isFinishing && !isDestroyed) {
+                if (bitmap != null && generation == shelfCoverGeneration && shelfUiVisible && !isFinishing && !isDestroyed) {
                     coverBitmapCache.put(book.id, bitmap)
                     showBitmap(bitmap)
                 }
             }
+            shelfCoverJobs.add(job)
+            job.invokeOnCompletion { shelfCoverJobs.remove(job) }
         }
         return frame
     }
@@ -627,29 +709,46 @@ class MainActivity : AppCompatActivity() {
             .coerceAtLeast(dp(82))
     }
 
-    private fun addEmptyText(message: String) {
-        shelfGrid.addView(TextView(this).apply {
-            text = message
-            textSize = 18f
-            setTextColor(Color.rgb(110, 106, 98))
-            gravity = Gravity.CENTER
-            layoutParams = GridLayout.LayoutParams().apply {
-                this.width = GridLayout.LayoutParams.MATCH_PARENT
-                this.height = dp(160)
-            }
-        })
+    private fun buildEmptyText(message: String): View = TextView(this).apply {
+        text = message
+        textSize = 18f
+        setTextColor(Color.rgb(110, 106, 98))
+        gravity = Gravity.CENTER
+        minHeight = dp(160)
     }
 
     private fun openBook(bookId: Long) {
-        // V763: MainActivity uses a non-virtualized GridLayout. Release every card/ImageView and
-        // decoded cover before constructing ReaderActivity so the two full UI trees never overlap.
+        // V764: block repeated taps/events until MainActivity resumes from the one reader instance.
+        if (readerLaunchInFlight) {
+            CrashLogStore.recordEvent(this, "reader_launch_suppressed book=$bookId")
+            return
+        }
+        readerLaunchInFlight = true
         shelfUiVisible = false
         releaseShelfUiMemory("before_open_reader")
-        startActivity(Intent(this, ReaderActivity::class.java).putExtra("bookId", bookId))
+        runCatching {
+            startActivity(
+                Intent(this, ReaderActivity::class.java)
+                    .putExtra("bookId", bookId)
+                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
+        }.onFailure {
+            readerLaunchInFlight = false
+            shelfUiVisible = true
+            updateUI()
+            throw it
+        }
     }
 
     private fun releaseShelfUiMemory(reason: String) {
-        if (::shelfGrid.isInitialized) shelfGrid.removeAllViews()
+        shelfCoverGeneration += 1L
+        shelfCoverJobs.toList().forEach(Job::cancel)
+        shelfCoverJobs.clear()
+        if (::shelfGrid.isInitialized) {
+            shelfAdapter.submit(emptyList())
+            shelfGrid.stopScroll()
+            shelfGrid.recycledViewPool.clear()
+        }
         coverBitmapCache.evictAll()
         BookCoverAssets.clearMemoryCache()
         CrashLogStore.recordMemorySnapshot(

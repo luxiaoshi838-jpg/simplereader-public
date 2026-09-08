@@ -15,6 +15,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
@@ -49,6 +50,8 @@ object CrashLogStore {
 
     private val pendingLock = Any()
     private val stateRef = AtomicReference<ReaderState?>(null)
+    private val memoryScheduleGeneration = AtomicLong(0L)
+    private val processSessionId = "${Process.myPid()}-${System.currentTimeMillis()}"
     private val ioExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "jianyu-crash-log-io").apply { isDaemon = true }
     }
@@ -176,6 +179,8 @@ object CrashLogStore {
 
     fun beginReaderSession(context: Context, bookId: Long, turnMode: String) {
         if (bookId <= 0L) return
+        // A new reader invalidates delayed samples that belonged to an older finished reader.
+        memoryScheduleGeneration.incrementAndGet()
         val appContext = context.applicationContext
         val previous = stateRef.get() ?: readReaderState(appContext)
         val preserved = previous?.takeIf { it.bookId == bookId }
@@ -231,7 +236,8 @@ object CrashLogStore {
         enqueueStateWrite(appContext, state, force = true)
         recordEvent(appContext, "$event book=$bookId page=${state.pageIndex} offset=${state.sourceOffset}")
         recordMemorySnapshot(appContext, event)
-        schedulePostReaderMemorySnapshots(appContext)
+        val scheduleGeneration = memoryScheduleGeneration.incrementAndGet()
+        schedulePostReaderMemorySnapshots(appContext, scheduleGeneration)
     }
 
     /**
@@ -248,7 +254,7 @@ object CrashLogStore {
         }
     }
 
-    private fun schedulePostReaderMemorySnapshots(context: Context) {
+    private fun schedulePostReaderMemorySnapshots(context: Context, scheduleGeneration: Long) {
         val appContext = context.applicationContext
         listOf(
             5L to TimeUnit.SECONDS,
@@ -258,7 +264,14 @@ object CrashLogStore {
             30L to TimeUnit.MINUTES
         ).forEach { (delay, unit) ->
             ioExecutor.schedule({
-                runCatching { writeMemorySnapshot(appContext, "post_reader_finish_${delay}_${unit.name.lowercase()}", "") }
+                if (memoryScheduleGeneration.get() != scheduleGeneration) return@schedule
+                runCatching {
+                    writeMemorySnapshot(
+                        appContext,
+                        "post_reader_finish_${delay}_${unit.name.lowercase()}",
+                        "scheduleGeneration=$scheduleGeneration"
+                    )
+                }
             }, delay, unit)
         }
     }
@@ -278,9 +291,17 @@ object CrashLogStore {
         val javaCommittedKb = runtime.totalMemory() / 1024L
         val javaMaxKb = runtime.maxMemory() / 1024L
         val nativeAllocatedKb = Debug.getNativeHeapAllocatedSize() / 1024L
+        val packageInfo = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) packageInfo?.longVersionCode else {
+            @Suppress("DEPRECATION") packageInfo?.versionCode?.toLong()
+        }
         val line = buildString {
             append(formatTimestamp(System.currentTimeMillis()))
-            append(" | memory reason=").append(reason)
+            append(" | memory version=").append(packageInfo?.versionName ?: "?")
+            append('(').append(versionCode ?: -1L).append(')')
+            append(" pid=").append(Process.myPid())
+            append(" processSession=").append(processSessionId)
+            append(" reason=").append(reason)
             append(" totalPss=").append(debug.totalPss).append("kB")
             append(" javaPss=").append(stat("summary.java-heap")).append("kB")
             append(" nativePss=").append(stat("summary.native-heap")).append("kB")

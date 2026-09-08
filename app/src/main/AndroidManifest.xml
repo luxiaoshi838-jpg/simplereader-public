@@ -33,7 +33,8 @@
 
         <activity
             android:name=".ui.ReaderActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
 
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

@@ -25,7 +25,9 @@ import com.simplereader.app.reader.page.PageCacheStore
 import com.simplereader.app.reader.page.PageEngine
 import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
+import com.simplereader.app.runtime.ReaderRuntimeState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -186,6 +188,7 @@ class ShelfCacheWorker(
 
         for (index in resumeIndex until total) {
             coroutineContext.ensureActive()
+            awaitForegroundReaderIdle()
             val bookId = checkpoint.bookIds[index]
             val book = withContext(Dispatchers.IO) {
                 database.bookDao().getBook(bookId)
@@ -330,6 +333,7 @@ class ShelfCacheWorker(
                     settings = settings
                 )
 
+                awaitForegroundReaderIdle()
                 val paged = withContext(Dispatchers.Default) {
                     val images = ReaderImageRepository(applicationContext, book.id)
                     PageEngine.paginate(
@@ -424,6 +428,13 @@ class ShelfCacheWorker(
         // commits SUCCEEDED, nextIndex == total makes the recreated worker finish immediately rather
         // than starting the whole shelf again. A later user action has a different workId.
         return Result.success(output)
+    }
+
+    private suspend fun awaitForegroundReaderIdle() {
+        while (ReaderRuntimeState.isReaderForeground()) {
+            coroutineContext.ensureActive()
+            delay(250L)
+        }
     }
 
     private suspend fun hasReusableCurrentCache(
