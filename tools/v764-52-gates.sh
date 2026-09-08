@@ -8,6 +8,9 @@ LEGACY_BACKUP="$(mktemp tools/v749-17-gates.v764-backup.XXXXXX.sh)"
 cp "$LEGACY_GATE" "$LEGACY_BACKUP"
 trap 'cp "$LEGACY_BACKUP" "$LEGACY_GATE"; rm -f "$LEGACY_BACKUP" "$TMP"' EXIT
 
+# V764 keeps the same card content but binds it lazily in RecyclerView, so only the legacy helper
+# name used by Gate 17 changes from addBookCard to buildBookCard. Gate 15 remains adapted from V763
+# for the intentionally removed duplicate content-layer background.
 python3 - "$LEGACY_GATE" <<'PY'
 from pathlib import Path
 import sys
@@ -17,6 +20,8 @@ old = '''grep -Fq 'findViewById<View>(android.R.id.content).background = activeB
 new = '''grep -Fq 'findViewById<View>(android.R.id.content).background = null' "$R" || fail 15 'window content duplicate background was not removed' '''.strip()
 if old in s:
     s = s.replace(old, new, 1)
+s = s.replace("start=s.index('private fun addBookCard(')", "start=s.index('private fun buildBookCard(')")
+s = s.replace("duplicate title remains below cover in addBookCard", "duplicate title remains below cover in buildBookCard")
 p.write_text(s, encoding='utf-8')
 PY
 
