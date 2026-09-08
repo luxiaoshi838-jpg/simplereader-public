@@ -36,6 +36,8 @@ object CrashLogStore {
     private const val MEMORY_JOURNAL_FILE_NAME = "process_memory_diagnostic.txt"
     private const val PREFS_NAME = "crash_log_store"
     private const val PREF_LAST_HANDLED_EXIT_TS = "last_handled_exit_timestamp"
+    private const val PREF_LAST_SEEN_VERSION_CODE = "last_seen_version_code"
+    private const val HISTORY_FILE_NAME = "pending_crash_log_history.txt"
     private const val MAX_LOG_CHARS = 512_000
     private const val MAX_STACK_CHARS = 300_000
     private const val MAX_OOM_STACK_CHARS = 64_000
@@ -111,7 +113,23 @@ object CrashLogStore {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val appContext = context.applicationContext
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val packageInfo = runCatching { appContext.packageManager.getPackageInfo(appContext.packageName, 0) }.getOrNull()
+        val currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo?.longVersionCode ?: -1L
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo?.versionCode?.toLong() ?: -1L
+        }
+        val previousVersionCode = prefs.getLong(PREF_LAST_SEEN_VERSION_CODE, 0L)
+        val isUpgradeLaunch = previousVersionCode > 0L && currentVersionCode > 0L && previousVersionCode != currentVersionCode
+        if (isUpgradeLaunch) {
+            archivePendingBeforeUpgrade(appContext, previousVersionCode, currentVersionCode)
+        }
+        if (currentVersionCode > 0L) {
+            prefs.edit().putLong(PREF_LAST_SEEN_VERSION_CODE, currentVersionCode).apply()
+        }
         val handledTimestamp = prefs.getLong(PREF_LAST_HANDLED_EXIT_TS, 0L)
+        val packageLastUpdateTime = packageInfo?.lastUpdateTime ?: 0L
         val manager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
         val exits = runCatching {
             manager.getHistoricalProcessExitReasons(appContext.packageName, 0, 8)
@@ -121,12 +139,12 @@ object CrashLogStore {
 
         // Advance over both normal and abnormal exits so benign history is never reprocessed.
         prefs.edit().putLong(PREF_LAST_HANDLED_EXIT_TS, newExits.maxOf { it.timestamp }).apply()
+        val state = readReaderState(appContext)
         val abnormal = newExits
-            .filter { isActionableExitReason(it.reason) }
+            .filter { isActionableExit(it, state, packageLastUpdateTime) }
             .maxByOrNull { it.timestamp }
             ?: return
 
-        val state = readReaderState(appContext)
         val journal = readJournal(appContext)
         val memoryJournal = readMemoryJournal(appContext)
         val systemTrace = readExitTrace(abnormal)
@@ -482,18 +500,59 @@ object CrashLogStore {
         builder.appendLine("stateTime=${formatTimestamp(state.timestamp)}")
     }
 
-    private fun isActionableExitReason(reason: Int): Boolean = when (reason) {
-        ApplicationExitInfo.REASON_UNKNOWN,
-        ApplicationExitInfo.REASON_SIGNALED,
-        ApplicationExitInfo.REASON_LOW_MEMORY,
-        ApplicationExitInfo.REASON_CRASH,
-        ApplicationExitInfo.REASON_CRASH_NATIVE,
-        ApplicationExitInfo.REASON_ANR,
-        ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
-        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
-        ApplicationExitInfo.REASON_DEPENDENCY_DIED,
-        ApplicationExitInfo.REASON_OTHER -> true
-        else -> false
+    private fun isActionableExit(
+        info: ApplicationExitInfo,
+        state: ReaderState?,
+        packageLastUpdateTime: Long
+    ): Boolean {
+        // A package update necessarily ends the old process. Never present an exit that predates
+        // the current APK installation as a fresh error on the first launch after updating.
+        if (packageLastUpdateTime > 0L && info.timestamp in 1 until packageLastUpdateTime) return false
+
+        if (info.reason == ApplicationExitInfo.REASON_OTHER) {
+            val description = info.description.orEmpty().lowercase()
+            val cleanReader = state?.active == false && state.event.startsWith("reader_clean_finish")
+            // Android commonly reports cached background-process reclamation this way. It remains in
+            // the memory diagnostics, but a cleanly closed reader must not trigger an error dialog.
+            if (cleanReader && description.contains("normal_mem_pressure")) return false
+        }
+
+        return when (info.reason) {
+            ApplicationExitInfo.REASON_UNKNOWN,
+            ApplicationExitInfo.REASON_SIGNALED,
+            ApplicationExitInfo.REASON_LOW_MEMORY,
+            ApplicationExitInfo.REASON_CRASH,
+            ApplicationExitInfo.REASON_CRASH_NATIVE,
+            ApplicationExitInfo.REASON_ANR,
+            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
+            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+            ApplicationExitInfo.REASON_DEPENDENCY_DIED,
+            ApplicationExitInfo.REASON_OTHER -> true
+            else -> false
+        }
+    }
+
+    private fun archivePendingBeforeUpgrade(context: Context, fromVersion: Long, toVersion: Long) {
+        synchronized(pendingLock) {
+            val pending = pendingFile(context)
+            if (!pending.isFile || pending.length() <= 0L) return
+            val old = runCatching { pending.readText(Charsets.UTF_8) }.getOrDefault("")
+            if (old.isNotBlank()) {
+                val history = File(context.filesDir, HISTORY_FILE_NAME)
+                val existing = runCatching { history.takeIf(File::isFile)?.readText(Charsets.UTF_8).orEmpty() }.getOrDefault("")
+                val section = buildString {
+                    appendLine("================ 升级前历史异常记录：$fromVersion -> $toVersion ================")
+                    appendLine("归档时间：${formatTimestamp(System.currentTimeMillis())}")
+                    append(old)
+                    if (existing.isNotBlank()) {
+                        appendLine()
+                        append(existing)
+                    }
+                }.take(MAX_LOG_CHARS)
+                writeAtomic(history, section)
+            }
+            runCatching { pending.delete() }
+        }
     }
 
     private fun exitReasonName(reason: Int): String = when (reason) {
