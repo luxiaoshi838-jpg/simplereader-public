@@ -31,11 +31,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Apply v765 exit-popup filter
         run: python3 tools/apply-v765-exit-popup-filter.py
-      - run: chmod +x ./gradlew tools/v765-52-gates.sh tools/v764-reader-owner-search-shelf-gates.sh tools/v765-exit-popup-gates.sh tools/v765-full-unit-baseline-gate.sh
+      - run: chmod +x ./gradlew tools/v765-52-gates.sh tools/v765-exit-popup-gates.sh tools/v765-full-unit-baseline-gate.sh
       - name: Run v765 inherited 52 stability gates
         run: bash tools/v765-52-gates.sh
-      - name: Re-run v764 reader ownership search-lock shelf virtualization gates
-        run: bash tools/v764-reader-owner-search-shelf-gates.sh
       - name: Run v765 update and benign-exit popup filtering gates
         run: bash tools/v765-exit-popup-gates.sh
       - name: Verify source diff formatting
