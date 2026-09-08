@@ -3,15 +3,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 TMP="$(mktemp tools/v764-52-generated.XXXXXX.sh)"
-LEGACY_GATE="tools/v749-17-gates.sh"
-LEGACY_BACKUP="$(mktemp tools/v749-17-gates.v764-backup.XXXXXX.sh)"
-cp "$LEGACY_GATE" "$LEGACY_BACKUP"
-trap 'cp "$LEGACY_BACKUP" "$LEGACY_GATE"; rm -f "$LEGACY_BACKUP" "$TMP"' EXIT
+LEGACY_GATE17="tools/v749-17-gates.sh"
+LEGACY_GATE19="tools/v750-19-gates.sh"
+BACKUP17="$(mktemp tools/v749-17-gates.v764-backup.XXXXXX.sh)"
+BACKUP19="$(mktemp tools/v750-19-gates.v764-backup.XXXXXX.sh)"
+cp "$LEGACY_GATE17" "$BACKUP17"
+cp "$LEGACY_GATE19" "$BACKUP19"
+trap 'cp "$BACKUP17" "$LEGACY_GATE17"; cp "$BACKUP19" "$LEGACY_GATE19"; rm -f "$BACKUP17" "$BACKUP19" "$TMP"' EXIT
 
-# V764 keeps the same card content but binds it lazily in RecyclerView, so only the legacy helper
-# name used by Gate 17 changes from addBookCard to buildBookCard. Gate 15 remains adapted from V763
-# for the intentionally removed duplicate content-layer background.
-python3 - "$LEGACY_GATE" <<'PY'
+# V764 keeps the same shelf-card content but binds it lazily in RecyclerView, so historical gates
+# that locate the old addBookCard helper are adapted only to its new buildBookCard name. Gate 15
+# remains adapted from V763 for the intentionally removed duplicate content-layer background.
+python3 - "$LEGACY_GATE17" <<'PY'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
@@ -22,6 +25,15 @@ if old in s:
     s = s.replace(old, new, 1)
 s = s.replace("start=s.index('private fun addBookCard(')", "start=s.index('private fun buildBookCard(')")
 s = s.replace("duplicate title remains below cover in addBookCard", "duplicate title remains below cover in buildBookCard")
+p.write_text(s, encoding='utf-8')
+PY
+
+python3 - "$LEGACY_GATE19" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text(encoding='utf-8')
+s = s.replace("a=m.index('private fun addBookCard(')", "a=m.index('private fun buildBookCard(')")
 p.write_text(s, encoding='utf-8')
 PY
 
