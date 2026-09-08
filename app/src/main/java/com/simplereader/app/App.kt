@@ -23,6 +23,7 @@ class App : Application() {
         // low-memory even when no Java uncaught-exception handler ran. Capture it before the new
         // process starts another reader session, then install the live Java/Kotlin crash handler.
         CrashLogStore.capturePreviousProcessExit(this)
+        CrashLogStore.startProcessSession(this)
         CrashLogStore.install(this)
         CrashLogStore.recordMemorySnapshot(this, "process_start")
     }

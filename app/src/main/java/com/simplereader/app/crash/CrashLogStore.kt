@@ -38,12 +38,16 @@ object CrashLogStore {
     private const val PREF_LAST_HANDLED_EXIT_TS = "last_handled_exit_timestamp"
     private const val PREF_LAST_SEEN_VERSION_CODE = "last_seen_version_code"
     private const val HISTORY_FILE_NAME = "pending_crash_log_history.txt"
+    private const val SYSTEM_EXIT_HISTORY_FILE_NAME = "system_exit_history.txt"
+    private const val DIAGNOSTIC_HISTORY_FILE_NAME = "process_diagnostic_history.txt"
+    private const val PROCESS_SESSION_META_FILE_NAME = "process_session_meta.json"
     private const val MAX_LOG_CHARS = 512_000
     private const val MAX_STACK_CHARS = 300_000
     private const val MAX_OOM_STACK_CHARS = 64_000
     private const val MAX_JOURNAL_CHARS = 96_000
     private const val MAX_MEMORY_JOURNAL_CHARS = 160_000
     private const val MAX_EXIT_TRACE_CHARS = 160_000
+    private const val MAX_HISTORY_CHARS = 512_000
     private const val STATE_FLUSH_MIN_INTERVAL_MS = 850L
 
     @Volatile private var installed = false
@@ -143,13 +147,20 @@ object CrashLogStore {
         // Advance over both normal and abnormal exits so benign history is never reprocessed.
         prefs.edit().putLong(PREF_LAST_HANDLED_EXIT_TS, newExits.maxOf { it.timestamp }).apply()
         val state = readReaderState(appContext)
-        val abnormal = newExits
-            .filter { isActionableExit(it, state, packageLastUpdateTime) }
-            .maxByOrNull { it.timestamp }
-            ?: return
-
+        val previousSessionMeta = readProcessSessionMeta(appContext)
         val journal = readJournal(appContext)
         val memoryJournal = readMemoryJournal(appContext)
+        val abnormal = newExits
+            .filter { isActionableExit(it, packageLastUpdateTime) }
+            .maxByOrNull { it.timestamp }
+        if (abnormal == null) {
+            newExits
+                .filter { isSilentBackgroundReclaim(it, packageLastUpdateTime) }
+                .maxByOrNull { it.timestamp }
+                ?.let { archiveSystemExitSilently(appContext, it, state, previousSessionMeta, memoryJournal, journal) }
+            return
+        }
+
         val systemTrace = readExitTrace(abnormal)
         val section = buildString {
             appendLine("简阅异常进程退出记录（Android 系统）")
@@ -161,6 +172,7 @@ object CrashLogStore {
             appendLine("RSS：${abnormal.rss} kB")
             appendLine("进程：${abnormal.processName.orEmpty()}")
             abnormal.description?.takeIf { it.isNotBlank() }?.let { appendLine("系统描述：$it") }
+            previousSessionMeta.takeIf { it.isNotBlank() }?.let { appendLine("上一进程会话：$it") }
             appendLine()
             appendReaderState(this, state)
             if (memoryJournal.isNotBlank()) {
@@ -197,6 +209,54 @@ object CrashLogStore {
             out.toString()
         }
     }.getOrDefault("")
+
+    /**
+     * V766: after the previous process exit has been captured, rotate its journals and start a
+     * clean process-local diagnostic stream. Reader recovery state is intentionally not cleared.
+     */
+    fun startProcessSession(context: Context) {
+        val appContext = context.applicationContext
+        synchronized(pendingLock) {
+            val oldMeta = readProcessSessionMeta(appContext)
+            val oldMemory = readMemoryJournal(appContext)
+            val oldJournal = readJournal(appContext)
+            if (oldMeta.isNotBlank() || oldMemory.isNotBlank() || oldJournal.isNotBlank()) {
+                val section = buildString {
+                    appendLine("================ 已轮转进程诊断 ================")
+                    if (oldMeta.isNotBlank()) appendLine("进程会话：$oldMeta")
+                    if (oldMemory.isNotBlank()) {
+                        appendLine("内存流水：")
+                        append(oldMemory.takeLast(MAX_MEMORY_JOURNAL_CHARS))
+                    }
+                    if (oldJournal.isNotBlank()) {
+                        appendLine()
+                        appendLine("事件流水：")
+                        append(oldJournal.takeLast(MAX_JOURNAL_CHARS))
+                    }
+                }
+                prependBounded(diagnosticHistoryFile(appContext), section, MAX_HISTORY_CHARS)
+            }
+            runCatching { memoryJournalFile(appContext).delete() }
+            runCatching { journalFile(appContext).delete() }
+
+            val packageInfo = runCatching {
+                appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            }.getOrNull()
+            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo?.longVersionCode ?: -1L
+            } else {
+                @Suppress("DEPRECATION") packageInfo?.versionCode?.toLong() ?: -1L
+            }
+            val meta = JSONObject()
+                .put("versionName", packageInfo?.versionName ?: "?")
+                .put("versionCode", versionCode)
+                .put("pid", Process.myPid())
+                .put("processSession", processSessionId)
+                .put("startedAt", System.currentTimeMillis())
+                .toString()
+            writeAtomic(processSessionMetaFile(appContext), meta)
+        }
+    }
 
     fun beginReaderSession(context: Context, bookId: Long, turnMode: String) {
         if (bookId <= 0L) return
@@ -505,20 +565,11 @@ object CrashLogStore {
 
     private fun isActionableExit(
         info: ApplicationExitInfo,
-        state: ReaderState?,
         packageLastUpdateTime: Long
     ): Boolean {
-        // A package update necessarily ends the old process. Never present an exit that predates
-        // the current APK installation as a fresh error on the first launch after updating.
+        // Package replacement stops the previous process; never present that as a new-version crash.
         if (packageLastUpdateTime > 0L && info.timestamp in 1 until packageLastUpdateTime) return false
-
-        if (info.reason == ApplicationExitInfo.REASON_OTHER) {
-            val description = info.description.orEmpty().lowercase()
-            val cleanReader = state?.active == false && state.event.startsWith("reader_clean_finish")
-            // Android commonly reports cached background-process reclamation this way. It remains in
-            // the memory diagnostics, but a cleanly closed reader must not trigger an error dialog.
-            if (cleanReader && description.contains("normal_mem_pressure")) return false
-        }
+        if (isSilentBackgroundReclaim(info, packageLastUpdateTime)) return false
 
         return when (info.reason) {
             ApplicationExitInfo.REASON_UNKNOWN,
@@ -533,6 +584,53 @@ object CrashLogStore {
             ApplicationExitInfo.REASON_OTHER -> true
             else -> false
         }
+    }
+
+    private fun isSilentBackgroundReclaim(
+        info: ApplicationExitInfo,
+        packageLastUpdateTime: Long
+    ): Boolean {
+        if (packageLastUpdateTime > 0L && info.timestamp in 1 until packageLastUpdateTime) return false
+        val cachedOrWorse = info.importance >= ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED
+        if (!cachedOrWorse) return false
+        return when (info.reason) {
+            ApplicationExitInfo.REASON_OTHER -> info.description.orEmpty().lowercase().contains("mem_pressure")
+            ApplicationExitInfo.REASON_LOW_MEMORY -> true
+            else -> false
+        }
+    }
+
+    private fun archiveSystemExitSilently(
+        context: Context,
+        info: ApplicationExitInfo,
+        state: ReaderState?,
+        previousSessionMeta: String,
+        memoryJournal: String,
+        journal: String
+    ) {
+        val section = buildString {
+            appendLine("================ 后台系统回收（静默，不弹窗） ================")
+            appendLine("退出时间：${formatTimestamp(info.timestamp)}")
+            appendLine("退出原因：${exitReasonName(info.reason)} (${info.reason})")
+            appendLine("importance：${info.importance}")
+            appendLine("PSS：${info.pss} kB")
+            appendLine("RSS：${info.rss} kB")
+            info.description?.takeIf { it.isNotBlank() }?.let { appendLine("系统描述：$it") }
+            previousSessionMeta.takeIf { it.isNotBlank() }?.let { appendLine("上一进程会话：$it") }
+            appendLine()
+            appendReaderState(this, state)
+            if (memoryJournal.isNotBlank()) {
+                appendLine()
+                appendLine("该进程内存诊断流水：")
+                append(memoryJournal.takeLast(MAX_MEMORY_JOURNAL_CHARS))
+            }
+            if (journal.isNotBlank()) {
+                appendLine()
+                appendLine("该进程诊断流水：")
+                append(journal.takeLast(MAX_JOURNAL_CHARS))
+            }
+        }
+        prependBounded(systemExitHistoryFile(context), section, MAX_HISTORY_CHARS)
     }
 
     private fun archivePendingBeforeUpgrade(context: Context, fromVersion: Long, toVersion: Long) {
@@ -574,6 +672,17 @@ object CrashLogStore {
         ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "DEPENDENCY_DIED/依赖进程死亡"
         ApplicationExitInfo.REASON_OTHER -> "OTHER/其他系统原因"
         else -> "SYSTEM_REASON_$reason"
+    }
+
+    private fun readProcessSessionMeta(context: Context): String = runCatching {
+        val file = processSessionMetaFile(context)
+        if (!file.isFile || file.length() <= 0L) "" else file.readText(Charsets.UTF_8).take(2000)
+    }.getOrDefault("")
+
+    private fun prependBounded(file: File, section: String, maxChars: Int) {
+        val existing = runCatching { file.takeIf(File::isFile)?.readText(Charsets.UTF_8).orEmpty() }.getOrDefault("")
+        val combined = if (existing.isBlank()) section else section + "\n\n" + existing
+        writeAtomic(file, combined.take(maxChars))
     }
 
     private fun readJournal(context: Context): String = runCatching {
@@ -619,4 +728,7 @@ object CrashLogStore {
     private fun readerStateFile(context: Context): File = File(context.filesDir, READER_STATE_FILE_NAME)
     private fun journalFile(context: Context): File = File(context.filesDir, JOURNAL_FILE_NAME)
     private fun memoryJournalFile(context: Context): File = File(context.filesDir, MEMORY_JOURNAL_FILE_NAME)
+    private fun processSessionMetaFile(context: Context): File = File(context.filesDir, PROCESS_SESSION_META_FILE_NAME)
+    private fun systemExitHistoryFile(context: Context): File = File(context.filesDir, SYSTEM_EXIT_HISTORY_FILE_NAME)
+    private fun diagnosticHistoryFile(context: Context): File = File(context.filesDir, DIAGNOSTIC_HISTORY_FILE_NAME)
 }
