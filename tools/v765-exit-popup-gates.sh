@@ -38,6 +38,18 @@ assert 'pending_crash_log_history.txt' in crash
 assert '升级前历史异常记录' in crash
 assert 'pending.delete()' in crash
 
+# This is a deliberately narrow fix: after the patch, only version metadata and CrashLogStore may
+# differ under app/ from V764. That protects ReaderActivity search, V764 ownership, shelf RecyclerView,
+# worker yielding, layouts and every other runtime path from accidental changes.
+changed = subprocess.check_output([
+    'git', 'diff', '--name-only', 'origin/source-v764', '--', 'app/'
+], text=True).splitlines()
+allowed = {
+    'app/build.gradle.kts',
+    'app/src/main/java/com/simplereader/app/crash/CrashLogStore.kt',
+}
+assert set(changed) <= allowed, f'unexpected V765 app changes: {changed}'
+
 # V764 reading-page search is a compatibility lock: no changes allowed in this targeted fix.
 base_sheet = subprocess.check_output([
     'git', 'show', 'origin/source-v764:app/src/main/java/com/simplereader/app/ui/ReaderSearchSheet.kt'
@@ -51,5 +63,5 @@ base_reader = subprocess.check_output([
 ], text=True)
 assert block(reader, '    private fun showContentSearch() {', '    private fun confirmDeleteBookmark(') == block(base_reader, '    private fun showContentSearch() {', '    private fun confirmDeleteBookmark('), 'ReaderActivity search block changed from V764'
 
-print('v765 exit-popup filtering + search compatibility gates: PASS')
+print('v765 exit-popup filtering + narrow-diff + search compatibility gates: PASS')
 PY
