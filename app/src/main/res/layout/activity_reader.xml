@@ -148,54 +148,67 @@
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="54dp"
+                    android:layout_width="42dp"
                     android:layout_height="match_parent"
                     android:gravity="center_vertical"
                     android:text="字号"
                     android:textColor="#EEE9DD"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/fontDecreaseButton"
-                    android:layout_width="72dp"
-                    android:layout_height="36dp"
+                    android:layout_width="50dp"
+                    android:layout_height="34dp"
                     android:gravity="center"
                     android:background="#4A4842"
                     android:text="A-"
                     android:textColor="#EEE9DD"
-                    android:textSize="18sp" />
+                    android:textSize="15sp" />
 
                 <TextView
                     android:id="@+id/fontSizeLabel"
-                    android:layout_width="56dp"
+                    android:layout_width="38dp"
                     android:layout_height="match_parent"
                     android:gravity="center"
                     android:text="18"
                     android:textColor="#EEE9DD"
-                    android:textSize="16sp" />
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/fontIncreaseButton"
-                    android:layout_width="72dp"
-                    android:layout_height="36dp"
+                    android:layout_width="50dp"
+                    android:layout_height="34dp"
                     android:gravity="center"
                     android:background="#4A4842"
                     android:text="A+"
                     android:textColor="#EEE9DD"
-                    android:textSize="18sp" />
+                    android:textSize="15sp" />
 
                 <TextView
                     android:id="@+id/volumeKeyToggleButton"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="14dp"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:background="#4A4842"
-                    android:text="音量键翻页 开"
+                    android:text="音量键翻页"
                     android:textColor="#EEE9DD"
-                    android:textSize="15sp" />
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/selectTextToggleButton"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:background="#4A4842"
+                    android:text="选中文本"
+                    android:textColor="#EEE9DD"
+                    android:textSize="13sp" />
             </LinearLayout>
+
 
             <LinearLayout
                 android:layout_width="match_parent"

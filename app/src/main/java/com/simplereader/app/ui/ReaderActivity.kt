@@ -94,6 +94,7 @@ class ReaderActivity : AppCompatActivity() {
     private var readerTextSizeSp: Float = 18f
     private var pageTurnMode: String = TURN_MODE_OVERLAP
     private var volumeKeyTurnEnabled: Boolean = true
+    private var textSelectionEnabled: Boolean = false
     private var chromeVisible: Boolean = false
     private var searchKeyword: String = ""
     private var searchHits: List<SearchPageHit> = emptyList()
@@ -198,6 +199,7 @@ class ReaderActivity : AppCompatActivity() {
         bindPagedReader()
         bindContinuousReader()
         bindControls()
+        applyTextSelectionSetting()
         applyReaderAppearance(rebindPages = false)
         pagedReaderView.post { loadBook() }
     }
@@ -414,6 +416,12 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.volumeKeyToggleButton).setOnClickListener {
             volumeKeyTurnEnabled = !volumeKeyTurnEnabled
             savePreferences()
+            updateSettingsLabels()
+        }
+        findViewById<TextView>(R.id.selectTextToggleButton).setOnClickListener {
+            textSelectionEnabled = !textSelectionEnabled
+            savePreferences()
+            applyTextSelectionSetting()
             updateSettingsLabels()
         }
         findViewById<TextView>(R.id.themePaperButton).setOnClickListener { selectQuickColor("scene_yellow") }
@@ -754,6 +762,7 @@ class ReaderActivity : AppCompatActivity() {
     internal fun verticalTextSizeSp(): Float = readerTextSizeSp
     internal fun verticalLineSpacingMultiplier(): Float = layoutSettings?.lineSpacingMultiplier ?: 1.75f
     internal fun verticalTextColor(): Int = activePalette().textColor
+    internal fun isTextSelectionEnabled(): Boolean = textSelectionEnabled
     internal fun verticalPaddingLeft(): Int = continuousTextView.paddingLeft
     internal fun verticalPaddingRight(): Int = continuousTextView.paddingRight
     internal fun verticalShouldIgnoreScroll(): Boolean = verticalWindowSuspended || verticalProgrammaticScroll
@@ -1637,6 +1646,7 @@ class ReaderActivity : AppCompatActivity() {
         readerTextSizeSp = prefs.getFloat(PREF_TEXT_SIZE, ReaderAppearance.textSize(this))
         pageTurnMode = prefs.getString(PREF_TURN_MODE, TURN_MODE_OVERLAP) ?: TURN_MODE_OVERLAP
         volumeKeyTurnEnabled = prefs.getBoolean(PREF_VOLUME_KEY, true)
+        textSelectionEnabled = prefs.getBoolean(PREF_TEXT_SELECTION, false)
         autoReadSpeedCpm = prefs.getInt(PREF_AUTO_READ_SPEED, 500).coerceIn(AUTO_READ_MIN_CPM, AUTO_READ_MAX_CPM)
         val storedCategory = prefs.getString(PREF_BACKGROUND_CATEGORY, null)
             ?.let { runCatching { ReaderBackgrounds.Category.valueOf(it) }.getOrNull() }
@@ -1658,15 +1668,30 @@ class ReaderActivity : AppCompatActivity() {
             .putFloat(PREF_TEXT_SIZE, readerTextSizeSp)
             .putString(PREF_TURN_MODE, pageTurnMode)
             .putBoolean(PREF_VOLUME_KEY, volumeKeyTurnEnabled)
+            .putBoolean(PREF_TEXT_SELECTION, textSelectionEnabled)
             .putInt(PREF_AUTO_READ_SPEED, autoReadSpeedCpm)
             .putString(PREF_BACKGROUND_CATEGORY, currentBackgroundSelection().category.name)
             .putString(PREF_BACKGROUND_OPTION, currentBackgroundSelection().optionId)
             .apply()
     }
 
+    private fun applyTextSelectionSetting() {
+        continuousTextView.setTextIsSelectable(textSelectionEnabled)
+        continuousTextView.isLongClickable = textSelectionEnabled
+        pagedReaderView.setTextSelectionEnabled(textSelectionEnabled)
+        verticalAdapter?.refresh()
+    }
+
     private fun updateSettingsLabels() {
         findViewById<TextView>(R.id.fontSizeLabel).text = String.format(Locale.US, "%.0f", readerTextSizeSp)
-        findViewById<TextView>(R.id.volumeKeyToggleButton).text = "音量键翻页 ${if (volumeKeyTurnEnabled) "开" else "关"}"
+        findViewById<TextView>(R.id.volumeKeyToggleButton).apply {
+            text = "音量键翻页"
+            setBackgroundColor(if (volumeKeyTurnEnabled) Color.rgb(239, 122, 40) else Color.rgb(74, 72, 66))
+        }
+        findViewById<TextView>(R.id.selectTextToggleButton).apply {
+            text = "选中文本"
+            setBackgroundColor(if (textSelectionEnabled) Color.rgb(239, 122, 40) else Color.rgb(74, 72, 66))
+        }
         mapOf(
             R.id.turnModeOverlapButton to TURN_MODE_OVERLAP,
             R.id.turnModeSimulateButton to TURN_MODE_SIMULATE,
@@ -1962,6 +1987,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val PREF_TEXT_SIZE = "text_size"
         private const val PREF_TURN_MODE = "turn_mode"
         private const val PREF_VOLUME_KEY = "volume_key_turn"
+        private const val PREF_TEXT_SELECTION = "text_selection_enabled"
         private const val PREF_AUTO_READ_SPEED = "auto_read_speed_cpm"
         private const val PREF_BACKGROUND_CATEGORY = "reader_background_category"
         private const val PREF_BACKGROUND_OPTION = "reader_background_option"

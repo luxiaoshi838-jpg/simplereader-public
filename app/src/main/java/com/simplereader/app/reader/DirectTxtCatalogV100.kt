@@ -3,11 +3,11 @@ package com.simplereader.app.reader
 import com.simplereader.app.reader.page.BookChapter
 
 /**
- * Direct TXT catalog detector. Rule 113 tightens numeral-based headings so ordinary
+ * Direct TXT catalog detector. Rule 114 keeps the Rule 113 numeral safeguards and lets only 第N章 headings ignore trailing punctuation. numeral-based headings so ordinary
  * numeral + classifier/noun phrases are not promoted to catalog entries.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 113
+    const val RULE_VERSION = 114
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
@@ -17,6 +17,7 @@ object DirectTxtCatalogV100 {
     // independent is checked in code by [hasValidStructuralTail], so "3节课" and "3节 课"
     // cannot accidentally collapse into the same regex case.
     private val prefixedStructural = Regex("第\\s*$NUM\\s*$STRUCTURE")
+    private val prefixedChapter = Regex("第\\s*$NUM\\s*章")
     private val numberLeadingUnit = Regex("^\\s*$NUM\\s*$STRUCTURE")
     private val reverseUnit = Regex("^\\s*$STRUCTURE\\s*$NUM")
     private val wrappedLeadingUnit = Regex("^\\s*[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE")
@@ -66,6 +67,11 @@ object DirectTxtCatalogV100 {
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
         if (numericOnly.matches(s)) return null
 
+        // Rule 114: ONLY 第N章/第一章 style headings may ignore punctuation at the END of the
+        // whole title line. Punctuation inside the title still follows Rule 113, and other units
+        // (节/回/卷/篇...) are deliberately unchanged. This also keeps 第12章鱼 from matching.
+        if (recognizePrefixedChapterIgnoringTrailingPunctuation(s)) return s
+
         // 第N章/节/回... may occur after a short title prefix in historical books, but the
         // structural unit itself must be followed by end-of-line, whitespace, or a catalog
         // separator. Immediate ordinary text means it is part of a normal word: 第3节课/第12章鱼.
@@ -93,6 +99,34 @@ object DirectTxtCatalogV100 {
         if (englishChapter.matches(s)) return s
         if (special.matches(s)) return s
         return null
+    }
+
+    private fun recognizePrefixedChapterIgnoringTrailingPunctuation(s: String): Boolean {
+        var end = s.length
+        while (end > 0 && (s[end - 1].isWhitespace() || isUnicodePunctuation(s[end - 1]))) end--
+        if (end == s.length || end <= 0) return false
+        val candidate = s.substring(0, end).trimEnd()
+        if (candidate.isEmpty()) return false
+        if (candidate.count { !it.isWhitespace() } > MAX_VISIBLE_TITLE_CHARS) return false
+        if ('“' in candidate || '”' in candidate || candidate.contains("http", ignoreCase = true)) return false
+        for (m in prefixedChapter.findAll(candidate)) {
+            val markerEnd = m.range.last + 1
+            if (hasValidStructuralTail(candidate, markerEnd) && !hasTerminatorIgnoringSeparatorAt(candidate, markerEnd)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isUnicodePunctuation(c: Char): Boolean = when (Character.getType(c)) {
+        Character.CONNECTOR_PUNCTUATION.toInt(),
+        Character.DASH_PUNCTUATION.toInt(),
+        Character.START_PUNCTUATION.toInt(),
+        Character.END_PUNCTUATION.toInt(),
+        Character.INITIAL_QUOTE_PUNCTUATION.toInt(),
+        Character.FINAL_QUOTE_PUNCTUATION.toInt(),
+        Character.OTHER_PUNCTUATION.toInt() -> true
+        else -> false
     }
 
     /**

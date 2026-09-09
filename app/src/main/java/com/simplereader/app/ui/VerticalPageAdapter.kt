@@ -36,6 +36,8 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
     override fun onBindViewHolder(holder: VerticalPageHolder, position: Int) {
         val view = holder.textView
         view.textSize = activity.verticalTextSizeSp()
+        view.setTextIsSelectable(activity.isTextSelectionEnabled())
+        view.isLongClickable = activity.isTextSelectionEnabled()
         view.setLineSpacing(0f, activity.verticalLineSpacingMultiplier())
         view.setTextColor(activity.verticalTextColor())
         val fontHeight = view.paint.getFontMetricsInt(null)

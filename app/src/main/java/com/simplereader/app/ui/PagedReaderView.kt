@@ -82,6 +82,7 @@ class PagedReaderView @JvmOverloads constructor(
     private var velocityTracker: VelocityTracker? = null
     private val longPressHandler = Handler(Looper.getMainLooper())
     private var longPressTriggered = false
+    private var textSelectionEnabled = false
     private val longPressRunnable = Runnable {
         if (!dragging && !animating) {
             longPressTriggered = true
@@ -162,6 +163,18 @@ class PagedReaderView @JvmOverloads constructor(
     }
 
     fun currentSnapshot(): ReaderPageSnapshot? = currentPage
+
+    /** V767 restores only the native text-selection switch; no rejected legacy reader actions. */
+    fun setTextSelectionEnabled(enabled: Boolean) {
+        textSelectionEnabled = enabled
+        if (enabled) cancelNavigation()
+        previousView.setTextIsSelectable(false)
+        previousView.isLongClickable = false
+        nextView.setTextIsSelectable(false)
+        nextView.isLongClickable = false
+        currentView.setTextIsSelectable(enabled)
+        currentView.isLongClickable = enabled
+    }
 
     fun release() {
         cancelNavigation()
