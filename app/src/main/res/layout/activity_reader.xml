@@ -360,15 +360,14 @@
                 android:textColor="#EEE9DD"
                 android:textSize="17sp" />
 
-            <TextView
+            <ImageButton
                 android:id="@+id/nightButton"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text=""
-                android:textColor="#EEE9DD"
-                android:textSize="28sp" />
+                android:layout_weight="1"     android:background="@android:color/transparent"
+                android:scaleType="centerInside"
+            android:padding="17dp"
+            />
 
             <TextView
                 android:id="@+id/readerSearchButton"

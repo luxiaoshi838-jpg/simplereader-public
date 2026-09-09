@@ -433,7 +433,7 @@ class ReaderActivity : AppCompatActivity() {
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         findViewById<TextView>(R.id.autoReadButton).setOnClickListener { showAutoReadDialog() }
-        findViewById<TextView>(R.id.nightButton).apply {
+        findViewById<ImageButton>(R.id.nightButton).apply {
             refreshDayNightModeIcon()
             setOnClickListener {
                 ReaderAppearance.toggleMode(this@ReaderActivity)
@@ -1670,7 +1670,7 @@ class ReaderActivity : AppCompatActivity() {
     private fun activeBackgroundDrawable() = ReaderBackgrounds.drawable(this, activeBackgroundSelection())
 
     private fun refreshDayNightModeIcon() {
-        val button = findViewById<TextView>(R.id.nightButton)
+        val button = findViewById<ImageButton>(R.id.nightButton)
         DayNightModeIcon.apply(button, this, Color.rgb(238, 233, 221))
     }
 
@@ -1696,7 +1696,7 @@ class ReaderActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = lightSystemBars
         }
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
-        findViewById<TextView>(R.id.nightButton).text = if (night) "☀" else "☾"
+        findViewById<ImageButton>(R.id.nightButton).text = if (night) "☀" else "☾"
         findViewById<TextView>(R.id.themeNightButton).text = if (night) "☀" else "☾"
         updateThemePreviews()
         if (rebindPages && readerBook != null) {

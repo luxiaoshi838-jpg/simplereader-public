@@ -41,16 +41,14 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <TextView
+        <ImageButton
             android:id="@+id/shelfNightButton"
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:background="@android:color/transparent"
-            android:contentDescription="日间夜间模式"
-            android:gravity="center"
-            android:text=""
-            android:textColor="#24211C"
-            android:textSize="28sp" />
+            android:contentDescription="日间夜间模式"     android:scaleType="centerInside"
+            android:padding="8dp"
+            />
 
         <TextView
             android:id="@+id/searchButton"
