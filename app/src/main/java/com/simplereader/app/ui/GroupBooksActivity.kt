@@ -151,7 +151,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 adapter = this@GroupBooksActivity.adapter
                 ShelfFastScroller.attach(this)
                 clipToPadding = false
-                setPadding(0, dp(8), 0, dp(18))
+                setPadding(0, dp(8), dp(28), dp(18))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             })
         }

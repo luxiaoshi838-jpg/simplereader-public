@@ -31,9 +31,10 @@ class ShelfFastScroller private constructor(
     private val trackRect = RectF()
     private val thumbWidth = 10f * density
     private val trackWidth = 2f * density
-    private val edgeInset = 3f * density
+    private val edgeInset = 4f * density
     private val minThumbHeight = 52f * density
-    private val thumbTouchPadding = max(
+    private val thumbHorizontalTouchPadding = 4f * density
+    private val thumbVerticalTouchPadding = max(
         8f * density,
         ViewConfiguration.get(recyclerView.context).scaledTouchSlop.toFloat()
     )
@@ -76,7 +77,7 @@ class ShelfFastScroller private constructor(
         val geometry = geometry() ?: return
         updateThumbRect(geometry)
 
-        val right = parent.width - parent.paddingRight - edgeInset
+        val right = parent.width - edgeInset
         trackRect.set(
             right - trackWidth,
             parent.paddingTop.toFloat(),
@@ -157,11 +158,12 @@ class ShelfFastScroller private constructor(
     private fun isOnVisibleThumb(x: Float, y: Float): Boolean {
         val geometry = geometry() ?: return false
         updateThumbRect(geometry)
+        val contentRight = (recyclerView.width - recyclerView.paddingRight).toFloat()
         val hitRect = RectF(
-            thumbRect.left - thumbTouchPadding,
-            thumbRect.top - thumbTouchPadding,
-            thumbRect.right + thumbTouchPadding,
-            thumbRect.bottom + thumbTouchPadding
+            max(contentRight, thumbRect.left - thumbHorizontalTouchPadding),
+            thumbRect.top - thumbVerticalTouchPadding,
+            (thumbRect.right + thumbHorizontalTouchPadding).coerceAtMost(recyclerView.width.toFloat()),
+            thumbRect.bottom + thumbVerticalTouchPadding
         )
         return hitRect.contains(x, y)
     }
@@ -172,7 +174,7 @@ class ShelfFastScroller private constructor(
             .coerceIn(0, geometry.maxScrollOffset)
         val fraction = currentOffset.toFloat() / geometry.maxScrollOffset.toFloat()
         val top = recyclerView.paddingTop + fraction.coerceIn(0f, 1f) * travel
-        val right = recyclerView.width - recyclerView.paddingRight - edgeInset
+        val right = recyclerView.width - edgeInset
         thumbRect.set(right - thumbWidth, top, right, top + geometry.thumbHeight)
     }
 
