@@ -10,9 +10,10 @@ MAIN_XML=app/src/main/res/layout/activity_main.xml
 GROUP=app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
 SCROLLER=app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt
 
-# Version.
-grep -Fq '2098000777' "$GRADLE"
-grep -Fq 'SIMPLE_READER_VERSION_NAME") ?: "777"' "$GRADLE"
+# This is an inherited behavior gate. Do not pin a historical version number here;
+# the current version's own gate validates versionCode/versionName.
+grep -Fq 'val generatedVersionCode' "$GRADLE"
+grep -Fq 'val generatedVersionName' "$GRADLE"
 
 # Main shelf and group shelf must reserve the same dedicated right-side gutter.
 grep -Fq 'android:paddingEnd="28dp"' "$MAIN_XML"
@@ -44,7 +45,7 @@ SHARED_BINDER=app/src/main/java/com/simplereader/app/ui/DayNightModeIcon.kt
 SHARED_DAY=app/src/main/res/drawable/ic_mode_day_a.xml
 SHARED_NIGHT=app/src/main/res/drawable/ic_mode_night_a.xml
 git diff --quiet origin/source-v776 -- "$READER" "$READER_XML" "$SHARED_BINDER" "$SHARED_DAY" "$SHARED_NIGHT" || {
-  echo 'FAIL: v777 touched reader-page implementation; slider fix must remain shelf/group only'
+  echo 'FAIL: shelf/group slider fix touched reader-page implementation'
   git diff -- origin/source-v776 -- "$READER" "$READER_XML" "$SHARED_BINDER" "$SHARED_DAY" "$SHARED_NIGHT"
   exit 1
 }
@@ -52,4 +53,4 @@ git diff --quiet origin/source-v776 -- "$READER" "$READER_XML" "$SHARED_BINDER" 
 # Preserve the Android-35 startup-safe fast-scroller fix and v771 foreground/background handoff.
 bash tools/v773-startup-fastscroll-gates.sh
 
-echo 'v777 shelf/group fast-scroll gutter gates: PASS'
+echo 'inherited shelf/group fast-scroll gutter gates: PASS'
