@@ -126,7 +126,7 @@
             android:textSize="15sp" />
     </LinearLayout>
 
-    <com.simplereader.app.ui.FastScrollRecyclerView
+    <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/shelfGrid"
         android:layout_width="match_parent"
         android:layout_height="0dp"
