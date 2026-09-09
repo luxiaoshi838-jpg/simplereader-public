@@ -201,9 +201,10 @@ class ShelfFastScroller private constructor(
 
     companion object {
         fun attach(recyclerView: RecyclerView): ShelfFastScroller {
-            recyclerView.isVerticalScrollBarEnabled = false
-            recyclerView.isHorizontalScrollBarEnabled = false
-            recyclerView.isScrollbarFadingEnabled = false
+            // Do not touch View's system scrollbar fading/cache here. On Android 35,
+            // isScrollbarFadingEnabled=false while scrollbars are disabled can allocate a scroll
+            // cache without a ScrollBarDrawable, and the first draw then crashes in
+            // View.onDrawScrollBars(). The shelf uses only this ItemDecoration thumb.
             val scroller = ShelfFastScroller(recyclerView)
             recyclerView.addItemDecoration(scroller)
             recyclerView.addOnItemTouchListener(scroller)
