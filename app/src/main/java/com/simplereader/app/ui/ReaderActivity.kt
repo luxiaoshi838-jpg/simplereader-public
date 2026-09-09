@@ -271,6 +271,7 @@ class ReaderActivity : AppCompatActivity() {
         verticalRecyclerView?.apply {
             stopScroll()
             clearOnScrollListeners()
+            (this as? ReaderTouchObservingRecyclerView)?.touchObserver = null
             setOnTouchListener(null)
             adapter = null
             recycledViewPool.clear()
@@ -287,7 +288,11 @@ class ReaderActivity : AppCompatActivity() {
             continuousTextView.text = ""
             continuousTextView.background = null
         }
-        if (::readerScrollView.isInitialized) readerScrollView.background = null
+        if (::readerScrollView.isInitialized) {
+            (readerScrollView as? ReaderTouchObservingNestedScrollView)?.touchObserver = null
+            readerScrollView.setOnTouchListener(null)
+            readerScrollView.background = null
+        }
         if (::readerRoot.isInitialized) readerRoot.background = null
         findViewById<View>(android.R.id.content)?.background = null
 
@@ -386,17 +391,27 @@ class ReaderActivity : AppCompatActivity() {
         pagedReaderView.onCenterTap = { setReaderChromeVisible(!chromeVisible) }
     }
 
-    private fun bindContinuousReader() {
-        readerScrollView.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> continuousTouchActive = true
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    continuousTouchActive = false
-                    scheduleContinuousWindowShift(readerScrollView.scrollY)
-                }
+    private fun handleContinuousReaderTouch(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> continuousTouchActive = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                continuousTouchActive = false
+                scheduleContinuousWindowShift(readerScrollView.scrollY)
             }
-            continuousGesture.onTouchEvent(event)
-            false
+        }
+        continuousGesture.onTouchEvent(event)
+    }
+
+    private fun bindContinuousReader() {
+        val observingScroll = readerScrollView as? ReaderTouchObservingNestedScrollView
+        if (observingScroll != null) {
+            observingScroll.touchObserver = { event -> handleContinuousReaderTouch(event) }
+            readerScrollView.setOnTouchListener(null)
+        } else {
+            readerScrollView.setOnTouchListener { _, event ->
+                handleContinuousReaderTouch(event)
+                false
+            }
         }
         readerScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (suppressContinuousScroll || pageTurnMode != TURN_MODE_VERTICAL) return@setOnScrollChangeListener
@@ -709,7 +724,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun ensureVerticalReader() {
         if (verticalRecyclerView != null) return
-        val recycler = RecyclerView(this).apply {
+        val recycler = ReaderTouchObservingRecyclerView(this).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
@@ -724,7 +739,7 @@ class ReaderActivity : AppCompatActivity() {
         recycler.layoutManager = manager
         recycler.adapter = adapter
         recycler.addOnScrollListener(VerticalScrollListener(this, manager))
-        recycler.setOnTouchListener(VerticalTouchListener(this))
+        recycler.touchObserver = { event -> verticalHandleTouch(event) }
         readerViewport.addView(recycler, 2)
         verticalRecyclerView = recycler
         verticalLayoutManager = manager

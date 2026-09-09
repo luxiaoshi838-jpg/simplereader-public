@@ -228,7 +228,19 @@ class PagedReaderView @JvmOverloads constructor(
         return true
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (textSelectionEnabled) handleReaderTouchEvent(event)
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // With selectable text enabled the gesture was already observed in dispatchTouchEvent.
+        // Return handled here only as a fallback if the child unexpectedly declines the event.
+        if (textSelectionEnabled) return true
+        return handleReaderTouchEvent(event)
+    }
+
+    private fun handleReaderTouchEvent(event: MotionEvent): Boolean {
         if (isReaderChromeVisible()) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -290,7 +302,9 @@ class PagedReaderView @JvmOverloads constructor(
                     }
                 }
                 if (longPressTriggered) {
-                    longPressTriggered = false
+                    // Do not clear this flag during the same long-press gesture. Native TextView
+                    // selection may now be dragging a word/handle; reader page navigation must stay
+                    // suppressed until ACTION_UP/CANCEL.
                     return true
                 }
                 if (dragging) {
