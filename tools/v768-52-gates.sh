@@ -4,12 +4,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 TMP="$(mktemp tools/v768-52-generated.XXXXXX.sh)"
 LEGACY_GATE17="tools/v749-17-gates.sh"
+LEGACY_GATE18="tools/v749-18-gates.sh"
 LEGACY_GATE19="tools/v750-19-gates.sh"
 BACKUP17="$(mktemp tools/v749-17-gates.v768-backup.XXXXXX.sh)"
+BACKUP18="$(mktemp tools/v749-18-gates.v768-backup.XXXXXX.sh)"
 BACKUP19="$(mktemp tools/v750-19-gates.v768-backup.XXXXXX.sh)"
 cp "$LEGACY_GATE17" "$BACKUP17"
+cp "$LEGACY_GATE18" "$BACKUP18"
 cp "$LEGACY_GATE19" "$BACKUP19"
-trap 'cp "$BACKUP17" "$LEGACY_GATE17"; cp "$BACKUP19" "$LEGACY_GATE19"; rm -f "$BACKUP17" "$BACKUP19" "$TMP"' EXIT
+trap 'cp "$BACKUP17" "$LEGACY_GATE17"; cp "$BACKUP18" "$LEGACY_GATE18"; cp "$BACKUP19" "$LEGACY_GATE19"; rm -f "$BACKUP17" "$BACKUP18" "$BACKUP19" "$TMP"' EXIT
 
 python3 - "$LEGACY_GATE17" <<'PY'
 from pathlib import Path
@@ -22,6 +25,19 @@ if old in s:
     s = s.replace(old, new, 1)
 s = s.replace("start=s.index('private fun addBookCard(')", "start=s.index('private fun buildBookCard(')")
 s = s.replace("duplicate title remains below cover in addBookCard", "duplicate title remains below cover in buildBookCard")
+p.write_text(s, encoding='utf-8')
+PY
+
+python3 - "$LEGACY_GATE18" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text(encoding='utf-8')
+old = '''# v745 applies V104 only at horizontal PagedReaderView snapshot bind/updateAdjacent.\nif p.count('normalizeSnapshot') < 5:\n    raise SystemExit('FAIL 18 horizontal snapshot V104 placement incomplete')'''
+new = '''# V768 still applies V104 only in horizontal PagedReaderView.  The selected-text decorator is\n# inserted immediately before V104 in one helper, so bind/updateAdjacent call that helper instead\n# of spelling normalizeSnapshot five times.\nrequired_horizontal = [\n    'private fun renderSnapshot(snapshot: ReaderPageSnapshot): CharSequence',\n    'ReaderBodyTitleNormalizerV104.normalizeSnapshot(snapshot.copy(content = decorated))',\n    'previousView.text = previous?.let(::renderSnapshot) ?: ""',\n    'currentView.text = renderSnapshot(current)',\n    'nextView.text = next?.let(::renderSnapshot) ?: ""',\n]\nfor token in required_horizontal:\n    if token not in p:\n        raise SystemExit('FAIL 18 horizontal snapshot V104 helper placement incomplete: '+token)\nif p.count('previous?.let(::renderSnapshot)') < 2 or p.count('next?.let(::renderSnapshot)') < 2:\n    raise SystemExit('FAIL 18 horizontal adjacent-page V104 helper placement incomplete')'''
+if old not in s:
+    raise SystemExit('V768 gate18 adaptation failed: historical V104 assertion not found')
+s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 PY
 
