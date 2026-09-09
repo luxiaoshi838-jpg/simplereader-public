@@ -7,8 +7,10 @@ layout = Path('app/src/main/res/layout/activity_reader.xml').read_text(encoding=
 # One row only: 字号/A-/数值/A+ -> 音量键翻页 -> 选中文本.
 assert layout.count('@+id/selectTextToggleButton') == 1
 assert 'android:text="文本"' not in layout, 'selection toggle must not create a separate settings row'
-row_start = layout.index('android:text="字号"')
-row_end = layout.index('</LinearLayout>', row_start)
+font_text = layout.index('android:text="字号"')
+row_start = layout.rfind('<LinearLayout', 0, font_text)
+row_end = layout.index('</LinearLayout>', font_text)
+assert row_start >= 0
 row = layout[row_start:row_end]
 for token in [
     '@+id/fontDecreaseButton',
