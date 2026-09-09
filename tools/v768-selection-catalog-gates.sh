@@ -24,23 +24,33 @@ assert 'recognizePrefixedChapterIgnoringTrailingPunctuation' not in D
 assert 'hasValidStructuralTail(candidate, markerEnd)' in D
 assert 'hasValidStructuralTail(s, end)' in D
 
-for label in ['复制', '翻译', '朗读选中', '笔记', '划线', '摘录', '分享']:
+# Final selected-text action set is exactly: copy, translate, search.
+for label in ['复制', '翻译', '搜索']:
     assert f'"{label}"' in S, label
+for forbidden_label in ['朗读选中', '笔记', '划线', '摘录', '分享']:
+    assert f'"{forbidden_label}"' not in S, forbidden_label
 for token in [
     'ClipboardManager',
     'ClipData.newPlainText',
     'ACTION_COPY',
     'MenuItem.SHOW_AS_ACTION_ALWAYS',
     'Intent.ACTION_PROCESS_TEXT',
+    'ACTION_SEARCH',
+    'Intent.ACTION_WEB_SEARCH',
+    'SearchManager.QUERY',
+    'menu.clear()',
+    'setCustomSelectionActionModeCallback',
+]:
+    assert token in S, token
+for forbidden_token in [
     'TextToSpeech',
-    'UnderlineSpan()',
+    'UnderlineSpan',
     'KIND_NOTE',
     'KIND_EXCERPT',
     'Intent.ACTION_SEND',
-    'setCustomSelectionActionModeCallback',
     'reader_selection_annotations_v1',
 ]:
-    assert token in S, token
+    assert forbidden_token not in S, forbidden_token
 
 for token in [
     'private lateinit var selectionActions: ReaderSelectionActions',
@@ -77,5 +87,5 @@ scroll = V[scroll_start:scroll_end]
 for forbidden in ['CrashLogStore', 'recordReaderPosition', 'recordEvent', 'saveProgress']:
     assert forbidden not in scroll, forbidden
 
-print('v768 selection actions + Rule115 catalog gates: PASS')
+print('v768 copy+translate+search + Rule115 catalog gates: PASS')
 PY
