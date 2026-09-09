@@ -34,10 +34,11 @@ jobs:
         run: |
           if grep -Fq '2098000771' app/build.gradle.kts \
             && grep -Fq 'awaitShelfCacheReaderClaim()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            && grep -Fq 'ShelfCacheHandoff.consumeForegroundCompleted(book.id)' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt; then
+            && grep -Fq 'ShelfCacheHandoff.consumeForegroundCompleted(book.id)' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt \
+            && grep -Fq 'doWorkWithShelfHandoff()' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt; then
             echo 'v771 source patch already persisted; verifying exact persisted source.'
           else
-            python3 tools/apply-v771-shelf-reader-handoff.py
+            python3 tools/apply-v771-shelf-reader-handoff-v2.py
           fi
       - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v771-shelf-reader-handoff-gates.sh
       - name: Run inherited 52 stability gates
