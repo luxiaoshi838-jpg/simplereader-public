@@ -19,7 +19,10 @@ require_fixed 'generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME"
 require_fixed 'awaitShelfCacheReaderClaim()' "$reader"
 require_fixed 'releaseShelfCacheReaderClaim(markCompleted = true)' "$reader"
 require_fixed 'shelf_handoff:foreground_complete' "$reader"
-require_fixed 'ShelfCacheHandoff.beginWork(workId)' "$worker"
+require_fixed 'ShelfCacheHandoff.beginWork(id.toString())' "$worker"
+require_fixed 'doWorkWithShelfHandoff()' "$worker"
+require_fixed 'finally {' "$worker"
+require_fixed 'ShelfCacheHandoff.endWork(id.toString())' "$worker"
 require_fixed 'awaitWorkerBookClaim(book.id)' "$worker"
 require_fixed 'ShelfCacheHandoff.consumeForegroundCompleted(book.id)' "$worker"
 require_fixed 'currentTitle = "${book.title}（阅读器已完成）"' "$worker"
@@ -27,9 +30,14 @@ require_fixed 'ShelfCacheHandoff.releaseWorker(book.id)' "$worker"
 require_fixed 'enum class ReaderClaimResult' "$handoff"
 require_fixed 'WAIT_FOR_WORKER' "$handoff"
 
+if grep -Fq 'override fun onStopped()' "$worker"; then
+  echo "CoroutineWorker.onStopped must not be overridden" >&2
+  exit 1
+fi
+
 # Once a worker owns the current book it must not wait for the foreground reader again, otherwise
-# ReaderActivity waiting for that same worker would deadlock. The only call in doWork is the one at
-# the start of each book; the other textual occurrence is the helper declaration itself.
+# ReaderActivity waiting for that same worker would deadlock. The only call in processing code is
+# the one at the start of each book; the other textual occurrence is the helper declaration itself.
 count="$(grep -Fc 'awaitForegroundReaderIdle()' "$worker")"
 if [ "$count" -ne 2 ]; then
   echo "unexpected awaitForegroundReaderIdle() occurrence count: $count" >&2
