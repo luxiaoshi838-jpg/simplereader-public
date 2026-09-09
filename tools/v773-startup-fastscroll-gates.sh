@@ -16,6 +16,13 @@ grep -Fq '<androidx.recyclerview.widget.RecyclerView' "$XML"
 ! grep -Fq '<com.simplereader.app.ui.FastScrollRecyclerView' "$XML"
 ! grep -Fq 'FastScrollRecyclerView(this@GroupBooksActivity)' "$GROUP"
 
+# The platform scrollbar must stay completely out of the shelf implementation. Android 35 can
+# crash in View.onDrawScrollBars() if scrollbar fading/cache is touched while scrollbars are none.
+grep -Fq 'android:scrollbars="none"' "$XML"
+! grep -Fq 'isScrollbarFadingEnabled' "$SCROLLER"
+! grep -Fq 'isVerticalScrollBarEnabled' "$SCROLLER"
+! grep -Fq 'isHorizontalScrollBarEnabled' "$SCROLLER"
+
 # Same attach-only scroller is used by main shelf and group shelf.
 grep -Fq 'ShelfFastScroller.attach(shelfGrid)' "$MAIN"
 grep -Fq 'ShelfFastScroller.attach(this)' "$GROUP"
