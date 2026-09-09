@@ -22,7 +22,7 @@ if 'setCompoundDrawables' in s or 'button.text =' in s:
     raise SystemExit('DayNightModeIcon still contains TextView compound-drawable path')
 icon.write_text(s, encoding='utf-8')
 
-# Main shelf uses ImageButton.
+# Main shelf uses ImageButton/ImageView API.
 main = root / 'app/src/main/java/com/simplereader/app/ui/MainActivity.kt'
 s = main.read_text(encoding='utf-8')
 s = s.replace('findViewById<TextView>(R.id.shelfNightButton)', 'findViewById<ImageView>(R.id.shelfNightButton)')
@@ -34,35 +34,36 @@ s = reader.read_text(encoding='utf-8')
 s = s.replace('findViewById<TextView>(R.id.nightButton)', 'findViewById<ImageButton>(R.id.nightButton)')
 reader.write_text(s, encoding='utf-8')
 
-# Replace the two toggle view tags with ImageButton and remove all TextView-only visual attributes.
+# Replace the two toggle view tags with ImageButton. Re-running is intentionally a no-op.
 def convert_toggle(path: Path, view_id: str, padding_dp: int):
     text = path.read_text(encoding='utf-8')
-    start = text.find('<TextView\n', max(0, text.find(f'android:id="@+id/{view_id}"') - 200))
-    if start < 0:
-        # Already converted.
-        if f'<ImageButton\n' in text and f'android:id="@+id/{view_id}"' in text:
-            return
-        raise SystemExit(f'{path.name}: start tag for {view_id} not found')
-    id_pos = text.find(f'android:id="@+id/{view_id}"', start)
+    marker = f'android:id="@+id/{view_id}"'
+    id_pos = text.find(marker)
+    if id_pos < 0:
+        raise SystemExit(f'{path.name}: {view_id} not found')
+    start = text.rfind('<', 0, id_pos)
     end = text.find('/>', id_pos)
-    if id_pos < 0 or end < 0:
+    if start < 0 or end < 0:
         raise SystemExit(f'{path.name}: block for {view_id} not found')
-    block = text[start:end+2]
-    if f'android:id="@+id/{view_id}"' not in block:
-        raise SystemExit(f'{path.name}: wrong block selected for {view_id}')
+    block = text[start:end + 2]
+    if block.startswith('<ImageButton'):
+        # Already converted by an earlier CI pass; verify the one-slot carrier contract and stop.
+        if 'android:scaleType="centerInside"' not in block:
+            raise SystemExit(f'{path.name}: converted {view_id} lacks centerInside scaleType')
+        return
+    if not block.startswith('<TextView'):
+        raise SystemExit(f'{path.name}: unexpected carrier for {view_id}')
+
     block = block.replace('<TextView', '<ImageButton', 1)
-    # Remove TextView-only lines.
-    block = re.sub(r'\n\s*android:gravity="[^"]*"', '', block)
-    block = re.sub(r'\n\s*android:text="[^"]*"', '', block)
-    block = re.sub(r'\n\s*android:textColor="[^"]*"', '', block)
-    block = re.sub(r'\n\s*android:textSize="[^"]*"', '', block)
+    block = re.sub(r'\s+android:gravity="[^"]*"', '', block)
+    block = re.sub(r'\s+android:text="[^"]*"', '', block)
+    block = re.sub(r'\s+android:textColor="[^"]*"', '', block)
+    block = re.sub(r'\s+android:textSize="[^"]*"', '', block)
     if 'android:background=' not in block:
-        block = block.replace('/>', '    android:background="@android:color/transparent"\n            />')
+        block = block[:-2].rstrip() + '\n                android:background="@android:color/transparent"\n            />'
     if 'android:scaleType=' not in block:
-        block = block.replace('/>', f'    android:scaleType="centerInside"\n            android:padding="{padding_dp}dp"\n            />')
-    else:
-        block = re.sub(r'android:padding="[^"]*"', f'android:padding="{padding_dp}dp"', block)
-    text = text[:start] + block + text[end+2:]
+        block = block[:-2].rstrip() + f'\n                android:scaleType="centerInside"\n                android:padding="{padding_dp}dp"\n            />'
+    text = text[:start] + block + text[end + 2:]
     path.write_text(text, encoding='utf-8')
 
 convert_toggle(root / 'app/src/main/res/layout/activity_main.xml', 'shelfNightButton', 8)
