@@ -1696,7 +1696,6 @@ class ReaderActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = lightSystemBars
         }
         val night = ReaderAppearance.currentMode(this) == ReaderAppearance.MODE_NIGHT
-        findViewById<ImageButton>(R.id.nightButton).text = if (night) "☀" else "☾"
         findViewById<TextView>(R.id.themeNightButton).text = if (night) "☀" else "☾"
         updateThemePreviews()
         if (rebindPages && readerBook != null) {

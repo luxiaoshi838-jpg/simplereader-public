@@ -478,7 +478,7 @@ class MainActivity : AppCompatActivity() {
         shelfTabTextView.setTextColor(primaryText)
         findViewById<TextView>(R.id.historyTabTextView).setTextColor(secondaryText)
         findViewById<TextView>(R.id.readingStatsTextView).setTextColor(secondaryText)
-        findViewById<ImageView>(R.id.shelfNightButton).setTextColor(primaryText)
+        DayNightModeIcon.apply(findViewById<ImageView>(R.id.shelfNightButton), this, primaryText)
         findViewById<TextView>(R.id.searchButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.moreButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.exportButton).setTextColor(primaryText)
