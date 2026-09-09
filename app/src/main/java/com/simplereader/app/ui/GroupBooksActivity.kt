@@ -146,9 +146,10 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(cancelButton)
             })
 
-            addView(FastScrollRecyclerView(this@GroupBooksActivity).apply {
+            addView(RecyclerView(this@GroupBooksActivity).apply {
                 layoutManager = GridLayoutManager(this@GroupBooksActivity, 3)
                 adapter = this@GroupBooksActivity.adapter
+                ShelfFastScroller.attach(this)
                 clipToPadding = false
                 setPadding(0, dp(8), 0, dp(18))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)

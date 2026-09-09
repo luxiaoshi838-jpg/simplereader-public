@@ -196,6 +196,7 @@ class MainActivity : AppCompatActivity() {
         shelfGrid.adapter = shelfAdapter
         shelfGrid.itemAnimator = null
         shelfGrid.setItemViewCacheSize(12)
+        ShelfFastScroller.attach(shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
         ShelfCacheUiController.attach(this, readingStatsTextView) { updateUI() }
         shelfTabTextView = findViewById(R.id.shelfTabTextView)
