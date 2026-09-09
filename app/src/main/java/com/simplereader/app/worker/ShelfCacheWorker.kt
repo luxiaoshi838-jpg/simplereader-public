@@ -26,6 +26,7 @@ import com.simplereader.app.reader.page.PageEngine
 import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.runtime.ReaderRuntimeState
+import com.simplereader.app.runtime.ShelfCacheHandoff
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -50,6 +51,15 @@ class ShelfCacheWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        ShelfCacheHandoff.beginWork(id.toString())
+        return try {
+            doWorkWithShelfHandoff()
+        } finally {
+            ShelfCacheHandoff.endWork(id.toString())
+        }
+    }
+
+    private suspend fun doWorkWithShelfHandoff(): Result {
         createNotificationChannel()
 
         val mode = inputData.getString(KEY_MODE) ?: MODE_ALL_BOOKS
@@ -256,6 +266,59 @@ class ShelfCacheWorker(
             val currentFileName = currentSource?.name?.takeIf { it.isNotBlank() } ?: book.fileName
             val currentFileSize = currentSource?.length()?.takeIf { it >= 0L } ?: book.fileSize
 
+            awaitWorkerBookClaim(book.id)
+
+            val foregroundCompleted = ShelfCacheHandoff.consumeForegroundCompleted(book.id)
+            if (foregroundCompleted) {
+                val reusableFromForeground = hasReusableCurrentCache(
+                    bookId = book.id,
+                    filePath = book.filePath,
+                    fileName = currentFileName,
+                    fileSize = currentFileSize,
+                    loadDocument = {
+                        ReaderDocumentLoader.load(
+                            context = applicationContext,
+                            book = book,
+                            forceCatalogRefresh = false
+                        )
+                    }
+                )
+                if (reusableFromForeground) {
+                    ShelfCacheHandoff.releaseWorker(book.id)
+                    completed += 1
+                    checkpoint = checkpoint.copy(
+                        nextIndex = index + 1,
+                        completed = completed,
+                        skipped = skipped,
+                        failed = failed
+                    )
+                    withContext(Dispatchers.IO) {
+                        ShelfCacheCheckpointStore.save(applicationContext, workId, checkpoint)
+                    }
+                    publishProgress(
+                        current = displayedIndex,
+                        total = total,
+                        title = book.title,
+                        completed = completed,
+                        skipped = skipped,
+                        failed = failed
+                    )
+                    OperationLogStore.updateShelfCache(
+                        context = applicationContext,
+                        workId = workId,
+                        modeTitle = operationTitle,
+                        state = "运行中",
+                        currentIndex = displayedIndex,
+                        total = total,
+                        currentTitle = "${book.title}（阅读器已完成）",
+                        completed = completed,
+                        failed = failed,
+                        skipped = skipped
+                    )
+                    continue
+                }
+            }
+
             // Race-safe second check only: a target may have been generated in the foreground
             // after the initial prefilter. Only this post-prefilter case is a real runtime skip.
             val alreadyReusable = if (mode == MODE_BOOKS_WITHOUT_CATALOG) {
@@ -277,6 +340,7 @@ class ShelfCacheWorker(
             }
 
             if (alreadyReusable) {
+                ShelfCacheHandoff.releaseWorker(book.id)
                 skipped += 1
                 checkpoint = checkpoint.copy(
                     nextIndex = index + 1,
@@ -333,7 +397,6 @@ class ShelfCacheWorker(
                     settings = settings
                 )
 
-                awaitForegroundReaderIdle()
                 val paged = withContext(Dispatchers.Default) {
                     val images = ReaderImageRepository(applicationContext, book.id)
                     PageEngine.paginate(
@@ -370,6 +433,7 @@ class ShelfCacheWorker(
                 }
             }
 
+            ShelfCacheHandoff.releaseWorker(book.id)
             if (result.isSuccess) completed += 1 else failed += 1
             checkpoint = checkpoint.copy(
                 nextIndex = index + 1,
@@ -434,6 +498,13 @@ class ShelfCacheWorker(
         while (ReaderRuntimeState.isReaderForeground()) {
             coroutineContext.ensureActive()
             delay(250L)
+        }
+    }
+
+    private suspend fun awaitWorkerBookClaim(bookId: Long) {
+        while (!ShelfCacheHandoff.tryClaimForWorker(bookId)) {
+            coroutineContext.ensureActive()
+            delay(100L)
         }
     }
 

@@ -60,8 +60,10 @@ import com.simplereader.app.reader.page.ReaderCacheProfile
 import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
 import com.simplereader.app.runtime.ReaderRuntimeState
+import com.simplereader.app.runtime.ShelfCacheHandoff
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -137,6 +139,7 @@ class ReaderActivity : AppCompatActivity() {
     private var lastDisplayedChapterTitle: String? = null
     private var pendingVerticalDiagnosticEvent: String? = null
     private var readerGeneration: Long = 0L
+    private var shelfCacheClaimBookId: Long = 0L
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -251,6 +254,7 @@ class ReaderActivity : AppCompatActivity() {
         cancelVerticalStateUnlockGuard()
         stopAutoReading(false)
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
+        releaseShelfCacheReaderClaim(markCompleted = false)
         releaseReaderMemory()
         CrashLogStore.recordMemorySnapshot(this, "reader_onDestroy_after_release", memoryDetails)
         if (cleanFinish && ownsReaderSession()) {
@@ -488,6 +492,45 @@ class ReaderActivity : AppCompatActivity() {
         updateSettingsLabels()
     }
 
+    private suspend fun awaitShelfCacheReaderClaim() {
+        var waitLogged = false
+        while (true) {
+            when (ShelfCacheHandoff.tryClaimForReader(bookId)) {
+                ShelfCacheHandoff.ReaderClaimResult.NOT_NEEDED -> return
+                ShelfCacheHandoff.ReaderClaimResult.ACQUIRED -> {
+                    shelfCacheClaimBookId = bookId
+                    CrashLogStore.recordEvent(this, "shelf_handoff:reader_claimed book=$bookId")
+                    return
+                }
+                ShelfCacheHandoff.ReaderClaimResult.WAIT_FOR_WORKER -> {
+                    if (!waitLogged) {
+                        waitLogged = true
+                        CrashLogStore.recordEvent(this, "shelf_handoff:reader_wait_worker book=$bookId")
+                    }
+                    progressLabel.text = "正在完成该书目录…"
+                    delay(100L)
+                }
+            }
+        }
+    }
+
+    private fun releaseShelfCacheReaderClaim(markCompleted: Boolean): Boolean {
+        val claimedBookId = shelfCacheClaimBookId
+        if (claimedBookId <= 0L) return false
+        val addedToCompleted = if (markCompleted) {
+            ShelfCacheHandoff.markForegroundCompleted(claimedBookId)
+        } else {
+            false
+        }
+        ShelfCacheHandoff.releaseReader(claimedBookId)
+        shelfCacheClaimBookId = 0L
+        CrashLogStore.recordEvent(
+            this,
+            "shelf_handoff:reader_released book=$claimedBookId completed=$markCompleted added=$addedToCompleted"
+        )
+        return addedToCompleted
+    }
+
     private fun loadBook() {
         if (bookId <= 0L) return showFatal("书籍记录不存在")
         CrashLogStore.recordEvent(this, "loadBook:start book=$bookId")
@@ -501,6 +544,7 @@ class ReaderActivity : AppCompatActivity() {
                 if (selected.format.equals("CHM", ignoreCase = true)) {
                     error("当前版本已停止支持 CHM：请改用 TXT 或 EPUB")
                 }
+                awaitShelfCacheReaderClaim()
                 val loaded = withContext(Dispatchers.IO) { ReaderDocumentLoader.load(this@ReaderActivity, selected) }
                 document = loaded
                 imageRepository = ReaderImageRepository(this@ReaderActivity, selected.id)
@@ -512,6 +556,7 @@ class ReaderActivity : AppCompatActivity() {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
                 }
             } catch (error: Throwable) {
+                releaseShelfCacheReaderClaim(markCompleted = false)
                 CrashLogStore.recordEvent(this@ReaderActivity, "loadBook:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()}")
                 showFatal(error.message ?: "打开书籍失败")
             }
@@ -581,11 +626,9 @@ class ReaderActivity : AppCompatActivity() {
                     "paginate_success",
                     memoryDiagnosticDetails() + " cached=${cached != null}"
                 )
-                paginationInProgress = false
-                showActiveReader()
-                pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
-                lifecycleScope.launch(Dispatchers.IO) {
-                    runCatching {
+                val shelfHandoffOwned = shelfCacheClaimBookId == selectedBook.id
+                if (shelfHandoffOwned) {
+                    withContext(Dispatchers.IO) {
                         if (cached == null) {
                             PageCacheStore.savePages(this@ReaderActivity, identity, paged)
                         }
@@ -598,8 +641,34 @@ class ReaderActivity : AppCompatActivity() {
                             pageCount = paged.pages.size
                         )
                     }
+                    val addedToShelfCompleted = releaseShelfCacheReaderClaim(markCompleted = true)
+                    CrashLogStore.recordEvent(
+                        this@ReaderActivity,
+                        "shelf_handoff:foreground_complete book=${selectedBook.id} added=$addedToShelfCompleted"
+                    )
+                }
+                paginationInProgress = false
+                showActiveReader()
+                pendingTurnMode?.let { queued -> pendingTurnMode = null; setTurnMode(queued) }
+                if (!shelfHandoffOwned) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        runCatching {
+                            if (cached == null) {
+                                PageCacheStore.savePages(this@ReaderActivity, identity, paged)
+                            }
+                            PageCacheStore.markRecognitionComplete(
+                                context = this@ReaderActivity,
+                                bookId = selectedBook.id,
+                                fileName = selectedBook.fileName,
+                                fileSize = selectedBook.fileSize,
+                                chapterCount = paged.chapters.count { it.catalogVisible },
+                                pageCount = paged.pages.size
+                            )
+                        }
+                    }
                 }
             } catch (error: Throwable) {
+                releaseShelfCacheReaderClaim(markCompleted = false)
                 CrashLogStore.recordEvent(this@ReaderActivity, "paginate:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()} page=$currentPageIndex stable=$lastStableSourceOffset")
                 val rollback = pendingFontRollback
                 if (rollback != null) {
