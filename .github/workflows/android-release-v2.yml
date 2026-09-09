@@ -1,18 +1,18 @@
-name: Build 简阅 v775
+name: Build 简阅 v776
 
 on:
   push:
     branches:
-      - source-v775
+      - source-v776
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000775"
-  SIMPLE_READER_VERSION_NAME: "775"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v775_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000776"
+  SIMPLE_READER_VERSION_NAME: "776"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v776_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v775
+          ref: source-v776
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
@@ -34,38 +34,36 @@ jobs:
         shell: bash
         run: python3 tools/apply-v773-startup-safe-fastscroll.py
 
-      - name: Apply v775 single-image-slot day/night fix
+      - name: Preserve v775 single-image-slot day/night structure
         shell: bash
         run: python3 tools/apply-v775-single-mode-icon.py
 
-      - name: Persist v775 runtime source before validation
+      - name: Apply v776 shelf-only outline daytime sun
+        shell: bash
+        run: python3 tools/apply-v776-shelf-outline-day.py
+
+      - name: Persist v776 runtime source before validation
         shell: bash
         run: |
           if git diff --quiet -- \
             app/build.gradle.kts \
-            app/src/main/java/com/simplereader/app/ui/DayNightModeIcon.kt \
             app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
-            app/src/main/res/layout/activity_main.xml \
-            app/src/main/res/layout/activity_reader.xml; then
-            echo 'v775 runtime source already persisted.'
+            app/src/main/java/com/simplereader/app/ui/ShelfDayNightModeIcon.kt \
+            app/src/main/res/drawable/ic_shelf_mode_day_outline.xml; then
+            echo 'v776 runtime source already persisted.'
           else
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add \
               app/build.gradle.kts \
-              app/src/main/java/com/simplereader/app/ui/DayNightModeIcon.kt \
               app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
-              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-              app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
-              app/src/main/res/layout/activity_main.xml \
-              app/src/main/res/layout/activity_reader.xml
-            git commit -m 'v775：持久化单一日太阳夜月亮图标 [skip ci]'
-            git push origin HEAD:source-v775
+              app/src/main/java/com/simplereader/app/ui/ShelfDayNightModeIcon.kt \
+              app/src/main/res/drawable/ic_shelf_mode_day_outline.xml
+            git commit -m 'v776：持久化仅书架黑边白底太阳图标 [skip ci]'
+            git push origin HEAD:source-v776
           fi
 
-      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh tools/v775-single-mode-icon-gates.sh tools/v775-emulator-launch-test.sh
+      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh tools/v776-shelf-outline-day-gates.sh tools/v776-emulator-launch-test.sh
 
       - name: Run inherited 52 stability gates
         run: bash tools/v770-52-gates.sh
@@ -75,17 +73,17 @@ jobs:
         run: bash tools/v770-instant-selection-gates.sh
       - name: Run compact settings-row layout gate
         run: bash tools/v767-settings-layout-gates.sh
-      - name: Run v775 single-mode icon semantics and startup gates
-        run: bash tools/v775-single-mode-icon-gates.sh
+      - name: Run v776 shelf-only outline sun and reader-unchanged gates
+        run: bash tools/v776-shelf-outline-day-gates.sh
 
       - name: Verify source diff formatting
         run: git diff --check
 
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v770-full-unit-baseline-gate.sh v775-full-unit-tests.log
+        run: bash tools/v770-full-unit-baseline-gate.sh v776-full-unit-tests.log
 
-      - name: Build v775 release
+      - name: Build v776 release
         shell: bash
         run: |
           set -o pipefail
@@ -106,9 +104,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/v775-emulator-launch-test.sh
+          script: bash tools/v776-emulator-launch-test.sh
 
-      - name: Verify v775 APK and export official signer
+      - name: Verify v776 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -118,8 +116,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000775'" apk-package-info.txt
-          grep -Fq "versionName='775'" apk-package-info.txt
+          grep -Fq "versionCode='2098000776'" apk-package-info.txt
+          grep -Fq "versionName='776'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -131,20 +129,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SimpleReader-v775-${{ github.run_number }}
+          name: SimpleReader-v776-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v775-full-unit-tests.log
+            v776-full-unit-tests.log
             gradle-build.log
-            v775-emulator-signature.txt
-            v775-emulator-install.txt
-            v775-emulator-start.txt
-            v775-emulator-logcat.txt
-            v775-emulator-activity.txt
-            v775-emulator-pid.txt
-            v775-emulator-result.txt
+            v776-emulator-signature.txt
+            v776-emulator-install.txt
+            v776-emulator-start.txt
+            v776-emulator-logcat.txt
+            v776-emulator-activity.txt
+            v776-emulator-pid.txt
+            v776-emulator-result.txt
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
           if-no-files-found: warn
