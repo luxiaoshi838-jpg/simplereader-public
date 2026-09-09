@@ -1,18 +1,18 @@
-name: Build 简阅 v767
+name: Build 简阅 v768
 
 on:
   push:
     branches:
-      - source-v767
+      - source-v768
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000767"
-  SIMPLE_READER_VERSION_NAME: "767"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v767_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000768"
+  SIMPLE_READER_VERSION_NAME: "768"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v768_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,27 +22,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v767
+          ref: source-v768
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Apply v767 catalog and reader-setting patch
-        run: |
-          python3 tools/apply-v767-catalog-volume-selection.py
-          python3 tools/apply-v767-settings-row-adjustment.py
-      - run: chmod +x ./gradlew tools/v767-52-gates.sh tools/v767-catalog-volume-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v767-full-unit-baseline-gate.sh
-      - name: Run v767 inherited 52 stability gates
-        run: bash tools/v767-52-gates.sh
-      - name: Run v767 catalog volume and text-selection-only gates
-        run: bash tools/v767-catalog-volume-selection-gates.sh
-      - name: Run v767 compact settings-row layout gate
+      - name: Apply v768 catalog and selected-text actions patch
+        run: python3 tools/apply-v768-selection-catalog.py
+      - run: chmod +x ./gradlew tools/v768-52-gates.sh tools/v768-selection-catalog-gates.sh tools/v767-settings-layout-gates.sh tools/v767-full-unit-baseline-gate.sh
+      - name: Run v768 inherited 52 stability gates
+        run: bash tools/v768-52-gates.sh
+      - name: Run v768 Rule115 and selected-text action gates
+        run: bash tools/v768-selection-catalog-gates.sh
+      - name: Run compact settings-row layout gate
         run: bash tools/v767-settings-layout-gates.sh
       - name: Verify source diff formatting
         run: git diff --check
-      - name: Persist verified v767 source changes
+      - name: Persist verified v768 source changes
         shell: bash
         run: |
           if git diff --quiet -- \
@@ -52,8 +50,8 @@ jobs:
             app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
             app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
             app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
-            app/src/main/res/layout/activity_reader.xml; then
-            echo 'v767 source already persisted.'
+            app/src/main/java/com/simplereader/app/ui/ReaderSelectionActions.kt; then
+            echo 'v768 source already persisted.'
             exit 0
           fi
           git config user.name github-actions[bot]
@@ -65,18 +63,18 @@ jobs:
             app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
             app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
             app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
-            app/src/main/res/layout/activity_reader.xml
-          git commit -m 'v767：放宽第N章尾标点并恢复纯文本选择开关 [skip ci]'
-          git push origin HEAD:source-v767
+            app/src/main/java/com/simplereader/app/ui/ReaderSelectionActions.kt
+          git commit -m 'v768：扩展章节回卷篇尾标点并恢复选中文本完整动作 [skip ci]'
+          git push origin HEAD:source-v768
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v767-full-unit-baseline-gate.sh v767-full-unit-tests.log
-      - name: Build v767 release
+        run: bash tools/v767-full-unit-baseline-gate.sh v768-full-unit-tests.log
+      - name: Build v768 release
         shell: bash
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v767 APK and export official signer
+      - name: Verify v768 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -86,8 +84,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000767'" apk-package-info.txt
-          grep -Fq "versionName='767'" apk-package-info.txt
+          grep -Fq "versionCode='2098000768'" apk-package-info.txt
+          grep -Fq "versionName='768'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -97,12 +95,12 @@ jobs:
           chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v767-${{ github.run_number }}
+          name: SimpleReader-v768-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v767-full-unit-tests.log
+            v768-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
