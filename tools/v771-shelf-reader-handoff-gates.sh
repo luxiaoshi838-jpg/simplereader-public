@@ -14,8 +14,10 @@ require_fixed() {
   }
 }
 
-require_fixed '2098000771' "$build"
-require_fixed 'generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "771"' "$build"
+# This is a behavioral regression gate inherited from v771. Do not pin it to the historical
+# v771 package version: later releases must retain the handoff behavior while incrementing version.
+require_fixed 'val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE")' "$build"
+require_fixed 'val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME")' "$build"
 require_fixed 'awaitShelfCacheReaderClaim()' "$reader"
 require_fixed 'releaseShelfCacheReaderClaim(markCompleted = true)' "$reader"
 require_fixed 'shelf_handoff:foreground_complete' "$reader"
