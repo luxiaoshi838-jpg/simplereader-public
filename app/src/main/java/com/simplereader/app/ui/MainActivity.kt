@@ -237,7 +237,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         findViewById<ImageView>(R.id.shelfNightButton).apply {
-            DayNightModeIcon.apply(
+            ShelfDayNightModeIcon.apply(
                 this,
                 this@MainActivity,
                 ReaderAppearance.shelfTextColor(this@MainActivity)
@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 ReaderAppearance.toggleMode(this@MainActivity)
                 applyShelfAppearance()
-                DayNightModeIcon.apply(
+                ShelfDayNightModeIcon.apply(
                     this,
                     this@MainActivity,
                     ReaderAppearance.shelfTextColor(this@MainActivity)
@@ -310,7 +310,7 @@ class MainActivity : AppCompatActivity() {
         shelfUiVisible = true
         applyShelfAppearance()
         findViewById<ImageView>(R.id.shelfNightButton).let { button ->
-            DayNightModeIcon.apply(
+            ShelfDayNightModeIcon.apply(
                 button,
                 this,
                 ReaderAppearance.shelfTextColor(this)
@@ -478,7 +478,7 @@ class MainActivity : AppCompatActivity() {
         shelfTabTextView.setTextColor(primaryText)
         findViewById<TextView>(R.id.historyTabTextView).setTextColor(secondaryText)
         findViewById<TextView>(R.id.readingStatsTextView).setTextColor(secondaryText)
-        DayNightModeIcon.apply(findViewById<ImageView>(R.id.shelfNightButton), this, primaryText)
+        ShelfDayNightModeIcon.apply(findViewById<ImageView>(R.id.shelfNightButton), this, primaryText)
         findViewById<TextView>(R.id.searchButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.moreButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.exportButton).setTextColor(primaryText)
