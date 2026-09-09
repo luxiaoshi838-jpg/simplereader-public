@@ -1,18 +1,18 @@
-name: Build 简阅 v778
+name: Build 简阅 v779
 
 on:
   push:
     branches:
-      - source-v778
+      - source-v779
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000778"
-  SIMPLE_READER_VERSION_NAME: "778"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v778_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000779"
+  SIMPLE_READER_VERSION_NAME: "779"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v779_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v778
+          ref: source-v779
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
@@ -46,28 +46,32 @@ jobs:
         shell: bash
         run: python3 tools/apply-v777-fastscroll-gutter.py
 
-      - name: Apply v778 centered fast-scroll track
+      - name: Preserve v778 centered fast-scroll track
         shell: bash
         run: python3 tools/apply-v778-center-fastscroll-track.py
 
-      - name: Persist v778 runtime source before validation
+      - name: Apply v779 font repagination regression fix
+        shell: bash
+        run: python3 tools/apply-v779-font-repagination-fix.py
+
+      - name: Persist v779 runtime source before validation
         shell: bash
         run: |
           if git diff --quiet -- \
             app/build.gradle.kts \
-            app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt; then
-            echo 'v778 runtime source already persisted.'
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt; then
+            echo 'v779 runtime source already persisted.'
           else
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add \
               app/build.gradle.kts \
-              app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt
-            git commit -m 'v778：持久化滑块轨道与滑块同中心线 [skip ci]'
-            git push origin HEAD:source-v778
+              app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+            git commit -m 'v779：持久化字号重分页与取消安全修复 [skip ci]'
+            git push origin HEAD:source-v779
           fi
 
-      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh tools/v777-fastscroll-gutter-gates.sh tools/v778-fastscroll-track-center-gates.sh tools/v778-emulator-launch-test.sh
+      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh tools/v779-font-repagination-gates.sh tools/v779-emulator-launch-test.sh tools/v778-emulator-launch-test.sh
 
       - name: Run inherited 52 stability gates
         run: bash tools/v770-52-gates.sh
@@ -77,17 +81,19 @@ jobs:
         run: bash tools/v770-instant-selection-gates.sh
       - name: Run compact settings-row layout gate
         run: bash tools/v767-settings-layout-gates.sh
-      - name: Run v778 fast-scroll track-center gates
-        run: bash tools/v778-fastscroll-track-center-gates.sh
+      - name: Run startup-safe shelf fast-scroll and v771 handoff gates
+        run: bash tools/v773-startup-fastscroll-gates.sh
+      - name: Run v779 font repagination regression gates
+        run: bash tools/v779-font-repagination-gates.sh
 
       - name: Verify source diff formatting
         run: git diff --check
 
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v770-full-unit-baseline-gate.sh v778-full-unit-tests.log
+        run: bash tools/v770-full-unit-baseline-gate.sh v779-full-unit-tests.log
 
-      - name: Build v778 release
+      - name: Build v779 release
         shell: bash
         run: |
           set -o pipefail
@@ -108,9 +114,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/v778-emulator-launch-test.sh
+          script: bash tools/v779-emulator-launch-test.sh
 
-      - name: Verify v778 APK and export official signer
+      - name: Verify v779 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -120,8 +126,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000778'" apk-package-info.txt
-          grep -Fq "versionName='778'" apk-package-info.txt
+          grep -Fq "versionCode='2098000779'" apk-package-info.txt
+          grep -Fq "versionName='779'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -133,20 +139,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SimpleReader-v778-${{ github.run_number }}
+          name: SimpleReader-v779-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v778-full-unit-tests.log
+            v779-full-unit-tests.log
             gradle-build.log
-            v778-emulator-signature.txt
-            v778-emulator-install.txt
-            v778-emulator-start.txt
-            v778-emulator-logcat.txt
-            v778-emulator-activity.txt
-            v778-emulator-pid.txt
-            v778-emulator-result.txt
+            v779-emulator-signature.txt
+            v779-emulator-install.txt
+            v779-emulator-start.txt
+            v779-emulator-logcat.txt
+            v779-emulator-activity.txt
+            v779-emulator-pid.txt
+            v779-emulator-result.txt
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
           if-no-files-found: warn
