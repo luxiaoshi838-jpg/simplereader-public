@@ -1,6 +1,8 @@
 package com.simplereader.app.ui
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.speech.tts.TextToSpeech
@@ -23,9 +25,9 @@ import kotlin.math.abs
 /**
  * Selection toolbar restored in V768.
  *
- * The toolbar is attached only when the reader's “选中文本” switch is enabled.  It keeps the
- * platform Copy/Select-all entries and adds the reader actions requested by the user:
- * 翻译、朗读选中、笔记、划线、摘录、分享。
+ * The toolbar is attached only when the reader's “选中文本” switch is enabled.  Copy is the first
+ * explicit action, followed by the reader actions requested by the user:
+ * 复制、翻译、朗读选中、笔记、划线、摘录、分享。
  *
  * Notes/excerpts/underlines are stored per book in app-private preferences so they survive reader
  * recreation without changing the Room schema.  Only underline has a visual span in the reader;
@@ -70,6 +72,7 @@ class ReaderSelectionActions(private val activity: Activity) {
     ) {
         view.setCustomSelectionActionModeCallback(object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                addAction(menu, ACTION_COPY, "复制", 0, MenuItem.SHOW_AS_ACTION_ALWAYS)
                 addAction(menu, ACTION_TRANSLATE, "翻译", 10)
                 addAction(menu, ACTION_SPEAK, "朗读选中", 20)
                 addAction(menu, ACTION_NOTE, "笔记", 30)
@@ -84,6 +87,7 @@ class ReaderSelectionActions(private val activity: Activity) {
             override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
                 val selected = selected(view, sourceOffsetProvider(), sourceTextProvider()) ?: return false
                 val handled = when (item.itemId) {
+                    ACTION_COPY -> { copy(selected.text); true }
                     ACTION_TRANSLATE -> { translate(selected.text); true }
                     ACTION_SPEAK -> { speak(selected.text); true }
                     ACTION_NOTE -> { showNoteDialog(bookId, selected); true }
@@ -132,8 +136,14 @@ class ReaderSelectionActions(private val activity: Activity) {
         cache.clear()
     }
 
-    private fun addAction(menu: Menu, id: Int, title: String, order: Int) {
-        menu.add(Menu.NONE, id, order, title).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+    private fun addAction(
+        menu: Menu,
+        id: Int,
+        title: String,
+        order: Int,
+        showAsAction: Int = MenuItem.SHOW_AS_ACTION_IF_ROOM
+    ) {
+        menu.add(Menu.NONE, id, order, title).setShowAsAction(showAsAction)
     }
 
     private fun selected(view: TextView, baseOffset: Int, sourceText: String?): Selected? {
@@ -177,6 +187,16 @@ class ReaderSelectionActions(private val activity: Activity) {
             cursor = source.indexOf(selected, cursor + 1)
         }
         return if (best >= 0) best else safeGuess
+    }
+
+    private fun copy(text: String) {
+        val clipboard = activity.getSystemService(ClipboardManager::class.java)
+        if (clipboard == null) {
+            Toast.makeText(activity, "系统剪贴板不可用", Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("简阅选中文本", text))
+        Toast.makeText(activity, "已复制", Toast.LENGTH_SHORT).show()
     }
 
     private fun translate(text: String) {
@@ -364,6 +384,7 @@ class ReaderSelectionActions(private val activity: Activity) {
         private const val MAX_DIALOG_PREVIEW = 220
         private const val SOURCE_MATCH_RADIUS = 256
 
+        private const val ACTION_COPY = 0x535200
         private const val ACTION_TRANSLATE = 0x535201
         private const val ACTION_SPEAK = 0x535202
         private const val ACTION_NOTE = 0x535203
