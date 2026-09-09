@@ -1723,7 +1723,9 @@ class ReaderActivity : AppCompatActivity() {
             selectionActions.clearCallback(continuousTextView)
         }
         pagedReaderView.setTextSelectionEnabled(textSelectionEnabled)
-        verticalAdapter?.refresh()
+        verticalRecyclerView?.let { recycler ->
+            verticalAdapter?.applyTextSelectionStateImmediately(recycler)
+        }
     }
 
     private fun updateSettingsLabels() {

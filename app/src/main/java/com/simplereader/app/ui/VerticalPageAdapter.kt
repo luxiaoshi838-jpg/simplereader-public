@@ -75,6 +75,24 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
         notifyDataSetChanged()
     }
 
+    /**
+     * V770: the selection switch must affect the text that is already on screen in the same UI
+     * turn.  Do not wait for RecyclerView to schedule a later onBindViewHolder pass.
+     * Off-screen rows still receive the same state from onBindViewHolder when they become visible.
+     */
+    fun applyTextSelectionStateImmediately(recyclerView: RecyclerView) {
+        val enabled = activity.isTextSelectionEnabled()
+        for (index in 0 until recyclerView.childCount) {
+            val child = recyclerView.getChildAt(index)
+            val holder = recyclerView.getChildViewHolder(child) as? VerticalPageHolder ?: continue
+            val position = holder.bindingAdapterPosition
+            if (position !in pages.indices) continue
+            holder.textView.setTextIsSelectable(enabled)
+            holder.textView.isLongClickable = enabled
+            activity.bindSelectionActions(holder.textView, pages[position].startOffset)
+        }
+    }
+
     fun release() {
         pages = emptyList()
         rendered.evictAll()
