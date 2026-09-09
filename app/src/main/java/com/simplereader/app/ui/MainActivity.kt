@@ -235,6 +235,15 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        findViewById<TextView>(R.id.shelfNightButton).apply {
+            text = "☾"
+            contentDescription = "日间夜间模式"
+            setOnClickListener {
+                ReaderAppearance.toggleMode(this@MainActivity)
+                applyShelfAppearance()
+                shelfAdapter.notifyDataSetChanged()
+            }
+        }
         findViewById<TextView>(R.id.searchButton).apply {
             text = "⌕"
             setOnClickListener { showShelfSearch() }
@@ -453,6 +462,7 @@ class MainActivity : AppCompatActivity() {
         shelfTabTextView.setTextColor(primaryText)
         findViewById<TextView>(R.id.historyTabTextView).setTextColor(secondaryText)
         findViewById<TextView>(R.id.readingStatsTextView).setTextColor(secondaryText)
+        findViewById<TextView>(R.id.shelfNightButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.searchButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.moreButton).setTextColor(primaryText)
         findViewById<TextView>(R.id.exportButton).setTextColor(primaryText)

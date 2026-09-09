@@ -42,6 +42,17 @@
             android:layout_weight="1" />
 
         <TextView
+            android:id="@+id/shelfNightButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="日间夜间模式"
+            android:gravity="center"
+            android:text="☾"
+            android:textColor="#24211C"
+            android:textSize="28sp" />
+
+        <TextView
             android:id="@+id/searchButton"
             android:layout_width="44dp"
             android:layout_height="44dp"
@@ -115,7 +126,7 @@
             android:textSize="15sp" />
     </LinearLayout>
 
-    <androidx.recyclerview.widget.RecyclerView
+    <com.simplereader.app.ui.FastScrollRecyclerView
         android:id="@+id/shelfGrid"
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -123,5 +134,5 @@
         android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingEnd="14dp"
-        android:scrollbars="vertical" />
+        android:scrollbars="none" />
 </LinearLayout>

@@ -19,10 +19,10 @@ android {
     namespace = "com.simplereader.app"
     compileSdk = 35
 
-    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000771")
+    val generatedVersionCode = (System.getenv("SIMPLE_READER_VERSION_CODE") ?: "2098000772")
         .toIntOrNull()
-        ?: 2098000771
-    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "771"
+        ?: 2098000772
+    val generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "772"
 
     defaultConfig {
         applicationId = "com.simplereader.app"

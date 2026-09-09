@@ -146,7 +146,7 @@ class GroupBooksActivity : AppCompatActivity() {
                 addView(cancelButton)
             })
 
-            addView(RecyclerView(this@GroupBooksActivity).apply {
+            addView(FastScrollRecyclerView(this@GroupBooksActivity).apply {
                 layoutManager = GridLayoutManager(this@GroupBooksActivity, 3)
                 adapter = this@GroupBooksActivity.adapter
                 clipToPadding = false
