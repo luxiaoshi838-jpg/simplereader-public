@@ -2,11 +2,11 @@
 set -euo pipefail
 python3 - <<'PY'
 from pathlib import Path
-import re
 
 B = Path('app/build.gradle.kts').read_text(encoding='utf-8')
 R = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text(encoding='utf-8')
 P = Path('app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt').read_text(encoding='utf-8')
+V = Path('app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt').read_text(encoding='utf-8')
 S = Path('app/src/main/java/com/simplereader/app/ui/ReaderSelectionActions.kt').read_text(encoding='utf-8')
 O = Path('app/src/main/java/com/simplereader/app/ui/ReaderTouchObservingViews.kt').read_text(encoding='utf-8')
 X = Path('app/src/main/res/layout/activity_reader.xml').read_text(encoding='utf-8')
@@ -65,15 +65,15 @@ assert 'recycler.setOnTouchListener(VerticalTouchListener(this))' not in R
 assert 'pagedReaderView.onCenterTap = { setReaderChromeVisible(!chromeVisible) }' in R
 assert 'setReaderChromeVisible(!chromeVisible)' in R
 
-# Search and V761 zero-reset protection remain present.
+# Search and V761 zero-reset protection remain present. The listener invokes the suppression helper.
 for token in [
     'MENU_SEARCH -> { showContentSearch(); true }',
     'ReaderSearchSheet.show(',
-    'verticalShouldSuppressReportedIndex(lastReportedIndex, index, dy)',
     'zeroTeleport = index == 0 && baseline >= 4 && dy >= 0',
     'vertical_idle_recovered_zero',
 ]:
     assert token in R, token
+assert 'verticalShouldSuppressReportedIndex(lastReportedIndex, index, dy)' in V
 
 print('v769 selection + reader touch coexistence gates: PASS')
 PY
