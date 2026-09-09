@@ -2,6 +2,7 @@
 set -euo pipefail
 python3 - <<'PY'
 from pathlib import Path
+import os
 import subprocess
 
 B = Path('app/build.gradle.kts').read_text(encoding='utf-8')
@@ -9,8 +10,10 @@ R = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_tex
 V = Path('app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt').read_text(encoding='utf-8')
 P = Path('app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt').read_text(encoding='utf-8')
 S = Path('app/src/main/java/com/simplereader/app/ui/ReaderSelectionActions.kt').read_text(encoding='utf-8')
+version_code = os.environ.get('SIMPLE_READER_VERSION_CODE', '2098000770')
+version_name = os.environ.get('SIMPLE_READER_VERSION_NAME', '770')
 
-assert '2098000770' in B and '"770"' in B
+assert version_code in B and f'"{version_name}"' in B
 
 # The switch must update current on-screen vertical TextViews synchronously.
 for token in [
@@ -64,5 +67,5 @@ for token in [
 ]:
     assert token in R, token
 
-print('v770 instant selected-text activation gates: PASS')
+print(f'v{version_name} instant selected-text activation gates: PASS')
 PY
