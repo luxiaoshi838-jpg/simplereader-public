@@ -78,10 +78,11 @@ class ShelfFastScroller private constructor(
         updateThumbRect(geometry)
 
         val right = parent.width - edgeInset
+        val thumbCenterX = right - thumbWidth / 2f
         trackRect.set(
-            right - trackWidth,
+            thumbCenterX - trackWidth / 2f,
             parent.paddingTop.toFloat(),
-            right,
+            thumbCenterX + trackWidth / 2f,
             (parent.height - parent.paddingBottom).toFloat()
         )
         canvas.drawRoundRect(trackRect, trackWidth, trackWidth, trackPaint)
