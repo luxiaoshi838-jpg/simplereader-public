@@ -24,9 +24,13 @@ assert 'recognizePrefixedChapterIgnoringTrailingPunctuation' not in D
 assert 'hasValidStructuralTail(candidate, markerEnd)' in D
 assert 'hasValidStructuralTail(s, end)' in D
 
-for label in ['翻译', '朗读选中', '笔记', '划线', '摘录', '分享']:
+for label in ['复制', '翻译', '朗读选中', '笔记', '划线', '摘录', '分享']:
     assert f'"{label}"' in S, label
 for token in [
+    'ClipboardManager',
+    'ClipData.newPlainText',
+    'ACTION_COPY',
+    'MenuItem.SHOW_AS_ACTION_ALWAYS',
     'Intent.ACTION_PROCESS_TEXT',
     'TextToSpeech',
     'UnderlineSpan()',
