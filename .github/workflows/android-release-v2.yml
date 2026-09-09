@@ -118,6 +118,7 @@ jobs:
           chmod +x signing-tools/apksigner
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: SimpleReader-v773-${{ github.run_number }}
           path: |
@@ -135,5 +136,5 @@ jobs:
             v773-emulator-result.txt
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
