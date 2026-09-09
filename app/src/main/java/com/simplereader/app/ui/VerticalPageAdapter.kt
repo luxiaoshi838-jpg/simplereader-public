@@ -54,10 +54,12 @@ class VerticalPageAdapter(private val activity: ReaderActivity) : RecyclerView.A
             rendered.put(position, text)
         }
         // V634 terminal-newline normalization: neighboring items must not manufacture a blank line.
+        text = activity.verticalDecorateSelectionText(pages[position].startOffset, text)
         if (position != pages.lastIndex && text.isNotEmpty() && text.last() == '\n') {
             text = text.subSequence(0, text.length - 1)
         }
         view.setText(text, TextView.BufferType.SPANNABLE)
+        activity.bindSelectionActions(view, pages[position].startOffset)
     }
 
     override fun getItemCount(): Int = pages.size

@@ -55,6 +55,8 @@ class PagedReaderView @JvmOverloads constructor(
     var onBoundaryTurn: ((direction: Int) -> Unit)? = null
     var onCenterTap: (() -> Unit)? = null
     var onLongPress: (() -> Unit)? = null
+    var onBindSelectionActions: ((TextView, Long) -> Unit)? = null
+    var onDecorateSelectionText: ((Long, CharSequence) -> CharSequence)? = null
 
     private val previousView = createPageView()
     private val currentView = createPageView()
@@ -144,9 +146,10 @@ class PagedReaderView @JvmOverloads constructor(
         previousPage = previous
         currentPage = current
         nextPage = next
-        previousView.text = previous?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
-        currentView.text = ReaderBodyTitleNormalizerV104.normalizeSnapshot(current)
-        nextView.text = next?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
+        previousView.text = previous?.let(::renderSnapshot) ?: ""
+        currentView.text = renderSnapshot(current)
+        nextView.text = next?.let(::renderSnapshot) ?: ""
+        if (textSelectionEnabled) onBindSelectionActions?.invoke(currentView, current.startAnchor.sourceOffset)
         resetTransforms()
     }
 
@@ -157,14 +160,14 @@ class PagedReaderView @JvmOverloads constructor(
     ) {
         previousPage = previous
         nextPage = next
-        previousView.text = previous?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
-        nextView.text = next?.let(ReaderBodyTitleNormalizerV104::normalizeSnapshot) ?: ""
+        previousView.text = previous?.let(::renderSnapshot) ?: ""
+        nextView.text = next?.let(::renderSnapshot) ?: ""
         if (!animating && !dragging) resetTransforms()
     }
 
     fun currentSnapshot(): ReaderPageSnapshot? = currentPage
 
-    /** V767 restores only the native text-selection switch; no rejected legacy reader actions. */
+    /** V768 restores the full selected-text toolbar on the current horizontal page. */
     fun setTextSelectionEnabled(enabled: Boolean) {
         textSelectionEnabled = enabled
         if (enabled) cancelNavigation()
@@ -174,6 +177,21 @@ class PagedReaderView @JvmOverloads constructor(
         nextView.isLongClickable = false
         currentView.setTextIsSelectable(enabled)
         currentView.isLongClickable = enabled
+        if (enabled) {
+            currentPage?.let { onBindSelectionActions?.invoke(currentView, it.startAnchor.sourceOffset) }
+        } else {
+            currentView.setCustomSelectionActionModeCallback(null)
+        }
+    }
+
+    private fun renderSnapshot(snapshot: ReaderPageSnapshot): CharSequence {
+        val sourceOffset = snapshot.startAnchor.sourceOffset
+        val decorated = if (sourceOffset >= 0L) {
+            onDecorateSelectionText?.invoke(sourceOffset, snapshot.content) ?: snapshot.content
+        } else {
+            snapshot.content
+        }
+        return ReaderBodyTitleNormalizerV104.normalizeSnapshot(snapshot.copy(content = decorated))
     }
 
     fun release() {
@@ -191,6 +209,8 @@ class PagedReaderView @JvmOverloads constructor(
         onBoundaryTurn = null
         onCenterTap = null
         onLongPress = null
+        onBindSelectionActions = null
+        onDecorateSelectionText = null
     }
 
     fun turn(direction: Int): Boolean {

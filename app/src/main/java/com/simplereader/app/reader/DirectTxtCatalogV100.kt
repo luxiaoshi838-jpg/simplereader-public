@@ -3,11 +3,11 @@ package com.simplereader.app.reader
 import com.simplereader.app.reader.page.BookChapter
 
 /**
- * Direct TXT catalog detector. Rule 114 keeps the Rule 113 numeral safeguards and lets only 第N章 headings ignore trailing punctuation. numeral-based headings so ordinary
+ * Direct TXT catalog detector. Rule 115 keeps the Rule 113 numeral safeguards and lets 第N章/节/回/卷/篇 headings ignore punctuation only at the end of the whole title line. numeral-based headings so ordinary
  * numeral + classifier/noun phrases are not promoted to catalog entries.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 114
+    const val RULE_VERSION = 115
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
@@ -17,7 +17,7 @@ object DirectTxtCatalogV100 {
     // independent is checked in code by [hasValidStructuralTail], so "3节课" and "3节 课"
     // cannot accidentally collapse into the same regex case.
     private val prefixedStructural = Regex("第\\s*$NUM\\s*$STRUCTURE")
-    private val prefixedChapter = Regex("第\\s*$NUM\\s*章")
+    private val prefixedTrailingPunctuationUnit = Regex("第\\s*$NUM\\s*(?:章|节|回|卷|篇)")
     private val numberLeadingUnit = Regex("^\\s*$NUM\\s*$STRUCTURE")
     private val reverseUnit = Regex("^\\s*$STRUCTURE\\s*$NUM")
     private val wrappedLeadingUnit = Regex("^\\s*[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE")
@@ -67,10 +67,10 @@ object DirectTxtCatalogV100 {
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
         if (numericOnly.matches(s)) return null
 
-        // Rule 114: ONLY 第N章/第一章 style headings may ignore punctuation at the END of the
-        // whole title line. Punctuation inside the title still follows Rule 113, and other units
-        // (节/回/卷/篇...) are deliberately unchanged. This also keeps 第12章鱼 from matching.
-        if (recognizePrefixedChapterIgnoringTrailingPunctuation(s)) return s
+        // Rule 115: 第N章/节/回/卷/篇 may ignore punctuation only at the END of the whole title line.
+        // Punctuation inside the title still follows Rule 113, and the structural-tail guard still
+        // rejects ordinary words such as 第3节课 and 第12章鱼.
+        if (recognizePrefixedStructuralIgnoringTrailingPunctuation(s)) return s
 
         // 第N章/节/回... may occur after a short title prefix in historical books, but the
         // structural unit itself must be followed by end-of-line, whitespace, or a catalog
@@ -101,7 +101,7 @@ object DirectTxtCatalogV100 {
         return null
     }
 
-    private fun recognizePrefixedChapterIgnoringTrailingPunctuation(s: String): Boolean {
+    private fun recognizePrefixedStructuralIgnoringTrailingPunctuation(s: String): Boolean {
         var end = s.length
         while (end > 0 && (s[end - 1].isWhitespace() || isUnicodePunctuation(s[end - 1]))) end--
         if (end == s.length || end <= 0) return false
@@ -109,7 +109,7 @@ object DirectTxtCatalogV100 {
         if (candidate.isEmpty()) return false
         if (candidate.count { !it.isWhitespace() } > MAX_VISIBLE_TITLE_CHARS) return false
         if ('“' in candidate || '”' in candidate || candidate.contains("http", ignoreCase = true)) return false
-        for (m in prefixedChapter.findAll(candidate)) {
+        for (m in prefixedTrailingPunctuationUnit.findAll(candidate)) {
             val markerEnd = m.range.last + 1
             if (hasValidStructuralTail(candidate, markerEnd) && !hasTerminatorIgnoringSeparatorAt(candidate, markerEnd)) {
                 return true

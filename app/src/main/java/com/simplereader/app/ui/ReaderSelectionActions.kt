@@ -60,6 +60,13 @@ class ReaderSelectionActions(private val activity: Activity) {
         bookId: Long,
         sourceOffset: Int,
         sourceTextProvider: () -> String?
+    ) = attach(view, bookId, { sourceOffset }, sourceTextProvider)
+
+    fun attach(
+        view: TextView,
+        bookId: Long,
+        sourceOffsetProvider: () -> Int,
+        sourceTextProvider: () -> String?
     ) {
         view.setCustomSelectionActionModeCallback(object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
@@ -75,7 +82,7 @@ class ReaderSelectionActions(private val activity: Activity) {
             override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
 
             override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
-                val selected = selected(view, sourceOffset, sourceTextProvider()) ?: return false
+                val selected = selected(view, sourceOffsetProvider(), sourceTextProvider()) ?: return false
                 val handled = when (item.itemId) {
                     ACTION_TRANSLATE -> { translate(selected.text); true }
                     ACTION_SPEAK -> { speak(selected.text); true }

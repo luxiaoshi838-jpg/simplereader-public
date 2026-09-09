@@ -81,6 +81,7 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var readerSettingsPanel: LinearLayout
     private lateinit var progressSeekBar: SeekBar
     private lateinit var autoReadStopView: TextView
+    private lateinit var selectionActions: ReaderSelectionActions
 
     private var paginationJob: Job? = null
     private var continuousRenderJob: Job? = null
@@ -171,6 +172,7 @@ class ReaderActivity : AppCompatActivity() {
         supportActionBar?.hide()
 
         database = SimpleReaderDatabase.getDatabase(this)
+        selectionActions = ReaderSelectionActions(this)
         readerRoot = findViewById(R.id.readerRoot)
         readerViewport = findViewById(R.id.readerViewport)
         readerTopHaze = findViewById(R.id.readerTopHaze)
@@ -300,6 +302,7 @@ class ReaderActivity : AppCompatActivity() {
         activeSearchHit = null
         continuousHighlightSpan = null
         lastDisplayedChapterTitle = null
+        if (::selectionActions.isInitialized) selectionActions.release()
         ReaderBackgrounds.clearMemoryCaches()
     }
 
@@ -349,6 +352,12 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun bindPagedReader() {
+        pagedReaderView.onBindSelectionActions = { view, sourceOffset ->
+            bindSelectionActions(view, sourceOffset.toInt())
+        }
+        pagedReaderView.onDecorateSelectionText = { sourceOffset, text ->
+            decorateSelectionText(sourceOffset.toInt(), text)
+        }
         pagedReaderView.onTurnCommitted = { direction ->
             clearSearchHighlight()
             val pages = readerBook?.pages.orEmpty()
@@ -759,6 +768,19 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     internal fun verticalRenderPage(page: ReaderPage): CharSequence = renderPage(page)
+    internal fun verticalDecorateSelectionText(sourceOffset: Int, text: CharSequence): CharSequence =
+        if (::selectionActions.isInitialized) selectionActions.decorate(bookId, sourceOffset, text) else text
+
+    internal fun bindSelectionActions(view: TextView, sourceOffset: Int) {
+        if (!::selectionActions.isInitialized || !textSelectionEnabled) {
+            if (::selectionActions.isInitialized) selectionActions.clearCallback(view)
+            return
+        }
+        selectionActions.attach(view, bookId, sourceOffset) { readerBook?.text ?: document?.text }
+    }
+
+    private fun decorateSelectionText(sourceOffset: Int, text: CharSequence): CharSequence =
+        if (::selectionActions.isInitialized) selectionActions.decorate(bookId, sourceOffset, text) else text
     internal fun verticalTextSizeSp(): Float = readerTextSizeSp
     internal fun verticalLineSpacingMultiplier(): Float = layoutSettings?.lineSpacingMultiplier ?: 1.75f
     internal fun verticalTextColor(): Int = activePalette().textColor
@@ -1678,6 +1700,13 @@ class ReaderActivity : AppCompatActivity() {
     private fun applyTextSelectionSetting() {
         continuousTextView.setTextIsSelectable(textSelectionEnabled)
         continuousTextView.isLongClickable = textSelectionEnabled
+        if (textSelectionEnabled) {
+            selectionActions.attach(continuousTextView, bookId, { continuousWindowStartOffset }) {
+                readerBook?.text ?: document?.text
+            }
+        } else {
+            selectionActions.clearCallback(continuousTextView)
+        }
         pagedReaderView.setTextSelectionEnabled(textSelectionEnabled)
         verticalAdapter?.refresh()
     }
