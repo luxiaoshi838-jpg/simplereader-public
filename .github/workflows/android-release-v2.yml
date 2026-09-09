@@ -1,18 +1,18 @@
-name: Build 简阅 v769
+name: Build 简阅 v770
 
 on:
   push:
     branches:
-      - source-v769
+      - source-v770
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000769"
-  SIMPLE_READER_VERSION_NAME: "769"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v769_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000770"
+  SIMPLE_READER_VERSION_NAME: "770"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v770_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,64 +22,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v769
+          ref: source-v770
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Apply v769 selection/touch coexistence patch
+      - name: Apply v770 instant selected-text activation patch
         shell: bash
         run: |
-          if grep -Fq '2098000769' app/build.gradle.kts \
-            && grep -Fq 'private fun handleReaderTouchEvent(event: MotionEvent)' app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
-            && grep -Fq 'ReaderTouchObservingRecyclerView(this)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            && grep -Fq 'ReaderTouchObservingNestedScrollView' app/src/main/res/layout/activity_reader.xml; then
-            echo 'v769 source patch already persisted; verifying exact persisted source.'
+          if grep -Fq '2098000770' app/build.gradle.kts \
+            && grep -Fq 'applyTextSelectionStateImmediately' app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt \
+            && grep -Fq 'verticalAdapter?.applyTextSelectionStateImmediately(recycler)' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt; then
+            echo 'v770 source patch already persisted; verifying exact persisted source.'
           else
-            python3 tools/apply-v769-selection-touch-routing.py
+            python3 tools/apply-v770-instant-selection.py
           fi
-      - run: chmod +x ./gradlew tools/v769-52-gates.sh tools/v769-selection-touch-gates.sh tools/v767-settings-layout-gates.sh tools/v769-full-unit-baseline-gate.sh
-      - name: Run v769 inherited 52 stability gates
-        run: bash tools/v769-52-gates.sh
-      - name: Run v769 selection/touch coexistence gates
-        run: bash tools/v769-selection-touch-gates.sh
+      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh
+      - name: Run v770 inherited 52 stability gates
+        run: bash tools/v770-52-gates.sh
+      - name: Run v770 inherited selection/touch coexistence gates
+        run: bash tools/v770-selection-touch-gates.sh
+      - name: Run v770 instant selection activation gates
+        run: bash tools/v770-instant-selection-gates.sh
       - name: Run compact settings-row layout gate
         run: bash tools/v767-settings-layout-gates.sh
       - name: Verify source diff formatting
         run: git diff --check
-      - name: Persist verified v769 source changes
+      - name: Persist verified v770 source changes
         shell: bash
         run: |
           if git diff --quiet -- \
             app/build.gradle.kts \
-            app/src/main/res/layout/activity_reader.xml \
             app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
-            app/src/main/java/com/simplereader/app/ui/ReaderTouchObservingViews.kt; then
-            echo 'v769 source already persisted.'
+            app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt; then
+            echo 'v770 source already persisted.'
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
             app/build.gradle.kts \
-            app/src/main/res/layout/activity_reader.xml \
             app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/PagedReaderView.kt \
-            app/src/main/java/com/simplereader/app/ui/ReaderTouchObservingViews.kt
-          git commit -m 'v769：选中文本开启时保留阅读页触摸与中心栏切换 [skip ci]'
-          git push origin HEAD:source-v769
+            app/src/main/java/com/simplereader/app/ui/VerticalPageAdapter.kt
+          git commit -m 'v770：选中文本开关立即作用于当前可见页面 [skip ci]'
+          git push origin HEAD:source-v770
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v769-full-unit-baseline-gate.sh v769-full-unit-tests.log
-      - name: Build v769 release
+        run: bash tools/v770-full-unit-baseline-gate.sh v770-full-unit-tests.log
+      - name: Build v770 release
         shell: bash
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v769 APK and export official signer
+      - name: Verify v770 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -89,8 +86,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000769'" apk-package-info.txt
-          grep -Fq "versionName='769'" apk-package-info.txt
+          grep -Fq "versionCode='2098000770'" apk-package-info.txt
+          grep -Fq "versionName='770'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -100,12 +97,12 @@ jobs:
           chmod +x signing-tools/apksigner
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v769-${{ github.run_number }}
+          name: SimpleReader-v770-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v769-full-unit-tests.log
+            v770-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
