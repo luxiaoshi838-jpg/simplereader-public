@@ -48,7 +48,7 @@
             android:background="@android:color/transparent"
             android:contentDescription="日间夜间模式"
             android:gravity="center"
-            android:text="☾"
+            android:text=""
             android:textColor="#24211C"
             android:textSize="28sp" />
 

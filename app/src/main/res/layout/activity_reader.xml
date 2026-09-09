@@ -366,7 +366,7 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
-                android:text="☾"
+                android:text=""
                 android:textColor="#EEE9DD"
                 android:textSize="28sp" />
 

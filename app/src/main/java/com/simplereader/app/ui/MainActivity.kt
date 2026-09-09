@@ -237,11 +237,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
         findViewById<TextView>(R.id.shelfNightButton).apply {
-            text = "☾"
-            contentDescription = "日间夜间模式"
+            DayNightModeIcon.apply(
+                this,
+                this@MainActivity,
+                ReaderAppearance.shelfTextColor(this@MainActivity)
+            )
             setOnClickListener {
                 ReaderAppearance.toggleMode(this@MainActivity)
                 applyShelfAppearance()
+                DayNightModeIcon.apply(
+                    this,
+                    this@MainActivity,
+                    ReaderAppearance.shelfTextColor(this@MainActivity)
+                )
                 shelfAdapter.notifyDataSetChanged()
             }
         }
@@ -301,6 +309,13 @@ class MainActivity : AppCompatActivity() {
         readerLaunchInFlight = false
         shelfUiVisible = true
         applyShelfAppearance()
+        findViewById<TextView>(R.id.shelfNightButton).let { button ->
+            DayNightModeIcon.apply(
+                button,
+                this,
+                ReaderAppearance.shelfTextColor(this)
+            )
+        }
         updateUI()
     }
 

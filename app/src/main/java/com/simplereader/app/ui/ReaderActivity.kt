@@ -433,9 +433,12 @@ class ReaderActivity : AppCompatActivity() {
             readerSettingsPanel.visibility = if (readerSettingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         findViewById<TextView>(R.id.autoReadButton).setOnClickListener { showAutoReadDialog() }
-        findViewById<TextView>(R.id.nightButton).setOnClickListener {
-            ReaderAppearance.toggleMode(this)
-            applyReaderAppearance(rebindPages = true)
+        findViewById<TextView>(R.id.nightButton).apply {
+            refreshDayNightModeIcon()
+            setOnClickListener {
+                ReaderAppearance.toggleMode(this@ReaderActivity)
+                applyReaderAppearance(rebindPages = true)
+            }
         }
         findViewById<TextView>(R.id.previousChapterButton).setOnClickListener { jumpChapter(-1) }
         findViewById<TextView>(R.id.nextChapterButton).setOnClickListener { jumpChapter(1) }
@@ -1666,7 +1669,13 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun activeBackgroundDrawable() = ReaderBackgrounds.drawable(this, activeBackgroundSelection())
 
+    private fun refreshDayNightModeIcon() {
+        val button = findViewById<TextView>(R.id.nightButton)
+        DayNightModeIcon.apply(button, this, Color.rgb(238, 233, 221))
+    }
+
     private fun applyReaderAppearance(rebindPages: Boolean) {
+        refreshDayNightModeIcon()
         val palette = activePalette()
         readerRoot.background = activeBackgroundDrawable()
         verticalAdapter?.refresh()
