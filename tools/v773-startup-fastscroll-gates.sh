@@ -42,7 +42,17 @@ PY
 # Cold-start smoke test must exist and explicitly prove the shelf is the platform RecyclerView.
 grep -Fq 'mainActivityColdStartReachesShelf' "$TEST"
 grep -Fq 'assertTrue(shelf.javaClass == RecyclerView::class.java)' "$TEST"
+set +e
 ./gradlew testDebugUnitTest --tests com.simplereader.app.ui.MainActivityStartupSmokeTest --stacktrace --console=plain
+smoke_code=$?
+set -e
+if [ "$smoke_code" -ne 0 ]; then
+    echo '--- MainActivity startup smoke XML ---'
+    find app/build/test-results/testDebugUnitTest -type f -name 'TEST-*MainActivityStartupSmokeTest*.xml' -print -exec cat {} \; 2>/dev/null || true
+    echo '--- MainActivity startup smoke HTML text candidates ---'
+    grep -RniE 'IllegalStateException|Caused by|MainActivityStartupSmokeTest|Exception' app/build/reports/tests/testDebugUnitTest 2>/dev/null | head -200 || true
+    exit "$smoke_code"
+fi
 
 # Preserve v771 shelf/reader handoff regression.
 bash tools/v771-shelf-reader-handoff-gates.sh
