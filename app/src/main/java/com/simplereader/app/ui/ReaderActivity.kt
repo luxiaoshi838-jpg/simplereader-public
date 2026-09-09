@@ -61,6 +61,7 @@ import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
 import com.simplereader.app.runtime.ReaderRuntimeState
 import com.simplereader.app.runtime.ShelfCacheHandoff
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -116,6 +117,7 @@ class ReaderActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var fontChangeRunnable: Runnable? = null
     private var pendingFontRollback: FontRollback? = null
+    private var fontChangeRequestId: Long = 0L
     private var autoReadSpeedCpm: Int = 500
     private var autoReading = false
     private var autoReadPageRunnable: Runnable? = null
@@ -249,6 +251,8 @@ class ReaderActivity : AppCompatActivity() {
         paginationJob?.cancel()
         continuousRenderJob?.cancel()
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
+        fontChangeRunnable = null
+        fontChangeRequestId += 1L
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
@@ -558,10 +562,16 @@ class ReaderActivity : AppCompatActivity() {
                 if (loaded.fromCacheOnly) {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
                 }
+            } catch (cancelled: CancellationException) {
+                releaseShelfCacheReaderClaim(markCompleted = false)
+                CrashLogStore.recordEvent(this@ReaderActivity, "loadBook:cancelled book=$bookId generation=$readerGeneration")
+                throw cancelled
             } catch (error: Throwable) {
                 releaseShelfCacheReaderClaim(markCompleted = false)
                 CrashLogStore.recordEvent(this@ReaderActivity, "loadBook:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()}")
-                showFatal(error.message ?: "打开书籍失败")
+                if (!isFinishing && !isDestroyed && ownsReaderSession()) {
+                    showFatal(error.message ?: "打开书籍失败")
+                }
             }
         }
     }
@@ -670,9 +680,13 @@ class ReaderActivity : AppCompatActivity() {
                         }
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:cancelled book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset generation=$readerGeneration")
+                throw cancelled
             } catch (error: Throwable) {
                 releaseShelfCacheReaderClaim(markCompleted = false)
                 CrashLogStore.recordEvent(this@ReaderActivity, "paginate:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()} page=$currentPageIndex stable=$lastStableSourceOffset")
+                if (isFinishing || isDestroyed || !ownsReaderSession()) return@launch
                 val rollback = pendingFontRollback
                 if (rollback != null) {
                     pendingFontRollback = null
@@ -680,6 +694,7 @@ class ReaderActivity : AppCompatActivity() {
                     readerBook = rollback.readerBook
                     layoutSettings = rollback.settings
                     currentPageIndex = rollback.pageIndex.coerceIn(0, rollback.readerBook.pages.lastIndex)
+                    lastStableSourceOffset = rollback.sourceOffset.coerceIn(0, rollback.readerBook.text.length)
                     applyReaderContentPadding()
                     savePreferences()
                     updateSettingsLabels()
@@ -1031,6 +1046,7 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun showContinuousFallback(reason: String) {
+        if (isFinishing || isDestroyed || !ownsReaderSession()) return
         val loaded = document ?: return showFatal(reason)
         val anchor = (lastStableSourceOffset
             ?: CrashLogStore.recoveryOffset(this, bookId)
@@ -1570,17 +1586,34 @@ class ReaderActivity : AppCompatActivity() {
         val currentOffset = currentVisibleSourceOffset()
         val requested = (readerTextSizeSp + delta).coerceIn(12f, 36f)
         if (requested == readerTextSizeSp) return
+
+        // Restore the v754 contract: one stable rollback baseline per adjustment burst, a
+        // source-character anchor, and only the latest delayed request may repaginate.
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
-        val oldSize = readerTextSizeSp
-        val oldBook = paged
-        val oldSettings = layoutSettings
-        val oldPage = currentPageIndex
+        fontChangeRunnable = null
+        fontChangeRequestId += 1L
+        val requestId = fontChangeRequestId
+        if (pendingFontRollback == null) {
+            pendingFontRollback = FontRollback(
+                readerTextSizeSp,
+                paged,
+                layoutSettings,
+                currentPageIndex,
+                currentOffset
+            )
+        }
+
+        // If an earlier font pagination already started, cancel it immediately. Its
+        // CancellationException is control flow and is explicitly excluded from failure UI.
+        paginationJob?.cancel()
         readerTextSizeSp = requested
         applyReaderContentPadding()
         savePreferences()
         updateSettingsLabels()
+        progressLabel.text = "字体分页中…"
         fontChangeRunnable = Runnable {
-            pendingFontRollback = FontRollback(oldSize, oldBook, oldSettings, oldPage, currentOffset)
+            fontChangeRunnable = null
+            if (requestId != fontChangeRequestId || isFinishing || isDestroyed || !ownsReaderSession()) return@Runnable
             paginateAndDisplay(currentOffset)
         }.also { mainHandler.postDelayed(it, FONT_CHANGE_DEBOUNCE_MS) }
     }
@@ -2096,6 +2129,10 @@ class ReaderActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun showFatal(message: String) {
+        if (isFinishing || isDestroyed || !ownsReaderSession()) {
+            CrashLogStore.recordEvent(this, "showFatal:suppressed book=$bookId finishing=$isFinishing destroyed=$isDestroyed owner=${ownsReaderSession()}")
+            return
+        }
         CrashLogStore.recordEvent(this, "showFatal book=$bookId message=${message.replace("\n", " ").take(500)}")
         AlertDialog.Builder(this)
             .setTitle("无法打开书籍")
