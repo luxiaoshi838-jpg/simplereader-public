@@ -34,10 +34,6 @@ jobs:
         shell: bash
         run: python3 tools/apply-v773-startup-safe-fastscroll.py
 
-      - name: Preserve v774 A-style icon resources and state binding
-        shell: bash
-        run: python3 tools/apply-v774-day-night-icons.py
-
       - name: Apply v775 single-image-slot day/night fix
         shell: bash
         run: python3 tools/apply-v775-single-mode-icon.py
