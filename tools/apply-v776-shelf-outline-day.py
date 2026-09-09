@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[1]
 
@@ -15,8 +16,9 @@ gradle.write_text(s, encoding='utf-8')
 # DayNightModeIcon remain byte-for-byte unchanged from v775.
 main = root / 'app/src/main/java/com/simplereader/app/ui/MainActivity.kt'
 s = main.read_text(encoding='utf-8')
-s = s.replace('DayNightModeIcon.apply(', 'ShelfDayNightModeIcon.apply(')
-if 'DayNightModeIcon.apply(' in s:
+bare_shared = re.compile(r'(?<![A-Za-z0-9_])DayNightModeIcon\.apply\(')
+s = bare_shared.sub('ShelfDayNightModeIcon.apply(', s)
+if bare_shared.search(s):
     raise SystemExit('MainActivity still contains shared DayNightModeIcon binding')
 main.write_text(s, encoding='utf-8')
 
