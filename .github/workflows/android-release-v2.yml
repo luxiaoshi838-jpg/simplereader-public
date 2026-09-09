@@ -35,6 +35,25 @@ jobs:
         run: |
           python3 tools/apply-v773-startup-safe-fastscroll.py
 
+      - name: Persist startup-safe runtime source before validation
+        shell: bash
+        run: |
+          if git diff --quiet -- \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
+            app/src/main/res/layout/activity_main.xml; then
+            echo 'v773 runtime source already persisted.'
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add \
+              app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+              app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
+              app/src/main/res/layout/activity_main.xml
+            git commit -m 'v773：持久化启动安全书架滑块实现 [skip ci]'
+            git push origin HEAD:source-v773
+          fi
+
       - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh
 
       - name: Run inherited 52 stability gates
@@ -50,25 +69,6 @@ jobs:
 
       - name: Verify source diff formatting
         run: git diff --check
-
-      - name: Persist verified v773 source changes
-        shell: bash
-        run: |
-          if git diff --quiet -- \
-            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
-            app/src/main/res/layout/activity_main.xml; then
-            echo 'v773 runtime source already persisted.'
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add \
-            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
-            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt \
-            app/src/main/res/layout/activity_main.xml
-          git commit -m 'v773：改为附着式滑块并修复启动闪退 [skip ci]'
-          git push origin HEAD:source-v773
 
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
