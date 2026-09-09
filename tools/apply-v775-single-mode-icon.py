@@ -22,16 +22,22 @@ if 'setCompoundDrawables' in s or 'button.text =' in s:
     raise SystemExit('DayNightModeIcon still contains TextView compound-drawable path')
 icon.write_text(s, encoding='utf-8')
 
-# Main shelf uses ImageButton/ImageView API.
+# Main shelf uses ImageView API only. Rebind/tint the single image in applyShelfAppearance().
 main = root / 'app/src/main/java/com/simplereader/app/ui/MainActivity.kt'
 s = main.read_text(encoding='utf-8')
 s = s.replace('findViewById<TextView>(R.id.shelfNightButton)', 'findViewById<ImageView>(R.id.shelfNightButton)')
+s = s.replace(
+    'findViewById<ImageView>(R.id.shelfNightButton).setTextColor(primaryText)',
+    'DayNightModeIcon.apply(findViewById<ImageView>(R.id.shelfNightButton), this, primaryText)'
+)
 main.write_text(s, encoding='utf-8')
 
-# Reader uses ImageButton.
+# Reader uses ImageButton. The old TextView glyph assignment must be removed; refreshDayNightModeIcon()
+# above applyReaderAppearance() is now the sole owner of the toolbar image.
 reader = root / 'app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt'
 s = reader.read_text(encoding='utf-8')
 s = s.replace('findViewById<TextView>(R.id.nightButton)', 'findViewById<ImageButton>(R.id.nightButton)')
+s = s.replace('        findViewById<ImageButton>(R.id.nightButton).text = if (night) "☀" else "☾"\n', '')
 reader.write_text(s, encoding='utf-8')
 
 # Replace the two toggle view tags with ImageButton. Re-running is intentionally a no-op.
@@ -47,7 +53,6 @@ def convert_toggle(path: Path, view_id: str, padding_dp: int):
         raise SystemExit(f'{path.name}: block for {view_id} not found')
     block = text[start:end + 2]
     if block.startswith('<ImageButton'):
-        # Already converted by an earlier CI pass; verify the one-slot carrier contract and stop.
         if 'android:scaleType="centerInside"' not in block:
             raise SystemExit(f'{path.name}: converted {view_id} lacks centerInside scaleType')
         return
@@ -68,5 +73,13 @@ def convert_toggle(path: Path, view_id: str, padding_dp: int):
 
 convert_toggle(root / 'app/src/main/res/layout/activity_main.xml', 'shelfNightButton', 8)
 convert_toggle(root / 'app/src/main/res/layout/activity_reader.xml', 'nightButton', 17)
+
+# Hard-stop if either converted control is still used through TextView-only APIs.
+main_text = main.read_text(encoding='utf-8')
+reader_text = reader.read_text(encoding='utf-8')
+if 'shelfNightButton).setTextColor' in main_text:
+    raise SystemExit('shelfNightButton still uses TextView setTextColor')
+if 'nightButton).text =' in reader_text:
+    raise SystemExit('nightButton still uses TextView text assignment')
 
 print('v775 single-slot mode icons applied: one ImageButton, DAY=sun, NIGHT=moon')
