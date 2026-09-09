@@ -18,7 +18,7 @@ env:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,7 +54,7 @@ jobs:
             git push origin HEAD:source-v773
           fi
 
-      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh
+      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v773-startup-fastscroll-gates.sh tools/v773-emulator-launch-test.sh
 
       - name: Run inherited 52 stability gates
         run: bash tools/v770-52-gates.sh
@@ -79,6 +79,23 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+
+      - name: Enable KVM group access
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+
+      - name: Android 35 real Release cold-launch gate
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/v773-emulator-launch-test.sh
 
       - name: Verify v773 APK and export official signer
         shell: bash
@@ -109,6 +126,13 @@ jobs:
             apk-package-info.txt
             v773-full-unit-tests.log
             gradle-build.log
+            v773-emulator-signature.txt
+            v773-emulator-install.txt
+            v773-emulator-start.txt
+            v773-emulator-logcat.txt
+            v773-emulator-activity.txt
+            v773-emulator-pid.txt
+            v773-emulator-result.txt
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
           if-no-files-found: error
