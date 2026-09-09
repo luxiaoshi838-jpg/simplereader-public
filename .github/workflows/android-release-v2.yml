@@ -1,18 +1,18 @@
-name: Build 简阅 v771
+name: Build 简阅 v772
 
 on:
   push:
     branches:
-      - source-v771
+      - source-v772
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  SIMPLE_READER_VERSION_CODE: "2098000771"
-  SIMPLE_READER_VERSION_NAME: "771"
-  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v771_github_unsigned.apk"
+  SIMPLE_READER_VERSION_CODE: "2098000772"
+  SIMPLE_READER_VERSION_NAME: "772"
+  APK_PATH: "app/build/outputs/apk/release/SimpleReader_v772_github_unsigned.apk"
   MAX_APK_BYTES: "52428800"
 
 jobs:
@@ -22,25 +22,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: source-v771
+          ref: source-v772
           fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Apply v771 shelf/reader handoff patch
+
+      - name: Apply v772 shelf fast-scroll and day/night patch
         shell: bash
         run: |
-          if grep -Fq '2098000771' app/build.gradle.kts \
-            && grep -Fq 'awaitShelfCacheReaderClaim()' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            && grep -Fq 'ShelfCacheHandoff.consumeForegroundCompleted(book.id)' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt \
-            && grep -Fq 'doWorkWithShelfHandoff()' app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt; then
-            echo 'v771 source patch already persisted; verifying exact persisted source.'
+          if grep -Fq '2098000772' app/build.gradle.kts \
+            && grep -Fq '@+id/shelfNightButton' app/src/main/res/layout/activity_main.xml \
+            && grep -Fq 'ReaderAppearance.toggleMode(this@MainActivity)' app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            && grep -Fq 'FastScrollRecyclerView(this@GroupBooksActivity)' app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt; then
+            echo 'v772 source patch already persisted; verifying exact persisted source.'
           else
-            python3 tools/apply-v771-shelf-reader-handoff-v2.py
+            python3 tools/apply-v772-shelf-fastscroll-theme.py
           fi
-      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v771-shelf-reader-handoff-gates.sh
+
+      - run: chmod +x ./gradlew tools/v770-52-gates.sh tools/v770-selection-touch-gates.sh tools/v770-instant-selection-gates.sh tools/v767-settings-layout-gates.sh tools/v770-full-unit-baseline-gate.sh tools/v772-shelf-fastscroll-theme-gates.sh
+
       - name: Run inherited 52 stability gates
         run: bash tools/v770-52-gates.sh
       - name: Run inherited selection/touch coexistence gates
@@ -49,37 +52,44 @@ jobs:
         run: bash tools/v770-instant-selection-gates.sh
       - name: Run compact settings-row layout gate
         run: bash tools/v767-settings-layout-gates.sh
-      - name: Run v771 shelf/reader handoff regression gates
-        run: bash tools/v771-shelf-reader-handoff-gates.sh
+      - name: Run v772 shelf fast-scroll and day/night gates
+        run: bash tools/v772-shelf-fastscroll-theme-gates.sh
+
       - name: Verify source diff formatting
         run: git diff --check
-      - name: Persist verified v771 source changes
+
+      - name: Persist verified v772 source changes
         shell: bash
         run: |
           if git diff --quiet -- \
             app/build.gradle.kts \
-            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt; then
-            echo 'v771 source already persisted.'
+            app/src/main/res/layout/activity_main.xml \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt; then
+            echo 'v772 source already persisted.'
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
             app/build.gradle.kts \
-            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
-            app/src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt
-          git commit -m 'v771：阅读器接管未完成书籍并计入书架任务完成 [skip ci]'
-          git push origin HEAD:source-v771
+            app/src/main/res/layout/activity_main.xml \
+            app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
+          git commit -m 'v772：统一书架分组滚动滑块并加入日夜按钮 [skip ci]'
+          git push origin HEAD:source-v772
+
       - name: Run full unit suite against unchanged V758 failure baseline
         shell: bash
-        run: bash tools/v770-full-unit-baseline-gate.sh v771-full-unit-tests.log
-      - name: Build v771 release
+        run: bash tools/v770-full-unit-baseline-gate.sh v772-full-unit-tests.log
+
+      - name: Build v772 release
         shell: bash
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-build.log
-      - name: Verify v771 APK and export official signer
+
+      - name: Verify v772 APK and export official signer
         shell: bash
         run: |
           set -euo pipefail
@@ -89,8 +99,8 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "${build_tools}/aapt2" dump badging "$APK_PATH" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
-          grep -Fq "versionCode='2098000771'" apk-package-info.txt
-          grep -Fq "versionName='771'" apk-package-info.txt
+          grep -Fq "versionCode='2098000772'" apk-package-info.txt
+          grep -Fq "versionName='772'" apk-package-info.txt
           grep -Fq "minSdkVersion:'26'" apk-package-info.txt
           test "$(stat -c %s "$APK_PATH")" -le "$MAX_APK_BYTES"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
@@ -98,14 +108,15 @@ jobs:
           cp "${build_tools}/apksigner" signing-tools/apksigner
           cp "${build_tools}/lib/apksigner.jar" signing-tools/lib/apksigner.jar
           chmod +x signing-tools/apksigner
+
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v771-${{ github.run_number }}
+          name: SimpleReader-v772-${{ github.run_number }}
           path: |
             ${{ env.APK_PATH }}
             apk-sha256.txt
             apk-package-info.txt
-            v771-full-unit-tests.log
+            v772-full-unit-tests.log
             gradle-build.log
             signing-tools/apksigner
             signing-tools/lib/apksigner.jar
