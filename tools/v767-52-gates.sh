@@ -41,6 +41,11 @@ source = Path('tools/v759-52-gates.sh').read_text(encoding='utf-8')
 source = source.replace('2098000759', '2098000767')
 source = source.replace("'\\\"759\\\"'", "'\\\"767\\\"'")
 source = source.replace('v759', 'v767')
+# V767 intentionally bumps only the TXT catalog recognizer version from Rule113 to Rule114.
+source = source.replace('CATALOG_RULE_VERSION = 113', 'CATALOG_RULE_VERSION = 114')
+source = source.replace('RULE_VERSION = 113', 'RULE_VERSION = 114')
+source = source.replace('rule113 versions missing', 'rule114 versions missing')
+source = source.replace('catalog rule113', 'catalog rule114')
 Path(sys.argv[1]).write_text(source, encoding='utf-8')
 PY
 bash "$TMP"
