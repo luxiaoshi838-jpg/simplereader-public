@@ -36,7 +36,14 @@ grep -Fq 'findViewById<ImageView>(R.id.shelfNightButton)' "$MAIN"
 grep -Fq 'findViewById<ImageButton>(R.id.nightButton)' "$READER"
 grep -Fq 'ReaderAppearance.toggleMode(this@MainActivity)' "$MAIN"
 grep -Fq 'ReaderAppearance.toggleMode(this@ReaderActivity)' "$READER"
+grep -Fq 'DayNightModeIcon.apply(findViewById<ImageView>(R.id.shelfNightButton), this, primaryText)' "$MAIN"
 grep -Fq 'refreshDayNightModeIcon()' "$READER"
+
+# Converted ids must never return to TextView-only APIs; these caused the v774 two-icon/swap bug.
+! grep -Fq 'shelfNightButton).setTextColor' "$MAIN"
+! grep -Fq 'nightButton).text =' "$READER"
+! grep -Fq 'findViewById<TextView>(R.id.shelfNightButton)' "$MAIN"
+! grep -Fq 'findViewById<TextView>(R.id.nightButton)' "$READER"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -66,7 +73,7 @@ assert 'setCompoundDrawables' not in icon
 assert re.search(r'val drawableRes = if \(isDay\) R\.drawable\.ic_mode_day_a else R\.drawable\.ic_mode_night_a', icon)
 PY
 
-# Preserve v773 startup crash fix and v771 handoff regression.
+# Compile/startup smoke + preserve v773 startup crash fix and v771 handoff regression.
 bash tools/v773-startup-fastscroll-gates.sh
 
 echo 'v775 single-mode-icon gates: PASS (one image only; DAY=sun, NIGHT=moon)'
