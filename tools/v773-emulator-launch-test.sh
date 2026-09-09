@@ -3,7 +3,7 @@ set -euo pipefail
 
 PACKAGE='com.simplereader.app'
 ACTIVITY='com.simplereader.app/.ui.MainActivity'
-RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name 'app-release-unsigned.apk' -o -name 'app-release.apk' | head -n 1)"
+RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f \( -name 'app-release-unsigned.apk' -o -name 'app-release.apk' \) | head -n 1)"
 if [ -z "$RELEASE_APK" ] || [ ! -s "$RELEASE_APK" ]; then
   echo 'FAIL: release APK not found'
   exit 1
@@ -60,32 +60,39 @@ fi
 
 # Give the Activity main loop enough cycles to expose immediate post-onCreate crashes.
 sleep 5
-adb logcat -d -v time > v773-emulator-logcat.txt
-adb shell dumpsys activity activities > v773-emulator-activity.txt
-adb shell pidof "$PACKAGE" | tr -d '\r' | tee v773-emulator-pid.txt
+adb logcat -d -v time > v773-emulator-logcat.txt || true
+adb shell dumpsys activity activities > v773-emulator-activity.txt || true
 
-if [ ! -s v773-emulator-pid.txt ]; then
-  echo 'FAIL: app process disappeared after cold launch'
-  tail -n 250 v773-emulator-logcat.txt || true
+# pidof may legitimately return 1 when the process has disappeared; capture that as data instead
+# of letting `set -e -o pipefail` terminate the diagnostic path before logcat is printed.
+set +e
+pid_output="$(adb shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r')"
+pid_code=$?
+set -e
+printf '%s\n' "$pid_output" | tee v773-emulator-pid.txt
+
+if [ "$pid_code" -ne 0 ] || [ -z "$pid_output" ]; then
+  echo "FAIL: app process disappeared after cold launch (pidof_exit=$pid_code)"
+  grep -nE -A100 -B20 'FATAL EXCEPTION|AndroidRuntime|Process: com\.simplereader\.app|Unable to start activity|InflateException|com\.simplereader\.app' v773-emulator-logcat.txt | tail -n 300 || true
   exit 1
 fi
 
 if ! grep -Eq 'mResumedActivity.*com\.simplereader\.app|topResumedActivity.*com\.simplereader\.app|ResumedActivity.*com\.simplereader\.app' v773-emulator-activity.txt; then
   echo 'FAIL: MainActivity is not resumed after launch'
-  grep -nE 'mResumedActivity|topResumedActivity|ResumedActivity|simplereader' v773-emulator-activity.txt | tail -n 80 || true
+  grep -nE 'mResumedActivity|topResumedActivity|ResumedActivity|simplereader' v773-emulator-activity.txt | tail -n 100 || true
   exit 1
 fi
 
 if grep -q 'FATAL EXCEPTION' v773-emulator-logcat.txt; then
   echo 'FAIL: FATAL EXCEPTION observed after cold launch'
-  grep -n -A80 -B10 'FATAL EXCEPTION' v773-emulator-logcat.txt | tail -n 200 || true
+  grep -n -A100 -B20 'FATAL EXCEPTION' v773-emulator-logcat.txt | tail -n 300 || true
   exit 1
 fi
 
 # Explicit package-level crash markers, including RuntimeException/InflateException startup failures.
 if grep -Eq 'Process: com\.simplereader\.app.*PID:|Unable to start activity.*com\.simplereader\.app|InflateException.*simplereader' v773-emulator-logcat.txt; then
   echo 'FAIL: package startup crash marker observed'
-  grep -nE -A60 -B10 'Process: com\.simplereader\.app|Unable to start activity|InflateException' v773-emulator-logcat.txt | tail -n 200 || true
+  grep -nE -A100 -B20 'Process: com\.simplereader\.app|Unable to start activity|InflateException' v773-emulator-logcat.txt | tail -n 300 || true
   exit 1
 fi
 
