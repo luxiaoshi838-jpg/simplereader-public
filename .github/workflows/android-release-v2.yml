@@ -30,7 +30,17 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
       - name: Apply v768 catalog and selected-text actions patch
-        run: python3 tools/apply-v768-selection-catalog.py
+        shell: bash
+        run: |
+          if grep -Fq '2098000768' app/build.gradle.kts \
+            && grep -Fq 'CATALOG_RULE_VERSION = 115' app/src/main/java/com/simplereader/app/parser/TxtParser.kt \
+            && grep -Fq 'RULE_VERSION = 115' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt \
+            && grep -Fq 'private lateinit var selectionActions: ReaderSelectionActions' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            && grep -Fq 'ACTION_TRANSLATE' app/src/main/java/com/simplereader/app/ui/ReaderSelectionActions.kt; then
+            echo 'v768 source patch already persisted; verifying exact persisted source.'
+          else
+            python3 tools/apply-v768-selection-catalog.py
+          fi
       - run: chmod +x ./gradlew tools/v768-52-gates.sh tools/v768-selection-catalog-gates.sh tools/v767-settings-layout-gates.sh tools/v767-full-unit-baseline-gate.sh
       - name: Run v768 inherited 52 stability gates
         run: bash tools/v768-52-gates.sh
