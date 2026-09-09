@@ -20,7 +20,10 @@ grep -Fq 'SIMPLE_READER_VERSION_NAME") ?: "776"' "$GRADLE"
 
 # Shelf-only implementation.
 grep -Fq 'ShelfDayNightModeIcon.apply(' "$MAIN"
-! grep -Fq 'DayNightModeIcon.apply(' "$MAIN"
+if grep -Eq '(^|[^A-Za-z0-9_])DayNightModeIcon\.apply\(' "$MAIN"; then
+  echo 'FAIL: MainActivity still uses the shared reader icon binder'
+  exit 1
+fi
 grep -Fq 'R.drawable.ic_shelf_mode_day_outline else R.drawable.ic_mode_night_a' "$SHELF_BINDER"
 grep -Fq 'if (!isDay && drawable != null)' "$SHELF_BINDER"
 grep -Fq 'DrawableCompat.setTint(drawable, tintColor)' "$SHELF_BINDER"
