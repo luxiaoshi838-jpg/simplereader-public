@@ -1,5 +1,48 @@
 # TXT 目录识别维护日志
 
+## 2026-09-09 — V771 全书架目录生成与前台打开同书交接
+
+### 故障现象与定位
+
+- V770 在“全书架目录生成”运行期间，点击尚未完成目录/分页缓存生成的书籍，出现 Java 崩溃。
+- 典型崩溃现场为 `bookId=26527`、`page=0/0`、`sourceOffset=-1`、`readerActive=false`，说明阅读器尚未建立有效分页状态。
+- 根因按代码路径定位为同一本书的前台 `ReaderActivity` 与后台 `ShelfCacheWorker` 可能同时加载、清理、生成或写入同一套目录/分页派生缓存，存在竞态。
+- 本次不按低内存故障处理；Android 退出原因是 `CRASH/Java (4)`。
+
+### V771 固定交接规则
+
+1. 全书架任务运行时，用户打开一个尚未由后台占用的未完成书籍：
+   - 阅读器取得该 `bookId` 的生成所有权；
+   - 阅读器正常加载、分页并把页面缓存与目录识别完成标志完整落盘；
+   - 完成后把该书登记为“阅读器已完成”；
+   - 后台任务轮到该书时验证缓存可复用，直接将其计入 `completed`，推进 checkpoint，不再清理或重建。
+2. 如果后台 Worker 已经取得同一本书的所有权：
+   - Reader 不再启动第二套生成；
+   - Reader 等待该书的 Worker 完成并随后复用结果，避免同书双写。
+3. 同一本书任何时刻只允许 Reader 或 Worker 一方拥有生成权。
+4. Worker 已取得当前书后，不得再次等待前台阅读器空闲，否则会形成“Reader 等 Worker、Worker 又等 Reader”的死锁。
+5. 全书架 Work 的交接状态由 `doWork()` 外层 `try/finally` 统一释放；正常完成、异常和协程取消都必须清理，不覆盖当前 WorkManager 版本中不可覆盖的 `CoroutineWorker.onStopped()`。
+6. 该交接状态是进程内并发保护；进程重启后的恢复仍以现有持久化 checkpoint 与可复用缓存校验为准。
+
+### 主要实现位置
+
+- `runtime/ShelfCacheHandoff.kt`：全书架任务状态、按 bookId 的 Reader/Worker 单所有者互斥、前台完成登记。
+- `ui/ReaderActivity.kt`：打开书前取得交接所有权；前台完成时同步保存可复用缓存并登记完成；失败/销毁时释放所有权。
+- `worker/ShelfCacheWorker.kt`：逐书取得所有权；消费“阅读器已完成”结果并计入 completed；禁止同书重复生成。
+- `ShelfCacheHandoffTest.kt` 与 `tools/v771-shelf-reader-handoff-gates.sh`：锁定同书互斥、前台完成计入、Worker 已占用时 Reader 等待、任务结束清理等行为。
+
+### V771 验证结果
+
+- `versionName=771`，`versionCode=2098000771`。
+- GitHub Actions `Build 简阅 v771` run 109：成功。
+- 继承 52 项稳定性门禁：52/52 PASS。
+- 选中文本/阅读触摸共存、即时选中、设置布局门禁：PASS。
+- V771 同书前后台交接专项测试：PASS。
+- 完整单元测试基线：PASS。
+- Release 构建与 APK package/version 校验：PASS。
+- 正式签名继续使用 `SimpleReader Public V1`；证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
+- 最终已签名 APK SHA-256：`e435e4ea9ce50f7189e21f3f5a7a99dbd45284d51c386047fd0dff1f3933e483`。
+
 ## 2026-08-19 — V682 之后固定维护方式
 
 ### 当前真实目录识别入口
