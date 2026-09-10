@@ -3,8 +3,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-python3 tools/apply-v783-overlay-fastscroll.py
-
 XML=app/src/main/res/layout/activity_main.xml
 MAIN=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
 GROUP=app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
@@ -12,8 +10,8 @@ SCROLLER=app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt
 READER=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 READER_XML=app/src/main/res/layout/activity_reader.xml
 
-# Historical v783 gate is behavior-only so later versions can inherit it without being forced back
-# to versionName/versionCode 783.
+# Historical v783 gate is behavior-only. Do not execute the historical version patch here: v784+
+# may legitimately have a newer versionName/versionCode while preserving the v783 behavior.
 
 # The old 28dp dedicated scrollbar gutter must be gone. The RecyclerView canvas reaches the
 # physical right edge while normal shelf content keeps the ordinary 16dp right margin.
