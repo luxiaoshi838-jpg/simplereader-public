@@ -133,17 +133,21 @@ object PageEngine {
         sourceChapters: List<BookChapter>,
         settings: ReaderLayoutSettings,
         typeface: Typeface = Typeface.DEFAULT,
-        imageSpanProvider: ImageSpanProvider? = null
+        imageSpanProvider: ImageSpanProvider? = null,
+        shouldCancel: (() -> Boolean)? = null
     ): ReaderBook {
+        throwIfPaginationCancelled(shouldCancel)
         val chapters = normalizeChapters(text, sourceChapters)
         val draftPages = mutableListOf<DraftPage>()
         chapters.forEachIndexed { chapterIndex, chapter ->
+            throwIfPaginationCancelled(shouldCancel)
             val chapterPages = paginateChapter(
                 text = text,
                 chapter = chapter,
                 settings = settings,
                 typeface = typeface,
-                imageSpanProvider = imageSpanProvider
+                imageSpanProvider = imageSpanProvider,
+                shouldCancel = shouldCancel
             )
             val chapterPageCount = chapterPages.size.coerceAtLeast(1)
             chapterPages.forEachIndexed { pageInChapter, range ->
@@ -186,7 +190,8 @@ object PageEngine {
         chapter: BookChapter,
         settings: ReaderLayoutSettings,
         typeface: Typeface,
-        imageSpanProvider: ImageSpanProvider?
+        imageSpanProvider: ImageSpanProvider?,
+        shouldCancel: (() -> Boolean)?
     ): List<Pair<Int, Int>> {
         if (chapter.endOffset <= chapter.startOffset) {
             return listOf(chapter.startOffset to chapter.startOffset)
@@ -194,6 +199,7 @@ object PageEngine {
         val output = mutableListOf<Pair<Int, Int>>()
         var cursor = chapter.startOffset
         while (cursor < chapter.endOffset) {
+            throwIfPaginationCancelled(shouldCancel)
             val windowEnd = chooseWindowEnd(text, cursor, chapter.endOffset)
             val windowText = text.substring(cursor, windowEnd)
             val styled = styledText(
@@ -221,6 +227,7 @@ object PageEngine {
             } else {
                 var firstLine = 0
                 while (firstLine < layout.lineCount) {
+                    throwIfPaginationCancelled(shouldCancel)
                     val pageTop = layout.getLineTop(firstLine)
                     var lastLine = firstLine
                     while (lastLine + 1 < layout.lineCount) {
@@ -256,6 +263,12 @@ object PageEngine {
             }
         }
         return output.ifEmpty { listOf(chapter.startOffset to chapter.endOffset) }
+    }
+
+    private fun throwIfPaginationCancelled(shouldCancel: (() -> Boolean)?) {
+        if (shouldCancel?.invoke() == true) {
+            throw java.util.concurrent.CancellationException("PageEngine pagination cancelled")
+        }
     }
 
     private fun chooseWindowEnd(text: String, start: Int, chapterEnd: Int): Int {

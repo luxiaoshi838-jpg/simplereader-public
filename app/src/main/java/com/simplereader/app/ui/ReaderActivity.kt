@@ -118,6 +118,7 @@ class ReaderActivity : AppCompatActivity() {
     private var fontChangeRunnable: Runnable? = null
     private var pendingFontRollback: FontRollback? = null
     private var fontChangeRequestId: Long = 0L
+    private var paginationEpoch: Long = 0L
     private var autoReadSpeedCpm: Int = 500
     private var autoReading = false
     private var autoReadPageRunnable: Runnable? = null
@@ -253,6 +254,7 @@ class ReaderActivity : AppCompatActivity() {
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
         fontChangeRunnable = null
         fontChangeRequestId += 1L
+        paginationEpoch += 1L
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
@@ -576,18 +578,23 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun paginateAndDisplay(preserveOffset: Int?) {
+    private fun paginateAndDisplay(preserveOffset: Int?, fontRequestId: Long? = null) {
         val selectedBook = book ?: return
         val loaded = document ?: return
         if (pagedReaderView.width <= 0 || pagedReaderView.height <= 0) {
-            pagedReaderView.post { paginateAndDisplay(preserveOffset) }
+            pagedReaderView.post { paginateAndDisplay(preserveOffset, fontRequestId) }
             return
         }
         paginationJob?.cancel()
+        paginationEpoch += 1L
+        val epoch = paginationEpoch
+        val generation = readerGeneration
+        val expectedBookId = selectedBook.id
         paginationInProgress = true
-        progressLabel.text = "分页中…"
-        CrashLogStore.recordEvent(this, "paginate:start book=$bookId preserve=$preserveOffset stable=$lastStableSourceOffset")
+        if (fontRequestId == null) progressLabel.text = "分页中…"
+        CrashLogStore.recordEvent(this, "paginate:start book=$bookId preserve=$preserveOffset fontRequest=$fontRequestId epoch=$epoch stable=$lastStableSourceOffset")
         paginationJob = lifecycleScope.launch {
+            val runningJob = coroutineContext[Job]
             try {
                 val settings = createLayoutSettings()
                 layoutSettings = settings
@@ -605,21 +612,44 @@ class ReaderActivity : AppCompatActivity() {
                 }
                 val paged = cached ?: withContext(Dispatchers.Default) {
                     PageEngine.paginate(
-                        loaded.text,
-                        loaded.chapters,
-                        settings,
-                        Typeface.DEFAULT
-                    ) { href, width, height -> imageRepository?.span(href, width, height) }
+                        text = loaded.text,
+                        sourceChapters = loaded.chapters,
+                        settings = settings,
+                        typeface = Typeface.DEFAULT,
+                        imageSpanProvider = { href, width, height -> imageRepository?.span(href, width, height) },
+                        shouldCancel = {
+                            runningJob?.isActive != true ||
+                                paginationEpoch != epoch ||
+                                !ReaderRuntimeState.isOwner(generation)
+                        }
+                    )
                 }
-                readerBook = paged
-                pendingFontRollback = null
+
+                if (
+                    epoch != paginationEpoch ||
+                    generation != readerGeneration ||
+                    expectedBookId != bookId ||
+                    !ownsReaderSession() ||
+                    (fontRequestId != null && fontRequestId != fontChangeRequestId)
+                ) {
+                    throw CancellationException("stale pagination result suppressed")
+                }
+
+                // For a font rebuild, the user may have kept reading while the background work ran.
+                // Resolve against the latest visible source position immediately before the atomic
+                // ReaderBook swap, never the page that was visible when the font button was tapped.
+                val liveFontOffset = if (fontRequestId != null) currentVisibleSourceOffset() else null
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
-                val stableOffset = preserveOffset
+                val stableOffset = liveFontOffset
+                    ?: preserveOffset
                     ?: lastStableSourceOffset
                     ?: CrashLogStore.recoveryOffset(this@ReaderActivity, bookId)
                     ?: progress?.startOffset
                     ?: progress?.txtCharOffset
                     ?: progress?.position?.toIntOrNull()
+                readerBook = paged
+                layoutSettings = settings
+                pendingFontRollback = null
                 val target = when {
                     stableOffset != null -> paged.pageForOffset(stableOffset).globalPageIndex
                     progress?.globalPageIndex != null && progress.globalPageIndex in paged.pages.indices -> progress.globalPageIndex
@@ -681,12 +711,14 @@ class ReaderActivity : AppCompatActivity() {
                     }
                 }
             } catch (cancelled: CancellationException) {
-                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:cancelled book=$bookId page=$currentPageIndex stable=$lastStableSourceOffset generation=$readerGeneration")
+                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:cancelled book=$bookId fontRequest=$fontRequestId epoch=$epoch page=$currentPageIndex stable=$lastStableSourceOffset generation=$readerGeneration")
                 throw cancelled
             } catch (error: Throwable) {
                 releaseShelfCacheReaderClaim(markCompleted = false)
-                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:failure book=$bookId type=${error.javaClass.name} message=${error.message.orEmpty()} page=$currentPageIndex stable=$lastStableSourceOffset")
-                if (isFinishing || isDestroyed || !ownsReaderSession()) return@launch
+                CrashLogStore.recordEvent(this@ReaderActivity, "paginate:failure book=$bookId fontRequest=$fontRequestId epoch=$epoch type=${error.javaClass.name} message=${error.message.orEmpty()} page=$currentPageIndex stable=$lastStableSourceOffset")
+                val stale = epoch != paginationEpoch || generation != readerGeneration || expectedBookId != bookId ||
+                    !ownsReaderSession() || (fontRequestId != null && fontRequestId != fontChangeRequestId)
+                if (stale || isFinishing || isDestroyed) return@launch
                 val rollback = pendingFontRollback
                 if (rollback != null) {
                     pendingFontRollback = null
@@ -703,6 +735,8 @@ class ReaderActivity : AppCompatActivity() {
                 } else {
                     showContinuousFallback(error.message ?: "分页失败")
                 }
+            } finally {
+                if (epoch == paginationEpoch) paginationInProgress = false
             }
         }
     }
@@ -1587,8 +1621,8 @@ class ReaderActivity : AppCompatActivity() {
         val requested = (readerTextSizeSp + delta).coerceIn(12f, 36f)
         if (requested == readerTextSizeSp) return
 
-        // Restore the v754 contract: one stable rollback baseline per adjustment burst, a
-        // source-character anchor, and only the latest delayed request may repaginate.
+        // Keep one stable rollback baseline for the whole adjustment burst. Page identity stays
+        // on the existing complete ReaderBook until the new complete page table is ready.
         fontChangeRunnable?.let(mainHandler::removeCallbacks)
         fontChangeRunnable = null
         fontChangeRequestId += 1L
@@ -1603,19 +1637,66 @@ class ReaderActivity : AppCompatActivity() {
             )
         }
 
-        // If an earlier font pagination already started, cancel it immediately. Its
-        // CancellationException is control flow and is explicitly excluded from failure UI.
+        // Supersede old whole-book work immediately. PageEngine now cooperatively observes this
+        // cancellation, so changing books or adjusting size repeatedly cannot leave CPU-heavy stale
+        // pagination running to completion.
+        paginationEpoch += 1L
         paginationJob?.cancel()
         readerTextSizeSp = requested
         applyReaderContentPadding()
         savePreferences()
         updateSettingsLabels()
-        progressLabel.text = "字体分页中…"
+
+        // Public-reader pattern: apply the visual typography to the current stable page sequence
+        // immediately. This is display-only: it never creates a partial ReaderBook, changes global
+        // page identity, or replaces RecyclerView data with a local window.
+        applyTransientFontPreview(currentOffset, requestId)
+
+        // Rebuild the authoritative complete page table in the background after the adjustment
+        // burst settles. Its commit is guarded by book/generation/request/epoch checks below.
         fontChangeRunnable = Runnable {
             fontChangeRunnable = null
             if (requestId != fontChangeRequestId || isFinishing || isDestroyed || !ownsReaderSession()) return@Runnable
-            paginateAndDisplay(currentOffset)
+            paginateAndDisplay(currentOffset, requestId)
         }.also { mainHandler.postDelayed(it, FONT_CHANGE_DEBOUNCE_MS) }
+    }
+
+    private fun applyTransientFontPreview(anchorOffset: Int, requestId: Long) {
+        val paged = readerBook ?: return
+        if (requestId != fontChangeRequestId || isFinishing || isDestroyed || !ownsReaderSession()) return
+        val safeOffset = anchorOffset.coerceIn(0, paged.text.length)
+        layoutSettings = createLayoutSettings()
+        lastStableSourceOffset = safeOffset
+        currentPageIndex = paged.pageForOffset(safeOffset).globalPageIndex
+
+        if (pageTurnMode == TURN_MODE_VERTICAL) {
+            ensureVerticalReader()
+            val recycler = verticalRecyclerView
+            recycler?.stopScroll()
+            verticalProgrammaticScroll = true
+            verticalAdapter?.refresh()
+            verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
+            scheduleVerticalStateUnlockGuard()
+            recycler?.postOnAnimation {
+                if (requestId != fontChangeRequestId || readerBook !== paged || !ownsReaderSession()) {
+                    verticalProgrammaticScroll = false
+                    if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
+                    return@postOnAnimation
+                }
+                verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
+                verticalProgrammaticScroll = false
+                if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
+            }
+        } else {
+            pagedReaderView.cancelNavigation()
+            configurePagedReaderStyle()
+            bindHorizontalPages()
+        }
+        updateProgressUi()
+        CrashLogStore.recordEvent(
+            this,
+            "font_preview:applied book=$bookId request=$requestId size=$readerTextSizeSp anchor=$safeOffset page=$currentPageIndex"
+        )
     }
 
     private fun setTurnMode(mode: String) {
