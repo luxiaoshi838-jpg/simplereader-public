@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-python3 tools/apply-v780-live-font-preview.py
+python3 tools/apply-v780-live-font-preview-idempotent.py
 
 R=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 E=app/src/main/java/com/simplereader/app/reader/page/PageEngine.kt
