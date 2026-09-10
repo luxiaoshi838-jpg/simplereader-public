@@ -10,23 +10,25 @@ reader = reader_path.read_text(encoding="utf-8")
 cache = cache_path.read_text(encoding="utf-8")
 gradle = gradle_path.read_text(encoding="utf-8")
 
+# v781 is an inherited behaviour patch. Later versions are allowed to extend loadBook() and the
+# background failure guard, so idempotency is determined by the runtime contract rather than a
+# historical version literal or an exact two-line call-site shape.
 markers = (
     "private suspend fun showCachedBookImmediately(): Int?",
     "PageCacheStore.loadCompatiblePages(this@ReaderActivity, identity, loaded.text)",
     "backgroundOpen: Boolean",
     "open_cache_preview:applied",
     "open_cache_refresh:failed_keep_preview",
+    "val transientLayout = layoutSettings?.stableHash()?.let { it != paged.settingsHash } == true",
 )
 if (
     all(marker in reader for marker in markers)
     and "fun loadCompatiblePages(context: Context, identity: CacheIdentity, text: String): ReaderBook?" in cache
-    and 'SIMPLE_READER_VERSION_CODE") ?: "2098000781"' in gradle
-    and 'SIMPLE_READER_VERSION_NAME") ?: "781"' in gradle
 ):
     print("v781 already applied: compatible-cache immediate open + silent authoritative refresh")
     raise SystemExit(0)
 
-# Version bump.
+# Version bump for a genuine v780-style input tree only.
 gradle = gradle.replace('SIMPLE_READER_VERSION_CODE") ?: "2098000780"', 'SIMPLE_READER_VERSION_CODE") ?: "2098000781"', 1)
 gradle = gradle.replace('?: 2098000780', '?: 2098000781', 1)
 gradle = gradle.replace('SIMPLE_READER_VERSION_NAME") ?: "780"', 'SIMPLE_READER_VERSION_NAME") ?: "781"', 1)
@@ -151,8 +153,6 @@ helper_and_overload = '''    /**
         currentPageIndex = cached.pageForOffset(restoreOffset).globalPageIndex
         lastStableSourceOffset = restoreOffset
         showActiveReader()
-        // showContinuousBook() normalizes to the cached page start; restore the durable content
-        // anchor after that temporary presentation so the exact-layout swap cannot move backwards.
         lastStableSourceOffset = restoreOffset
         CrashLogStore.recordEvent(
             this,
@@ -229,8 +229,6 @@ if catch_anchor not in reader:
     raise SystemExit("ReaderActivity pagination failure anchor missing")
 reader = reader.replace(catch_anchor, catch_replacement, 1)
 
-# While an old-layout page table is only a presentation scaffold, sourceOffset remains the durable
-# truth for progress. This also improves v780's same-book font preview.
 progress_anchor = '''        val current = paged.pages.getOrNull(currentPageIndex)?.startOffset
         val stable = lastStableSourceOffset?.coerceIn(0, paged.text.length)
         if (pageTurnMode != TURN_MODE_VERTICAL) return current ?: stable
