@@ -54,6 +54,10 @@ jobs:
         shell: bash
         run: python3 tools/apply-v780-live-font-preview-idempotent.py
 
+      - name: Preserve historical stable-offset restore contract
+        shell: bash
+        run: python3 tools/apply-v780-stable-offset-contract.py
+
       - name: Persist v780 runtime source before validation
         shell: bash
         run: |
