@@ -150,11 +150,7 @@ object PageEngine {
         }
 
         val start = chapter.startOffset
-        var windowEnd = (start + FIRST_PAGE_PREVIEW_CHARS).coerceAtMost(chapter.endOffset)
-        if (windowEnd > start && windowEnd < text.length && Character.isHighSurrogate(text[windowEnd - 1])) {
-            windowEnd -= 1
-        }
-        windowEnd = windowEnd.coerceAtLeast((start + 1).coerceAtMost(chapter.endOffset))
+        val windowEnd = chooseWindowEnd(text, start, chapter.endOffset)
         val windowText = text.substring(start, windowEnd)
         val styled = styledText(
             text = windowText,
