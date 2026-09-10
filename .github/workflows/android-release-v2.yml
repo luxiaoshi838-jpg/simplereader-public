@@ -52,11 +52,7 @@ jobs:
 
       - name: Apply v780 live font preview and guarded background pagination
         shell: bash
-        run: python3 tools/apply-v780-live-font-preview.py
-
-      - name: Preserve PageEngine trailing-lambda compatibility
-        shell: bash
-        run: python3 tools/apply-v780-pagination-api-compat.py
+        run: python3 tools/apply-v780-live-font-preview-idempotent.py
 
       - name: Persist v780 runtime source before validation
         shell: bash
