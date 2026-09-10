@@ -58,6 +58,10 @@ jobs:
         shell: bash
         run: python3 tools/apply-v782-zero-progress-first-page.py
 
+      - name: Align v782 first-page boundary with authoritative pagination
+        shell: bash
+        run: python3 tools/apply-v782-first-page-authoritative-window.py
+
       - name: Persist v782 runtime source before validation
         shell: bash
         run: |
