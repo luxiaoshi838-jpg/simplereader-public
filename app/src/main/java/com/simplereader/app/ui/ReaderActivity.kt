@@ -640,8 +640,9 @@ class ReaderActivity : AppCompatActivity() {
                 // ReaderBook swap, never the page that was visible when the font button was tapped.
                 val liveFontOffset = if (fontRequestId != null) currentVisibleSourceOffset() else null
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
-                val stableOffset = liveFontOffset
-                    ?: preserveOffset
+                val stableOffset = preserveOffset
+                    ?.takeIf { fontRequestId == null }
+                    ?: liveFontOffset
                     ?: lastStableSourceOffset
                     ?: CrashLogStore.recoveryOffset(this@ReaderActivity, bookId)
                     ?: progress?.startOffset
