@@ -96,14 +96,15 @@ class GroupBooksActivity : AppCompatActivity() {
         return LinearLayout(this).apply {
             this@GroupBooksActivity.rootView = this
             orientation = LinearLayout.VERTICAL
-            clipChildren = false
-            clipToPadding = false
+            clipChildren = true
+            clipToPadding = true
             setBackgroundColor(ReaderAppearance.palette(this@GroupBooksActivity).backgroundColor)
-            setPadding(dp(16), statusBarHeight + dp(12), dp(16), dp(8))
+            setPadding(0, statusBarHeight + dp(12), 0, dp(8))
 
             addView(LinearLayout(this@GroupBooksActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52))
 
                 addView(TextView(this@GroupBooksActivity).apply {
@@ -153,10 +154,8 @@ class GroupBooksActivity : AppCompatActivity() {
                 adapter = this@GroupBooksActivity.adapter
                 ShelfFastScroller.attach(this)
                 clipToPadding = false
-                setPadding(0, dp(8), dp(16), dp(18))
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                    marginEnd = -dp(16)
-                }
+                setPadding(dp(16), dp(8), dp(16), dp(18))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             })
         }
     }
