@@ -10,29 +10,51 @@ import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.max
 
 /**
+ * V783_OVERLAY_FAST_SCROLL
+ *
  * Attach-only fast scroller shared by the main shelf and group shelves.
  *
- * It deliberately does not replace/inflate RecyclerView itself. The thumb becomes visible and
- * grabbable only after real vertical scrolling has occurred, stays active while a drag is owned,
- * and deactivates shortly after scrolling becomes idle. A drag can start only on the visible thumb.
+ * Layout contract:
+ * - the track is a 1dp line at the RecyclerView's physical right edge and consumes no grid width;
+ * - at rest, only a tiny position marker is shown on that edge;
+ * - after real vertical movement, a 28dp x 52dp (minimum viewport permitting) floating pill appears;
+ * - the pill is drawn in onDrawOver(), above books/groups, and intentionally overlaps the content;
+ * - only the expanded visible pill can start a fast-scroll drag;
+ * - no platform scrollbar API is touched (Android 35 startup-safety requirement from v773).
  */
 class ShelfFastScroller private constructor(
     private val recyclerView: RecyclerView
 ) : RecyclerView.ItemDecoration(), RecyclerView.OnItemTouchListener {
 
     private val density = recyclerView.resources.displayMetrics.density
-    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(255, 62, 58, 52)
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val collapsedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val activeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val activeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * density
     }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(65, 88, 83, 74)
+    private val gripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        strokeCap = Paint.Cap.ROUND
     }
+
     private val thumbRect = RectF()
     private val trackRect = RectF()
-    private val thumbWidth = 10f * density
-    private val trackWidth = 2f * density
-    private val edgeInset = 4f * density
-    private val minThumbHeight = 52f * density
+    private val shadowRect = RectF()
+    private val collapsedRect = RectF()
+
+    // Matches the user-provided reference: ~28dp wide x 52dp high, ratio ~1:1.86.
+    private val thumbWidth = 28f * density
+    private val fixedThumbHeight = 52f * density
+    private val edgeInset = 6f * density
+    private val trackWidth = 1f * density
+    private val collapsedThumbWidth = 4f * density
+    private val collapsedThumbHeight = 24f * density
+    private val gripWidth = 13f * density
+    private val gripGap = 6f * density
     private val thumbHorizontalTouchPadding = 4f * density
     private val thumbVerticalTouchPadding = max(
         8f * density,
@@ -66,27 +88,85 @@ class ShelfFastScroller private constructor(
             when (newState) {
                 RecyclerView.SCROLL_STATE_IDLE -> scheduleDeactivate()
                 RecyclerView.SCROLL_STATE_SETTLING -> if (thumbActive) activateThumb()
-                // DRAGGING alone is not enough: onScrolled must observe actual movement first.
+                // Preserve v773 semantics: touching the list alone does not expose/grab the handle.
                 RecyclerView.SCROLL_STATE_DRAGGING -> Unit
             }
         }
     }
 
     override fun onDrawOver(canvas: Canvas, parent: RecyclerView, state: RecyclerView.State) {
-        if (!thumbActive && !draggingThumb) return
         val geometry = geometry() ?: return
         updateThumbRect(geometry)
+        updateVisualColors()
 
-        val right = parent.width - edgeInset
-        val thumbCenterX = right - thumbWidth / 2f
+        // The track is literally the right-most 1dp line of the RecyclerView. The RecyclerView is
+        // extended to the physical screen edge by the shelf/group layouts, so this reserves no column.
         trackRect.set(
-            thumbCenterX - trackWidth / 2f,
+            parent.width.toFloat() - trackWidth,
             parent.paddingTop.toFloat(),
-            thumbCenterX + trackWidth / 2f,
+            parent.width.toFloat(),
             (parent.height - parent.paddingBottom).toFloat()
         )
         canvas.drawRoundRect(trackRect, trackWidth, trackWidth, trackPaint)
-        canvas.drawRoundRect(thumbRect, thumbWidth, thumbWidth, thumbPaint)
+
+        if (thumbActive || draggingThumb) {
+            drawExpandedThumb(canvas)
+        } else {
+            drawCollapsedThumb(canvas)
+        }
+    }
+
+    private fun drawExpandedThumb(canvas: Canvas) {
+        val radius = thumbWidth / 2f
+        shadowRect.set(
+            thumbRect.left - 2f * density,
+            thumbRect.top + 2f * density,
+            thumbRect.right + 2f * density,
+            thumbRect.bottom + 4f * density
+        )
+        canvas.drawRoundRect(shadowRect, radius + 2f * density, radius + 2f * density, shadowPaint)
+        canvas.drawRoundRect(thumbRect, radius, radius, activeFillPaint)
+        canvas.drawRoundRect(thumbRect, radius, radius, activeBorderPaint)
+
+        val centerX = thumbRect.centerX()
+        val centerY = thumbRect.centerY()
+        val left = centerX - gripWidth / 2f
+        val right = centerX + gripWidth / 2f
+        canvas.drawLine(left, centerY - gripGap, right, centerY - gripGap, gripPaint)
+        canvas.drawLine(left, centerY, right, centerY, gripPaint)
+        canvas.drawLine(left, centerY + gripGap, right, centerY + gripGap, gripPaint)
+    }
+
+    private fun drawCollapsedThumb(canvas: Canvas) {
+        val centerY = thumbRect.centerY()
+        collapsedRect.set(
+            recyclerView.width.toFloat() - collapsedThumbWidth,
+            centerY - collapsedThumbHeight / 2f,
+            recyclerView.width.toFloat(),
+            centerY + collapsedThumbHeight / 2f
+        )
+        canvas.drawRoundRect(
+            collapsedRect,
+            collapsedThumbWidth / 2f,
+            collapsedThumbWidth / 2f,
+            collapsedPaint
+        )
+    }
+
+    private fun updateVisualColors() {
+        val background = ReaderAppearance.palette(recyclerView.context).backgroundColor
+        val luminance = (
+            Color.red(background) * 299 +
+                Color.green(background) * 587 +
+                Color.blue(background) * 114
+            ) / 1000
+        val dark = luminance < 128
+        trackPaint.color = if (dark) Color.argb(72, 235, 232, 224) else Color.argb(52, 82, 78, 71)
+        collapsedPaint.color = if (dark) Color.argb(180, 215, 212, 204) else Color.argb(155, 125, 121, 113)
+        shadowPaint.color = Color.argb(if (dark) 90 else 48, 0, 0, 0)
+        activeFillPaint.color = if (dark) Color.rgb(58, 56, 52) else Color.rgb(252, 251, 248)
+        activeBorderPaint.color = if (dark) Color.argb(125, 224, 221, 214) else Color.argb(90, 145, 141, 133)
+        gripPaint.color = if (dark) Color.rgb(206, 203, 196) else Color.rgb(157, 154, 147)
     }
 
     override fun onInterceptTouchEvent(rv: RecyclerView, event: MotionEvent): Boolean {
@@ -159,9 +239,9 @@ class ShelfFastScroller private constructor(
     private fun isOnVisibleThumb(x: Float, y: Float): Boolean {
         val geometry = geometry() ?: return false
         updateThumbRect(geometry)
-        val contentRight = (recyclerView.width - recyclerView.paddingRight).toFloat()
+        // V783 intentionally allows the active hit target to overlap the right-most book/group.
         val hitRect = RectF(
-            max(contentRight, thumbRect.left - thumbHorizontalTouchPadding),
+            (thumbRect.left - thumbHorizontalTouchPadding).coerceAtLeast(0f),
             thumbRect.top - thumbVerticalTouchPadding,
             (thumbRect.right + thumbHorizontalTouchPadding).coerceAtMost(recyclerView.width.toFloat()),
             thumbRect.bottom + thumbVerticalTouchPadding
@@ -189,10 +269,7 @@ class ShelfFastScroller private constructor(
             recyclerView.height - recyclerView.paddingTop - recyclerView.paddingBottom
         ).toFloat().coerceAtLeast(1f)
         val maxScrollOffset = (range - extent).coerceAtLeast(1)
-        val thumbHeight = max(
-            minThumbHeight,
-            viewportHeight * extent.toFloat() / range.toFloat()
-        ).coerceAtMost(viewportHeight)
+        val thumbHeight = fixedThumbHeight.coerceAtMost(viewportHeight)
         return ScrollGeometry(viewportHeight, maxScrollOffset, thumbHeight)
     }
 
@@ -207,7 +284,7 @@ class ShelfFastScroller private constructor(
             // Do not touch View's system scrollbar fading/cache here. On Android 35,
             // isScrollbarFadingEnabled=false while scrollbars are disabled can allocate a scroll
             // cache without a ScrollBarDrawable, and the first draw then crashes in
-            // View.onDrawScrollBars(). The shelf uses only this ItemDecoration thumb.
+            // View.onDrawScrollBars(). The shelf uses only this ItemDecoration overlay.
             val scroller = ShelfFastScroller(recyclerView)
             recyclerView.addItemDecoration(scroller)
             recyclerView.addOnItemTouchListener(scroller)

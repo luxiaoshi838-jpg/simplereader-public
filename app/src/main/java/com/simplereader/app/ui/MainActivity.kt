@@ -729,7 +729,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun shelfCardWidth(): Int {
-        val horizontalPadding = dp(16 * 2 + 14)
+        val horizontalPadding = dp(16 * 2)
         val itemMargins = dp(3 * 2 * 3)
         return ((resources.displayMetrics.widthPixels - horizontalPadding - itemMargins) / 3)
             .coerceAtLeast(dp(82))
