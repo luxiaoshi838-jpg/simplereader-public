@@ -28,6 +28,13 @@ data class ReaderPage(
     val endOffset: Int
 )
 
+data class FirstPageLayout(
+    val chapterIndex: Int,
+    val startOffset: Int,
+    val endOffset: Int,
+    val content: CharSequence
+)
+
 /** Normalized chapter model shared by TXT and EPUB. Offsets are UTF-16 indices in [ReaderBook.text]. */
 data class BookChapter(
     val title: String,
@@ -128,6 +135,72 @@ data class ReaderBook(
  * Chapters are laid out independently, so a short final page is still a complete page.
  */
 object PageEngine {
+    fun layoutFirstPage(
+        text: String,
+        sourceChapters: List<BookChapter>,
+        settings: ReaderLayoutSettings,
+        typeface: Typeface = Typeface.DEFAULT,
+        imageSpanProvider: ImageSpanProvider? = null
+    ): FirstPageLayout {
+        val chapters = normalizeChapters(text, sourceChapters)
+        val chapterIndex = 0
+        val chapter = chapters[chapterIndex]
+        if (text.isEmpty() || chapter.endOffset <= chapter.startOffset) {
+            return FirstPageLayout(chapterIndex, chapter.startOffset, chapter.startOffset, "")
+        }
+
+        val start = chapter.startOffset
+        var windowEnd = (start + FIRST_PAGE_PREVIEW_CHARS).coerceAtMost(chapter.endOffset)
+        if (windowEnd > start && windowEnd < text.length && Character.isHighSurrogate(text[windowEnd - 1])) {
+            windowEnd -= 1
+        }
+        windowEnd = windowEnd.coerceAtLeast((start + 1).coerceAtMost(chapter.endOffset))
+        val windowText = text.substring(start, windowEnd)
+        val styled = styledText(
+            text = windowText,
+            settings = settings,
+            titleStartsAtZero = start == chapter.startOffset,
+            imageSpanProvider = imageSpanProvider
+        )
+        if (styled.isEmpty()) return FirstPageLayout(chapterIndex, start, start, "")
+
+        val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
+            textSize = settings.textSizePx
+            this.typeface = typeface
+        }
+        val layout = StaticLayout.Builder
+            .obtain(styled, 0, styled.length, paint, settings.textWidthPx)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .setLineSpacing(settings.lineSpacingExtraPx, settings.lineSpacingMultiplier)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
+        if (layout.lineCount <= 0) {
+            val end = (start + 1).coerceAtMost(windowEnd)
+            return FirstPageLayout(chapterIndex, start, end, SpannableString(text.substring(start, end)))
+        }
+
+        val pageTop = layout.getLineTop(0)
+        var lastLine = 0
+        while (lastLine + 1 < layout.lineCount) {
+            val candidateBottom = layout.getLineBottom(lastLine + 1)
+            if (candidateBottom - pageTop > settings.textHeightPx) break
+            lastLine += 1
+        }
+        val localStart = layout.getLineStart(0).coerceIn(0, styled.length)
+        var localEnd = layout.getLineEnd(lastLine).coerceIn(localStart, styled.length)
+        if (localEnd == localStart && localEnd < styled.length) localEnd += 1
+        val absoluteStart = (start + localStart).coerceIn(chapter.startOffset, chapter.endOffset)
+        val absoluteEnd = (start + localEnd).coerceIn(absoluteStart, chapter.endOffset)
+        return FirstPageLayout(
+            chapterIndex = chapterIndex,
+            startOffset = absoluteStart,
+            endOffset = absoluteEnd,
+            content = SpannableString(styled.subSequence(localStart, localEnd))
+        )
+    }
+
     fun paginate(
         text: String,
         sourceChapters: List<BookChapter>,
@@ -417,6 +490,7 @@ object PageEngine {
         }
     }
 
+    private const val FIRST_PAGE_PREVIEW_CHARS = 16_384
     private const val MAX_LAYOUT_WINDOW_CHARS = 160_000
     private const val MIN_LAYOUT_WINDOW_CHARS = 80_000
 

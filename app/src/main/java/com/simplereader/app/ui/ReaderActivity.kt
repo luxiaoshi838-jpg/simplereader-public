@@ -143,6 +143,7 @@ class ReaderActivity : AppCompatActivity() {
     private var pendingVerticalDiagnosticEvent: String? = null
     private var readerGeneration: Long = 0L
     private var shelfCacheClaimBookId: Long = 0L
+    private var zeroProgressOpeningPreviewVisible = false
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -561,6 +562,7 @@ class ReaderActivity : AppCompatActivity() {
                     withContext(Dispatchers.IO) { database.bookDao().updateTxtCharset(selected.id, loaded.charsetName) }
                 }
                 val previewOffset = showCachedBookImmediately()
+                    ?: showZeroProgressFirstPageImmediately()
                 paginateAndDisplay(previewOffset, null, backgroundOpen = previewOffset != null)
                 if (loaded.fromCacheOnly) {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
@@ -630,6 +632,87 @@ class ReaderActivity : AppCompatActivity() {
             "open_cache_preview:applied book=$bookId exact=${cached.settingsHash == settings.stableHash()} anchor=$restoreOffset page=$currentPageIndex pages=${cached.pages.size}"
         )
         return restoreOffset
+    }
+
+    /**
+     * A never-paginated book at source offset 0 must still open like a normal reader. Build only
+     * the first visible page with the current typography and bind it directly to PagedReaderView.
+     * readerBook stays null until the authoritative complete page table is ready, so this preview
+     * can never be mistaken for a partial/global page sequence.
+     */
+    private suspend fun showZeroProgressFirstPageImmediately(): Int? {
+        val selectedBook = book ?: return null
+        val loaded = document ?: return null
+        val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
+        if (!isZeroReadingProgress(progress)) return null
+        while (pagedReaderView.width <= 0 || pagedReaderView.height <= 0) {
+            if (isFinishing || isDestroyed || !ownsReaderSession()) return null
+            delay(16L)
+        }
+
+        val settings = createLayoutSettings()
+        val preview = withContext(Dispatchers.Default) {
+            PageEngine.layoutFirstPage(
+                text = loaded.text,
+                sourceChapters = loaded.chapters,
+                settings = settings,
+                typeface = Typeface.DEFAULT,
+                imageSpanProvider = { href, width, height -> imageRepository?.span(href, width, height) }
+            )
+        }
+        if (selectedBook.id != bookId || !ownsReaderSession() || isFinishing || isDestroyed) return null
+
+        val chapters = PageEngine.normalizeChapters(loaded.text, loaded.chapters)
+        val chapter = chapters.getOrNull(preview.chapterIndex) ?: chapters.first()
+        layoutSettings = settings
+        currentPageIndex = 0
+        lastStableSourceOffset = 0
+        zeroProgressOpeningPreviewVisible = true
+
+        verticalRecyclerView?.apply { stopScroll(); visibility = View.GONE }
+        readerScrollView.visibility = View.GONE
+        readerTopHaze.visibility = View.GONE
+        readerBottomHaze.visibility = View.GONE
+        configurePagedReaderStyle()
+        pagedReaderView.bind(
+            previous = null,
+            current = ReaderPageSnapshot(
+                startAnchor = ReaderPageAnchor(
+                    preview.chapterIndex,
+                    preview.startOffset - chapter.startOffset,
+                    preview.startOffset.toLong()
+                ),
+                endAnchor = ReaderPageAnchor(
+                    preview.chapterIndex,
+                    preview.endOffset - chapter.startOffset,
+                    preview.endOffset.toLong()
+                ),
+                content = preview.content,
+                pageIndexInChapter = 0,
+                pageCountInChapter = 1
+            ),
+            next = null
+        )
+        pagedReaderView.visibility = View.VISIBLE
+        progressLabel.text = "1/…"
+        CrashLogStore.recordEvent(
+            this,
+            "open_zero_progress_preview:applied book=$bookId anchor=0 end=${preview.endOffset} size=$readerTextSizeSp"
+        )
+        return 0
+    }
+
+    private fun isZeroReadingProgress(progress: ReadProgress?): Boolean {
+        if (progress == null) return true
+        val offsets = listOfNotNull(
+            progress.startOffset,
+            progress.txtCharOffset,
+            progress.position.toIntOrNull(),
+            progress.globalPageIndex,
+            progress.chapterIndex,
+            progress.pageIndexInChapter
+        )
+        return offsets.all { it <= 0 } && (progress.epubProgressFraction ?: 0f) <= 0f
     }
 
     // Historical two-argument entry point stays intact for font-change and other callers.
@@ -715,6 +798,7 @@ class ReaderActivity : AppCompatActivity() {
                 readerBook = paged
                 layoutSettings = settings
                 pendingFontRollback = null
+                zeroProgressOpeningPreviewVisible = false
                 val target = when {
                     stableOffset != null -> paged.pageForOffset(stableOffset).globalPageIndex
                     progress?.globalPageIndex != null && progress.globalPageIndex in paged.pages.indices -> progress.globalPageIndex
@@ -784,7 +868,7 @@ class ReaderActivity : AppCompatActivity() {
                 val stale = epoch != paginationEpoch || generation != readerGeneration || expectedBookId != bookId ||
                     !ownsReaderSession() || (fontRequestId != null && fontRequestId != fontChangeRequestId)
                 if (stale || isFinishing || isDestroyed) return@launch
-                if (backgroundOpen && readerBook != null) {
+                if (backgroundOpen && (readerBook != null || zeroProgressOpeningPreviewVisible)) {
                     CrashLogStore.recordEvent(
                         this@ReaderActivity,
                         "open_cache_refresh:failed_keep_preview book=$bookId epoch=$epoch type=${error.javaClass.name} message=${error.message.orEmpty()}"
@@ -1888,6 +1972,8 @@ class ReaderActivity : AppCompatActivity() {
         updateThemePreviews()
         if (rebindPages && readerBook != null) {
             if (pageTurnMode == TURN_MODE_VERTICAL) showContinuousBook() else showHorizontalBook()
+        } else if (rebindPages && zeroProgressOpeningPreviewVisible) {
+            configurePagedReaderStyle()
         }
     }
 
