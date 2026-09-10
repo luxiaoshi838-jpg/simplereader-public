@@ -54,10 +54,6 @@ jobs:
         shell: bash
         run: python3 tools/apply-v782-first-page-authoritative-window.py
 
-      - name: Preserve v783 right-edge overlay fast scroll and grid reflow
-        shell: bash
-        run: python3 tools/apply-v783-overlay-fastscroll.py
-
       - name: Apply v784 unclipped topmost fast-scroll fix
         shell: bash
         run: python3 tools/apply-v784-unclipped-topmost-fastscroll.py
