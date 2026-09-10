@@ -96,6 +96,8 @@ class GroupBooksActivity : AppCompatActivity() {
         return LinearLayout(this).apply {
             this@GroupBooksActivity.rootView = this
             orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
             setBackgroundColor(ReaderAppearance.palette(this@GroupBooksActivity).backgroundColor)
             setPadding(dp(16), statusBarHeight + dp(12), dp(16), dp(8))
 
