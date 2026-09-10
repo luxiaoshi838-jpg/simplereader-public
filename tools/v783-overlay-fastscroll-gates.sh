@@ -5,7 +5,6 @@ cd "$ROOT"
 
 python3 tools/apply-v783-overlay-fastscroll.py
 
-GRADLE=app/build.gradle.kts
 XML=app/src/main/res/layout/activity_main.xml
 MAIN=app/src/main/java/com/simplereader/app/ui/MainActivity.kt
 GROUP=app/src/main/java/com/simplereader/app/ui/GroupBooksActivity.kt
@@ -13,8 +12,8 @@ SCROLLER=app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt
 READER=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 READER_XML=app/src/main/res/layout/activity_reader.xml
 
-grep -Fq '2098000783' "$GRADLE"
-grep -Fq 'SIMPLE_READER_VERSION_NAME") ?: "783"' "$GRADLE"
+# Historical v783 gate is behavior-only so later versions can inherit it without being forced back
+# to versionName/versionCode 783.
 
 # The old 28dp dedicated scrollbar gutter must be gone. The RecyclerView canvas reaches the
 # physical right edge while normal shelf content keeps the ordinary 16dp right margin.
