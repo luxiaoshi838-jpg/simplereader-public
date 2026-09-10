@@ -560,7 +560,8 @@ class ReaderActivity : AppCompatActivity() {
                 if (loaded.charsetName != null && !loaded.charsetName.equals(selected.txtCharset, true)) {
                     withContext(Dispatchers.IO) { database.bookDao().updateTxtCharset(selected.id, loaded.charsetName) }
                 }
-                paginateAndDisplay(null)
+                val previewOffset = showCachedBookImmediately()
+                paginateAndDisplay(previewOffset, null, backgroundOpen = previewOffset != null)
                 if (loaded.fromCacheOnly) {
                     Toast.makeText(this@ReaderActivity, "原文件不可访问，正在使用本地可读缓存", Toast.LENGTH_LONG).show()
                 }
@@ -578,11 +579,69 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Opens an already-cached book immediately even when the cache was produced with another
+     * font size/layout. The complete old page sequence remains the temporary navigation truth;
+     * only typography comes from current settings. No partial ReaderBook is created.
+     */
+    private suspend fun showCachedBookImmediately(): Int? {
+        val selectedBook = book ?: return null
+        val loaded = document ?: return null
+        while (pagedReaderView.width <= 0 || pagedReaderView.height <= 0) {
+            if (isFinishing || isDestroyed || !ownsReaderSession()) return null
+            delay(16L)
+        }
+        val settings = createLayoutSettings()
+        val identity = PageCacheStore.CacheIdentity(
+            selectedBook.id,
+            selectedBook.filePath,
+            loaded.sourceSize,
+            loaded.sourceModified,
+            settings.stableHash(),
+            PageCacheStore.textFingerprint(loaded.text),
+            TxtParser.CATALOG_RULE_VERSION
+        )
+        val cached = withContext(Dispatchers.IO) {
+            PageCacheStore.loadPages(this@ReaderActivity, identity, loaded.text)
+                ?: PageCacheStore.loadCompatiblePages(this@ReaderActivity, identity, loaded.text)
+        } ?: return null
+        if (selectedBook.id != bookId || !ownsReaderSession() || isFinishing || isDestroyed) return null
+
+        val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
+        val restoreOffset = (
+            lastStableSourceOffset
+                ?: CrashLogStore.recoveryOffset(this@ReaderActivity, bookId)
+                ?: progress?.startOffset
+                ?: progress?.txtCharOffset
+                ?: progress?.position?.toIntOrNull()
+                ?: 0
+        ).coerceIn(0, cached.text.length)
+
+        readerBook = cached
+        layoutSettings = settings
+        currentPageIndex = cached.pageForOffset(restoreOffset).globalPageIndex
+        lastStableSourceOffset = restoreOffset
+        showActiveReader()
+        // showContinuousBook() normalizes to the cached page start; restore the durable content
+        // anchor after that temporary presentation so the exact-layout swap cannot move backwards.
+        lastStableSourceOffset = restoreOffset
+        CrashLogStore.recordEvent(
+            this,
+            "open_cache_preview:applied book=$bookId exact=${cached.settingsHash == settings.stableHash()} anchor=$restoreOffset page=$currentPageIndex pages=${cached.pages.size}"
+        )
+        return restoreOffset
+    }
+
+    // Historical two-argument entry point stays intact for font-change and other callers.
     private fun paginateAndDisplay(preserveOffset: Int?, fontRequestId: Long? = null) {
+        paginateAndDisplay(preserveOffset, fontRequestId, backgroundOpen = false)
+    }
+
+    private fun paginateAndDisplay(preserveOffset: Int?, fontRequestId: Long?, backgroundOpen: Boolean) {
         val selectedBook = book ?: return
         val loaded = document ?: return
         if (pagedReaderView.width <= 0 || pagedReaderView.height <= 0) {
-            pagedReaderView.post { paginateAndDisplay(preserveOffset, fontRequestId) }
+            pagedReaderView.post { paginateAndDisplay(preserveOffset, fontRequestId, backgroundOpen) }
             return
         }
         paginationJob?.cancel()
@@ -590,8 +649,8 @@ class ReaderActivity : AppCompatActivity() {
         val epoch = paginationEpoch
         val generation = readerGeneration
         val expectedBookId = selectedBook.id
-        paginationInProgress = true
-        if (fontRequestId == null) progressLabel.text = "分页中…"
+        if (!backgroundOpen) paginationInProgress = true
+        if (fontRequestId == null && !backgroundOpen) progressLabel.text = "分页中…"
         CrashLogStore.recordEvent(this, "paginate:start book=$bookId preserve=$preserveOffset fontRequest=$fontRequestId epoch=$epoch stable=$lastStableSourceOffset")
         paginationJob = lifecycleScope.launch {
             val runningJob = coroutineContext[Job]
@@ -639,10 +698,15 @@ class ReaderActivity : AppCompatActivity() {
                 // Resolve against the latest visible source position immediately before the atomic
                 // ReaderBook swap, never the page that was visible when the font button was tapped.
                 val liveFontOffset = if (fontRequestId != null) currentVisibleSourceOffset() else null
+                val liveOpenOffset = if (backgroundOpen) {
+                    lastStableSourceOffset?.coerceIn(0, loaded.text.length) ?: currentVisibleSourceOffset()
+                } else null
                 val progress = withContext(Dispatchers.IO) { database.readProgressDao().getProgress(bookId) }
                 val stableOffset = preserveOffset
-                    ?.takeIf { fontRequestId == null }
+                    ?.takeIf { fontRequestId == null && !backgroundOpen }
                     ?: liveFontOffset
+                    ?: liveOpenOffset
+                    ?: preserveOffset
                     ?: lastStableSourceOffset
                     ?: CrashLogStore.recoveryOffset(this@ReaderActivity, bookId)
                     ?: progress?.startOffset
@@ -720,6 +784,13 @@ class ReaderActivity : AppCompatActivity() {
                 val stale = epoch != paginationEpoch || generation != readerGeneration || expectedBookId != bookId ||
                     !ownsReaderSession() || (fontRequestId != null && fontRequestId != fontChangeRequestId)
                 if (stale || isFinishing || isDestroyed) return@launch
+                if (backgroundOpen && readerBook != null) {
+                    CrashLogStore.recordEvent(
+                        this@ReaderActivity,
+                        "open_cache_refresh:failed_keep_preview book=$bookId epoch=$epoch type=${error.javaClass.name} message=${error.message.orEmpty()}"
+                    )
+                    return@launch
+                }
                 val rollback = pendingFontRollback
                 if (rollback != null) {
                     pendingFontRollback = null
@@ -1537,6 +1608,8 @@ class ReaderActivity : AppCompatActivity() {
         val paged = readerBook ?: return null
         val current = paged.pages.getOrNull(currentPageIndex)?.startOffset
         val stable = lastStableSourceOffset?.coerceIn(0, paged.text.length)
+        val transientLayout = layoutSettings?.stableHash()?.let { it != paged.settingsHash } == true
+        if (transientLayout) return stable ?: current
         if (pageTurnMode != TURN_MODE_VERTICAL) return current ?: stable
 
         val suspended = suspendedAnchorOffset?.coerceIn(0, paged.text.length)

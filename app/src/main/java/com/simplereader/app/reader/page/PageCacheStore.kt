@@ -169,6 +169,65 @@ object PageCacheStore {
         return null
     }
 
+    /**
+     * Loads a complete page table for the same source even when the reader layout hash differs.
+     * This is a temporary navigation scaffold only: callers render it with current settings while
+     * an exact page table is rebuilt in the background. Source fingerprint and catalog rule must
+     * still match, so a changed/replaced book can never inherit stale offsets.
+     */
+    fun loadCompatiblePages(context: Context, identity: CacheIdentity, text: String): ReaderBook? {
+        val directory = bookDir(context, identity.bookId)
+        val exactFile = manifestFile(directory, identity.settingsHash)
+        val candidates = pageManifestFiles(directory)
+            .filter { it.isFile && it != exactFile }
+            .sortedByDescending { it.lastModified() }
+        for (file in candidates) {
+            val value = runCatching {
+                val root = JSONObject(file.readText(Charsets.UTF_8))
+                val version = root.optInt("cacheVersion")
+                require(version in MIN_COMPATIBLE_CACHE_VERSION..CACHE_VERSION)
+                require(root.optLong("bookId") == identity.bookId)
+                if (root.optInt("catalogRuleVersion", 0) != identity.catalogRuleVersion) return@runCatching null
+
+                val storedFingerprint = root.optString("textFingerprint")
+                if (storedFingerprint.isNotBlank()) {
+                    if (storedFingerprint != identity.textFingerprint) return@runCatching null
+                } else {
+                    if (root.optString("filePath") != identity.filePath) return@runCatching null
+                    if (root.optLong("fileSize") != identity.fileSize) return@runCatching null
+                    if (root.optLong("lastModified") != identity.lastModified) return@runCatching null
+                }
+
+                val storedSettingsHash = root.optString("readerSettingsHash")
+                if (storedSettingsHash.isBlank()) return@runCatching null
+                val chapters = root.getJSONArray("chapters").toBookChapters(text.length)
+                require(chapters.isNotEmpty())
+                val rawPages = root.getJSONArray("pages")
+                val total = rawPages.length()
+                require(total > 0)
+                val pages = (0 until total).map { index ->
+                    val item = rawPages.getJSONObject(index)
+                    val chapterIndex = item.getInt("chapterIndex")
+                    require(chapterIndex in chapters.indices)
+                    ReaderPage(
+                        globalPageIndex = index,
+                        totalPageCount = total,
+                        chapterIndex = chapterIndex,
+                        pageIndexInChapter = item.getInt("pageIndexInChapter"),
+                        chapterPageCount = item.getInt("chapterPageCount"),
+                        startOffset = item.getInt("startOffset").coerceIn(0, text.length),
+                        endOffset = item.getInt("endOffset").coerceIn(0, text.length)
+                    )
+                }
+                require(pages.all { it.startOffset <= it.endOffset })
+                require(pages.zipWithNext().all { (a, b) -> a.endOffset <= b.endOffset })
+                ReaderBook(text, chapters, pages, storedSettingsHash)
+            }.getOrNull()
+            if (value != null) return value
+        }
+        return null
+    }
+
     fun savePages(context: Context, identity: CacheIdentity, book: ReaderBook) {
         val directory = bookDir(context, identity.bookId).apply { mkdirs() }
         val chapters = JSONArray().apply {
