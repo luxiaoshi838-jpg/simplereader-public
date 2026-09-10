@@ -133,8 +133,8 @@ object PageEngine {
         sourceChapters: List<BookChapter>,
         settings: ReaderLayoutSettings,
         typeface: Typeface = Typeface.DEFAULT,
-        imageSpanProvider: ImageSpanProvider? = null,
-        shouldCancel: (() -> Boolean)? = null
+        shouldCancel: (() -> Boolean)? = null,
+        imageSpanProvider: ImageSpanProvider? = null
     ): ReaderBook {
         throwIfPaginationCancelled(shouldCancel)
         val chapters = normalizeChapters(text, sourceChapters)
