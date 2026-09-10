@@ -3,10 +3,9 @@ set -euo pipefail
 
 reader="app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt"
 engine="app/src/main/java/com/simplereader/app/reader/page/PageEngine.kt"
-gradle="app/build.gradle.kts"
 workflow=".github/workflows/android-release-v2.yml"
 
-for file in "$reader" "$engine" "$gradle" "$workflow"; do
+for file in "$reader" "$engine" "$workflow"; do
   test -f "$file"
 done
 
@@ -48,10 +47,8 @@ if 'ReaderBook(' in preview or 'paginateChapter(' in preview:
     raise SystemExit('v782 gate: first-page primitive must not build a whole/partial ReaderBook')
 PY
 
-grep -Fq '2098000782' "$gradle"
-grep -Fq '"782"' "$gradle"
-grep -Fq 'Build 简阅 v782' "$workflow"
-grep -Fq 'source-v782' "$workflow"
+# Inherited behavior gate: later releases must retain the v782 contract without being pinned
+# to versionName/versionCode or the historical branch/workflow title.
 grep -Fq 'v782-zero-progress-first-page-gates.sh' "$workflow"
 grep -Fq 'PageEngineFirstPagePreviewTest' "$workflow"
 
