@@ -7,12 +7,8 @@ python3 tools/apply-v781-cache-first-open.py
 
 R=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 C=app/src/main/java/com/simplereader/app/reader/page/PageCacheStore.kt
-G=app/build.gradle.kts
 
-# Version.
-grep -Fq '2098000781' "$G"
-grep -Fq 'SIMPLE_READER_VERSION_NAME") ?: "781"' "$G"
-
+# This is an inherited BEHAVIOUR gate. Do not pin the current release to version 781.
 # Opening another already-cached book after a font change must show a cache immediately instead
 # of waiting for a new whole-book layout hash to finish.
 grep -Fq 'private suspend fun showCachedBookImmediately(): Int?' "$R"
@@ -41,7 +37,8 @@ assert 'savePages(' not in block, 'compatible fallback must never be persisted a
 assert 'readerSettingsHash") != identity.settingsHash' not in block, 'fallback must be allowed to cross layout hash'
 PY
 
-# Background exact-layout refresh is silent and cannot disable navigation while fallback pages exist.
+# Background exact-layout refresh remains silent. Newer releases may also keep a direct first-page
+# preview while the authoritative table is rebuilt, so the guard can include that state.
 grep -Fq 'backgroundOpen: Boolean' "$R"
 grep -Fq 'if (!backgroundOpen) paginationInProgress = true' "$R"
 grep -Fq 'if (fontRequestId == null && !backgroundOpen) progressLabel.text = "分页中…"' "$R"
@@ -53,21 +50,23 @@ s=Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text(
 # Historical public two-argument entry remains, so v780 font behaviour is not silently rewritten.
 assert 'private fun paginateAndDisplay(preserveOffset: Int?, fontRequestId: Long? = null)' in s
 assert 'paginateAndDisplay(preserveOffset, fontRequestId, backgroundOpen = false)' in s
-# A cache-preview failure in the authoritative refresh must keep the already-visible book.
+# A preview failure in the authoritative refresh must keep the already-visible book/page.
 p=s.index('open_cache_refresh:failed_keep_preview')
-window=s[p-600:p+500]
-assert 'backgroundOpen && readerBook != null' in window
+window=s[p-750:p+500]
+assert ('backgroundOpen && readerBook != null' in window or
+        'backgroundOpen && (readerBook != null || zeroProgressOpeningPreviewVisible)' in window)
 assert 'return@launch' in window
 # Source offset remains truth while current typography and cached page-table hashes differ.
 assert 'val transientLayout = layoutSettings?.stableHash()?.let { it != paged.settingsHash } == true' in s
 assert 'if (transientLayout) return stable ?: current' in s
-# No local/partial ReaderBook is created in ReaderActivity.
+# The compatible-cache path itself still does not construct a local/partial ReaderBook.
 a=s.index('    private suspend fun showCachedBookImmediately(): Int?')
-b=s.index('    private fun paginateAndDisplay(', a)
+b=s.index('    // Historical two-argument entry point', a)
 preview=s[a:b]
-assert 'ReaderBook(' not in preview
-assert 'readerBook = cached' in preview
-assert 'showActiveReader()' in preview
+cache_part=preview.split('    private suspend fun showZeroProgressFirstPageImmediately()', 1)[0]
+assert 'ReaderBook(' not in cache_part
+assert 'readerBook = cached' in cache_part
+assert 'showActiveReader()' in cache_part
 PY
 
 # v780 cancellation/isolation controls remain mandatory.
