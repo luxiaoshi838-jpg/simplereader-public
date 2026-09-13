@@ -16,6 +16,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.simplereader.app.data.db.SimpleReaderDatabase
+import com.simplereader.app.crash.CrashLogStore
 import com.simplereader.app.operation.OperationLogStore
 import com.simplereader.app.parser.TxtParser
 import com.simplereader.app.reader.ReaderDocument
@@ -28,11 +29,13 @@ import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.runtime.ReaderRuntimeState
 import com.simplereader.app.runtime.ShelfCacheHandoff
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * User-triggered shelf catalog + full pagination cache task.
@@ -374,6 +377,14 @@ class ShelfCacheWorker(
                 continue
             }
 
+            if (ReaderRuntimeState.isReaderForeground()) {
+                ShelfCacheHandoff.releaseWorker(book.id)
+                CrashLogStore.recordEvent(applicationContext, "shelf_cache_yield_before_book book=${book.id} title=${book.title}")
+                return Result.retry()
+            }
+
+            val pausedForReader = AtomicBoolean(false)
+            val paginationOwnerJob = coroutineContext[Job]
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     PageCacheStore.clearDerivedCatalogAndPages(applicationContext, book.id)
@@ -388,6 +399,10 @@ class ShelfCacheWorker(
                     )
                 }
                 coroutineContext.ensureActive()
+                if (ReaderRuntimeState.isReaderForeground()) {
+                    pausedForReader.set(true)
+                    throw java.util.concurrent.CancellationException("Reader foreground during shelf cache document load")
+                }
 
                 val settings = ReaderCacheProfile.createSettings(applicationContext)
                 val identity = cacheIdentity(
@@ -398,13 +413,27 @@ class ShelfCacheWorker(
                 )
 
                 val paged = withContext(Dispatchers.Default) {
-                    val images = ReaderImageRepository(applicationContext, book.id)
-                    PageEngine.paginate(
-                        text = document.text,
-                        sourceChapters = document.chapters,
-                        settings = settings,
-                        typeface = Typeface.DEFAULT
-                    ) { href, width, height -> images.span(href, width, height) }
+                    val images = if (book.format.equals("EPUB", ignoreCase = true)) {
+                        ReaderImageRepository(applicationContext, book.id)
+                    } else null
+                    try {
+                        PageEngine.paginate(
+                            text = document.text,
+                            sourceChapters = document.chapters,
+                            settings = settings,
+                            typeface = Typeface.DEFAULT,
+                            shouldCancel = {
+                                val readerForeground = ReaderRuntimeState.isReaderForeground()
+                                if (readerForeground) pausedForReader.set(true)
+                                readerForeground || paginationOwnerJob?.isActive == false
+                            },
+                            imageSpanProvider = images?.let { repository ->
+                                { href: String, width: Int, height: Int -> repository.span(href, width, height) }
+                            }
+                        )
+                    } finally {
+                        images?.clear()
+                    }
                 }
                 require(paged.pages.isNotEmpty()) { "分页结果为空" }
                 coroutineContext.ensureActive()
@@ -431,6 +460,35 @@ class ShelfCacheWorker(
                         pageCount = verified.pages.size
                     )
                 }
+            }
+
+            val failure = result.exceptionOrNull()
+            if (failure is java.util.concurrent.CancellationException) {
+                ShelfCacheHandoff.releaseWorker(book.id)
+                if (pausedForReader.get() && paginationOwnerJob?.isActive != false) {
+                    CrashLogStore.recordEvent(
+                        applicationContext,
+                        "shelf_cache_yield_during_pagination book=${book.id} title=${book.title} index=$displayedIndex/$total"
+                    )
+                    OperationLogStore.updateShelfCache(
+                        context = applicationContext,
+                        workId = workId,
+                        modeTitle = operationTitle,
+                        state = "阅读中暂停",
+                        currentIndex = index,
+                        total = total,
+                        currentTitle = book.title,
+                        completed = completed,
+                        failed = failed,
+                        skipped = skipped
+                    )
+                    return Result.retry()
+                }
+                throw failure
+            }
+            if (failure is VirtualMachineError || failure is LinkageError || failure is ThreadDeath) {
+                ShelfCacheHandoff.releaseWorker(book.id)
+                throw failure
             }
 
             ShelfCacheHandoff.releaseWorker(book.id)
@@ -491,6 +549,11 @@ class ShelfCacheWorker(
         // Keep the completed checkpoint. If Android recreates this WorkRequest before WorkManager
         // commits SUCCEEDED, nextIndex == total makes the recreated worker finish immediately rather
         // than starting the whole shelf again. A later user action has a different workId.
+        CrashLogStore.recordMemorySnapshot(
+            applicationContext,
+            "shelf_cache_complete",
+            "mode=$mode total=$total completed=$completed failed=$failed skipped=$skipped"
+        )
         return Result.success(output)
     }
 

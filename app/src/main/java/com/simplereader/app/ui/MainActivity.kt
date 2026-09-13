@@ -270,7 +270,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPendingCrashLogIfNeeded() {
-        val crashLog = CrashLogStore.readPending(this) ?: return
+        val crashLog = CrashLogStore.consumePendingIntoHistory(this) ?: return
+        showCrashLogDetail(crashLog, title = "新异常退出/闪退/崩溃日志")
+    }
+
+    private fun showCrashHistoryDialog() {
+        val entries = CrashLogStore.listCrashHistory(this)
+        if (entries.isEmpty()) {
+            Toast.makeText(this, "暂无异常日志", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = entries.mapIndexed { index, entry ->
+            "${index + 1}. ${entry.headline}"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("异常日志 · 最近 ${entries.size}/20 条")
+            .setItems(labels) { _, which ->
+                val entry = entries.getOrNull(which) ?: return@setItems
+                val content = CrashLogStore.readCrashHistoryEntry(this, entry.id) ?: return@setItems
+                showCrashLogDetail(content, title = "异常日志 ${which + 1}/${entries.size}")
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    private fun showCrashLogDetail(crashLog: String, title: String) {
         val logView = TextView(this).apply {
             text = crashLog
             textSize = 12f
@@ -281,22 +305,17 @@ class MainActivity : AppCompatActivity() {
             isFillViewport = true
             addView(logView)
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("异常退出/闪退/崩溃日志")
+        AlertDialog.Builder(this)
+            .setTitle(title)
             .setView(content)
-            .setPositiveButton("复制并清除", null)
-            .setNegativeButton("暂不复制", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            .setPositiveButton("复制") { _, _ ->
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("简阅异常退出日志", crashLog))
-                CrashLogStore.clear(this)
-                Toast.makeText(this, "日志已复制并清除", Toast.LENGTH_SHORT).show()
-                dialog.dismiss()
+                Toast.makeText(this, "日志已复制；历史记录仍保留", Toast.LENGTH_SHORT).show()
             }
-        }
-        dialog.show()
+            .setNeutralButton("最近20条") { _, _ -> showCrashHistoryDialog() }
+            .setNegativeButton("关闭", null)
+            .show()
     }
 
     private fun statusBarHeight(): Int {
@@ -386,7 +405,15 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ShelfHolder, position: Int) {
             clearShelfImageRefs(holder.container)
             holder.container.removeAllViews()
-            val child = when (val item = items[position]) {
+            val boundItem = items[position]
+            if (boundItem is ShelfRenderItem.EmptyItem) {
+                holder.container.setPadding(0, 0, 0, 0)
+            } else {
+                // The historical createShelfCard margins were lost when its LayoutParams were replaced.
+                // Put the intended normal-shelf spacing on the stable ViewHolder container instead.
+                holder.container.setPadding(dp(3), 0, dp(3), dp(18))
+            }
+            val child = when (val item = boundItem) {
                 is ShelfRenderItem.GroupItem -> buildGroupCard(item.group, item.books)
                 is ShelfRenderItem.BookItem -> buildBookCard(item.book)
                 is ShelfRenderItem.EmptyItem -> buildEmptyText(item.message)
@@ -1131,11 +1158,12 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreShelfActions() {
         AlertDialog.Builder(this)
             .setTitle("书架管理")
-            .setItems(arrayOf("书架目录缓存", "批量管理分组", "同步书架")) { _, which ->
+            .setItems(arrayOf("书架目录缓存", "批量管理分组", "同步书架", "异常日志（最近20条）")) { _, which ->
                 when (which) {
                     0 -> showShelfCacheOptions()
                     1 -> showBatchGroupManagement()
                     2 -> confirmSyncBookshelf()
+                    3 -> showCrashHistoryDialog()
                 }
             }
             .show()

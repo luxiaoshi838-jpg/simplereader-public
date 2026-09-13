@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,6 +42,9 @@ object CrashLogStore {
     private const val SYSTEM_EXIT_HISTORY_FILE_NAME = "system_exit_history.txt"
     private const val DIAGNOSTIC_HISTORY_FILE_NAME = "process_diagnostic_history.txt"
     private const val PROCESS_SESSION_META_FILE_NAME = "process_session_meta.json"
+    private const val CRASH_HISTORY_DIR_NAME = "crash_history_v786"
+    private const val CRASH_HISTORY_LIMIT = 20
+    private const val PENDING_SEPARATOR = "\n\n================ 之前尚未清除的记录 ================\n\n"
     private const val MAX_LOG_CHARS = 512_000
     private const val MAX_STACK_CHARS = 300_000
     private const val MAX_OOM_STACK_CHARS = 64_000
@@ -448,6 +452,58 @@ object CrashLogStore {
         }
     }
 
+    data class CrashHistoryItem(
+        val id: String,
+        val savedAt: Long,
+        val headline: String
+    )
+
+    /**
+     * Moves the one-shot pending crash into the durable 20-entry history and deletes pending.
+     * The returned text is non-null only when the newest crash was not already stored, so the
+     * same Android exit can never be presented as a fresh crash on every MainActivity launch.
+     */
+    fun consumePendingIntoHistory(context: Context): String? = synchronized(pendingLock) {
+        val appContext = context.applicationContext
+        val pending = pendingFile(appContext)
+        val raw = runCatching {
+            pending.takeIf { it.isFile && it.length() > 0L }?.readText(Charsets.UTF_8).orEmpty()
+        }.getOrDefault("")
+        if (raw.isBlank()) return@synchronized null
+        val newestNew = storeCrashSectionsLocked(appContext, raw)
+        runCatching { pending.delete() }
+        newestNew
+    }
+
+    fun listCrashHistory(context: Context): List<CrashHistoryItem> = synchronized(pendingLock) {
+        val directory = crashHistoryDirectory(context.applicationContext)
+        directory.listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "log" }
+            .sortedByDescending(File::lastModified)
+            .take(CRASH_HISTORY_LIMIT)
+            .map { file ->
+                val headline = runCatching {
+                    file.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val first = reader.readLine().orEmpty().trim()
+                        val second = reader.readLine().orEmpty().trim()
+                        listOf(first, second).filter(String::isNotBlank).joinToString(" · ").take(180)
+                    }
+                }.getOrDefault("异常退出记录")
+                CrashHistoryItem(file.nameWithoutExtension, file.lastModified(), headline.ifBlank { "异常退出记录" })
+            }
+    }
+
+    fun readCrashHistoryEntry(context: Context, id: String): String? = synchronized(pendingLock) {
+        if (!id.matches(Regex("[0-9a-f]{64}"))) return@synchronized null
+        runCatching {
+            crashHistoryDirectory(context.applicationContext)
+                .resolve("$id.log")
+                .takeIf { it.isFile && it.length() > 0L }
+                ?.readText(Charsets.UTF_8)
+                ?.takeIf(String::isNotBlank)
+        }.getOrNull()
+    }
+
     fun readPending(context: Context): String? = runCatching {
         pendingFile(context)
             .takeIf { it.isFile && it.length() > 0L }
@@ -459,6 +515,36 @@ object CrashLogStore {
         val file = pendingFile(context)
         !file.exists() || file.delete()
     }.getOrDefault(false)
+
+    private fun storeCrashSectionsLocked(context: Context, raw: String): String? {
+        val sections = raw.split(PENDING_SEPARATOR).map(String::trim).filter(String::isNotBlank)
+        if (sections.isEmpty()) return null
+        val directory = crashHistoryDirectory(context).apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        var newestNew: String? = null
+        sections.forEachIndexed { index, section ->
+            val bounded = section.take(MAX_LOG_CHARS)
+            val id = crashEntryId(bounded)
+            val target = directory.resolve("$id.log")
+            if (!target.isFile) {
+                writeAtomic(target, bounded)
+                // Pending is newest-first. Preserve that order even when migrating several old records.
+                target.setLastModified((now - index).coerceAtLeast(1L))
+                if (index == 0) newestNew = bounded
+            }
+        }
+        directory.listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "log" }
+            .sortedByDescending(File::lastModified)
+            .drop(CRASH_HISTORY_LIMIT)
+            .forEach { runCatching { it.delete() } }
+        return newestNew
+    }
+
+    private fun crashEntryId(content: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(content.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     private fun enqueueStateWrite(context: Context, state: ReaderState, force: Boolean) {
         val now = SystemClock.uptimeMillis()
@@ -639,6 +725,7 @@ object CrashLogStore {
             if (!pending.isFile || pending.length() <= 0L) return
             val old = runCatching { pending.readText(Charsets.UTF_8) }.getOrDefault("")
             if (old.isNotBlank()) {
+                storeCrashSectionsLocked(context, old)
                 val history = File(context.filesDir, HISTORY_FILE_NAME)
                 val existing = runCatching { history.takeIf(File::isFile)?.readText(Charsets.UTF_8).orEmpty() }.getOrDefault("")
                 val section = buildString {
@@ -725,6 +812,7 @@ object CrashLogStore {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", Locale.US).format(Date(timestamp))
 
     private fun pendingFile(context: Context): File = File(context.filesDir, PENDING_FILE_NAME)
+    private fun crashHistoryDirectory(context: Context): File = File(context.filesDir, CRASH_HISTORY_DIR_NAME)
     private fun readerStateFile(context: Context): File = File(context.filesDir, READER_STATE_FILE_NAME)
     private fun journalFile(context: Context): File = File(context.filesDir, JOURNAL_FILE_NAME)
     private fun memoryJournalFile(context: Context): File = File(context.filesDir, MEMORY_JOURNAL_FILE_NAME)
