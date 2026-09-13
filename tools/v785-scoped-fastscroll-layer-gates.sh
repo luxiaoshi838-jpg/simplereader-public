@@ -11,8 +11,7 @@ SCROLLER=app/src/main/java/com/simplereader/app/ui/ShelfFastScroller.kt
 READER=app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
 READER_XML=app/src/main/res/layout/activity_reader.xml
 
-grep -Fq '2098000785' "$GRADLE"
-grep -Fq 'SIMPLE_READER_VERSION_NAME") ?: "785"' "$GRADLE"
+# Inherited behavior gate: releases newer than v785 must retain the scoped layering contract.
 
 # Main root must clip normally so RecyclerView/book contents cannot bleed upward over toolbar rows.
 grep -Fq 'android:clipChildren="true"' "$XML"
