@@ -19,13 +19,13 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getBook(id: Long): Book?
 
-    @Query("SELECT * FROM books WHERE groupId IS NULL ORDER BY lastReadTime DESC")
+    @Query("SELECT * FROM books WHERE groupId IS NULL AND fileStatus != 'EXTERNAL_PENDING' ORDER BY lastReadTime DESC")
     fun getUngroupedBooks(): Flow<List<Book>>
 
-    @Query("SELECT * FROM books WHERE groupId = :groupId ORDER BY lastReadTime DESC")
+    @Query("SELECT * FROM books WHERE groupId = :groupId AND fileStatus != 'EXTERNAL_PENDING' ORDER BY lastReadTime DESC")
     fun getBooksByGroup(groupId: Long): Flow<List<Book>>
 
-    @Query("SELECT * FROM books ORDER BY lastReadTime DESC")
+    @Query("SELECT * FROM books WHERE fileStatus != 'EXTERNAL_PENDING' ORDER BY lastReadTime DESC")
     fun getAllBooks(): Flow<List<Book>>
 
     @Query(
@@ -48,6 +48,7 @@ interface BookDao {
             read_progress.epubProgressFraction AS epubProgressFraction
         FROM books
         LEFT JOIN read_progress ON books.id = read_progress.bookId
+        WHERE books.fileStatus != 'EXTERNAL_PENDING'
         ORDER BY books.lastReadTime DESC, books.addTime DESC
         """
     )
@@ -74,10 +75,14 @@ interface BookDao {
         FROM books
         LEFT JOIN read_progress ON books.id = read_progress.bookId
         WHERE books.groupId = :groupId
+          AND books.fileStatus != 'EXTERNAL_PENDING'
         ORDER BY books.lastReadTime DESC, books.addTime DESC
         """
     )
     fun getShelfBooksByGroup(groupId: Long): Flow<List<ShelfBookItem>>
+
+    @Query("SELECT * FROM books WHERE fileStatus = :status ORDER BY addTime ASC")
+    suspend fun getByFileStatus(status: String): List<Book>
 
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteById(id: Long)

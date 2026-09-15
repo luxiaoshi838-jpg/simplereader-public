@@ -1,7 +1,5 @@
 package com.simplereader.app.operation
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.view.View
 import android.widget.LinearLayout
@@ -13,7 +11,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.simplereader.app.crash.CrashLogStore
 
-/** Operation-log UI. The list page deliberately has no copy button. */
+/** Operation-log UI. Complete logs are exported as files; clipboard length is not relied on. */
 object OperationLogDialogs {
 
     fun showLogHub(activity: AppCompatActivity) {
@@ -90,13 +88,8 @@ object OperationLogDialogs {
                 scrollView.scrollTo(0, target)
             }
 
-            override fun onStartTrackingTouch(bar: SeekBar?) {
-                dragging = true
-            }
-
-            override fun onStopTrackingTouch(bar: SeekBar?) {
-                dragging = false
-            }
+            override fun onStartTrackingTouch(bar: SeekBar?) { dragging = true }
+            override fun onStopTrackingTouch(bar: SeekBar?) { dragging = false }
         })
         scrollView.viewTreeObserver.addOnScrollChangedListener {
             if (dragging) return@addOnScrollChangedListener
@@ -108,10 +101,10 @@ object OperationLogDialogs {
         AlertDialog.Builder(activity)
             .setTitle(entry.title)
             .setView(content)
-            .setPositiveButton("复制") { _, _ ->
-                val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("简阅操作日志", entry.body))
-                Toast.makeText(activity, "日志已复制", Toast.LENGTH_SHORT).show()
+            .setPositiveButton("保存日志文件") { _, _ ->
+                DiagnosticLogFiles.exportOperationSnapshotNow(activity)
+                    .onSuccess { name -> Toast.makeText(activity, "已保存：$name", Toast.LENGTH_LONG).show() }
+                    .onFailure { error -> Toast.makeText(activity, error.message ?: "保存日志失败", Toast.LENGTH_LONG).show() }
             }
             .setNegativeButton("关闭", null)
             .show()
@@ -132,9 +125,10 @@ object OperationLogDialogs {
         AlertDialog.Builder(activity)
             .setTitle("闪退/崩溃日志")
             .setView(ScrollView(activity).apply { addView(text) })
-            .setPositiveButton("复制") { _, _ ->
-                val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("简阅闪退日志", body))
+            .setPositiveButton("保存日志文件") { _, _ ->
+                DiagnosticLogFiles.exportCrashSnapshotNow(activity)
+                    .onSuccess { name -> Toast.makeText(activity, "已保存：$name", Toast.LENGTH_LONG).show() }
+                    .onFailure { error -> Toast.makeText(activity, error.message ?: "保存日志失败", Toast.LENGTH_LONG).show() }
             }
             .setNegativeButton("关闭", null)
             .show()

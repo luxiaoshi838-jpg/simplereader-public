@@ -37,6 +37,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.R
 import com.simplereader.app.crash.CrashLogStore
+import com.simplereader.app.operation.DiagnosticLogFiles
 import com.simplereader.app.operation.OperationLogDialogs
 import com.simplereader.app.operation.ShelfCacheUiController
 import com.simplereader.app.parser.EpubParser
@@ -121,6 +122,28 @@ class MainActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) {
             val permissionByUri = uris.associateWith(::persistReadPermission)
             importSelectedFiles(permissionByUri)
+        }
+    }
+
+    private val crashLogFolderLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            persistTreePermission(uri)
+            DiagnosticLogFiles.setCrashFolder(this, uri)
+            DiagnosticLogFiles.scheduleCrashSnapshot(this)
+            Toast.makeText(this, "已设置崩溃日志文件夹", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val operationLogFolderLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            persistTreePermission(uri)
+            DiagnosticLogFiles.setOperationFolder(this, uri)
+            DiagnosticLogFiles.scheduleOperationSnapshot(this)
+            Toast.makeText(this, "已设置操作日志文件夹", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -272,6 +295,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPendingCrashLogIfNeeded() {
         val crashLog = CrashLogStore.consumePendingIntoHistory(this) ?: return
+        DiagnosticLogFiles.scheduleCrashSnapshot(this)
         showCrashLogDetail(crashLog, title = "新异常退出/闪退/崩溃日志")
     }
 
@@ -309,40 +333,45 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(title)
             .setView(content)
-            .setPositiveButton("复制") { _, _ ->
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("简阅异常退出日志", crashLog))
-                Toast.makeText(this, "日志已复制；历史记录仍保留", Toast.LENGTH_SHORT).show()
+            .setPositiveButton("保存日志文件") { _, _ ->
+                DiagnosticLogFiles.exportCrashSnapshotNow(this)
+                    .onSuccess { name -> Toast.makeText(this, "已保存：$name", Toast.LENGTH_LONG).show() }
+                    .onFailure { error -> Toast.makeText(this, error.message ?: "保存日志失败", Toast.LENGTH_LONG).show() }
             }
             .setNeutralButton("最近20条") { _, _ -> showCrashHistoryDialog() }
             .setNegativeButton("关闭", null)
             .show()
     }
 
-    private fun createShelfLayoutManager(): GridLayoutManager {
+    private fun createShelfLayoutManager(): RecyclerView.LayoutManager {
+        if (shelfListMode) return LinearLayoutManager(this)
         return GridLayoutManager(this, 3).apply {
             spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
                 override fun getSpanSize(position: Int): Int =
-                    if (shelfListMode || shelfAdapter.isFullSpan(position)) 3 else 1
+                    if (shelfAdapter.isFullSpan(position)) 3 else 1
             }
         }
     }
 
     private fun applyShelfLayoutMode(updateButton: Boolean = true) {
         if (!::shelfGrid.isInitialized) return
-        val layoutManager = (shelfGrid.layoutManager as? GridLayoutManager)
-            ?: createShelfLayoutManager().also { shelfGrid.layoutManager = it }
-        layoutManager.spanSizeLookup.invalidateSpanIndexCache()
-        layoutManager.spanSizeLookup.invalidateSpanGroupIndexCache()
+        val firstVisible = (shelfGrid.layoutManager as? LinearLayoutManager)
+            ?.findFirstVisibleItemPosition()
+            ?.takeIf { it >= 0 }
+            ?: 0
+        shelfGrid.stopScroll()
+        shelfGrid.layoutManager = null
         shelfGrid.recycledViewPool.clear()
-        if (updateButton && ::editButton.isInitialized && !shelfSelectionMode) updateShelfModeButton()
+        shelfGrid.layoutManager = createShelfLayoutManager()
         shelfAdapter.notifyDataSetChanged()
+        shelfGrid.scrollToPosition(firstVisible.coerceAtMost((shelfAdapter.itemCount - 1).coerceAtLeast(0)))
+        if (updateButton && ::editButton.isInitialized && !shelfSelectionMode) updateShelfModeButton()
         shelfGrid.requestLayout()
     }
 
     private fun updateShelfModeButton() {
         if (!::editButton.isInitialized || shelfSelectionMode) return
-        editButton.text = if (shelfListMode) "列表" else "宫格"
+        editButton.text = if (shelfListMode) "宫格" else "列表"
         editButton.contentDescription = if (shelfListMode) {
             "当前列表模式，点击切换为宫格"
         } else {
@@ -1956,14 +1985,44 @@ class MainActivity : AppCompatActivity() {
     private fun showDataExportOptions() {
         AlertDialog.Builder(this)
             .setTitle("数据导出")
-            .setItems(arrayOf("导出", "同步", "日志")) { _, which ->
+            .setItems(arrayOf("导出", "同步", "崩溃日志", "操作日志", "日志位置设置")) { _, which ->
                 when (which) {
                     0 -> launchDataExport()
                     1 -> syncDataExport()
-                    2 -> OperationLogDialogs.showLogHub(this)
+                    2 -> showCrashHistoryDialog()
+                    3 -> OperationLogDialogs.showOperationList(this)
+                    4 -> showLogLocationSettings()
                 }
             }
             .show()
+    }
+
+    private fun showLogLocationSettings() {
+        val crashLabel = DiagnosticLogFiles.crashFolderLabel(this)
+        val operationLabel = DiagnosticLogFiles.operationFolderLabel(this)
+        AlertDialog.Builder(this)
+            .setTitle("日志位置设置")
+            .setItems(
+                arrayOf(
+                    "崩溃日志文件夹：$crashLabel",
+                    "操作日志文件夹：$operationLabel"
+                )
+            ) { _, which ->
+                when (which) {
+                    0 -> crashLogFolderLauncher.launch(null)
+                    1 -> operationLogFolderLauncher.launch(null)
+                }
+            }
+            .show()
+    }
+
+    private fun persistTreePermission(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
     }
 
     private fun launchDataExport() {

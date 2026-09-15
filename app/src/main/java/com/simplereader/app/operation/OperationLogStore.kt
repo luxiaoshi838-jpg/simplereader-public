@@ -205,6 +205,7 @@ object OperationLogStore {
             .edit()
             .putString(KEY_ENTRIES, array.toString())
             .apply()
+        DiagnosticLogFiles.scheduleOperationSnapshot(context)
     }
 
     private fun formatTime(value: Long): String = SimpleDateFormat(

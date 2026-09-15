@@ -144,6 +144,9 @@ class ReaderActivity : AppCompatActivity() {
     private var readerGeneration: Long = 0L
     private var shelfCacheClaimBookId: Long = 0L
     private var zeroProgressOpeningPreviewVisible = false
+    private var externalShelfDecisionPending = false
+    private var externalDiscardInProgress = false
+    private var externalDecisionDialogShowing = false
 
     private data class FontRollback(
         val textSizeSp: Float,
@@ -198,6 +201,7 @@ class ReaderActivity : AppCompatActivity() {
             setColor(Color.argb(220, 48, 47, 42))
         }
         bookId = intent.getLongExtra("bookId", 0L)
+        externalShelfDecisionPending = intent.getBooleanExtra(ExternalBookStore.EXTRA_EXTERNAL_PENDING, false)
         readerGeneration = ReaderRuntimeState.claim()
 
         loadPreferences()
@@ -231,11 +235,13 @@ class ReaderActivity : AppCompatActivity() {
     override fun onPause() {
         ReaderRuntimeState.markPaused(readerGeneration)
         stopAutoReading(false)
-        if (ownsReaderSession()) {
+        if (ownsReaderSession() && !externalDiscardInProgress) {
             if (pageTurnMode == TURN_MODE_VERTICAL) {
                 persistVerticalDiagnosticState("vertical_pause", force = true)
             }
             saveProgress()
+        } else if (externalDiscardInProgress) {
+            CrashLogStore.recordEvent(this, "external_pending_discard_skip_progress book=$bookId")
         } else {
             CrashLogStore.recordEvent(
                 this,
@@ -351,6 +357,59 @@ class ReaderActivity : AppCompatActivity() {
         MENU_SEARCH -> { showContentSearch(); true }
         MENU_ADD_BOOKMARK -> { addBookmark(); true }
         else -> super.onOptionsItemSelected(item)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (externalShelfDecisionPending) {
+            showExternalShelfDecision()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    private fun showExternalShelfDecision() {
+        if (externalDecisionDialogShowing || isFinishing || isDestroyed) return
+        externalDecisionDialogShowing = true
+        AlertDialog.Builder(this)
+            .setTitle("加入书架？")
+            .setMessage("这本书是从其他应用临时打开的。加入书架后会保留在简阅；不加入则删除简阅保存的临时副本。")
+            .setPositiveButton("加入书架") { _, _ -> finishExternalBook(keep = true) }
+            .setNegativeButton("不加入") { _, _ -> finishExternalBook(keep = false) }
+            .setOnCancelListener { externalDecisionDialogShowing = false }
+            .show()
+    }
+
+    private fun finishExternalBook(keep: Boolean) {
+        externalDecisionDialogShowing = false
+        if (!keep) externalDiscardInProgress = true
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (keep) {
+                        ExternalBookStore.confirm(database, bookId)
+                    } else {
+                        ExternalBookStore.discard(this@ReaderActivity, database, bookId)
+                    }
+                }
+            }
+            result.onSuccess {
+                externalShelfDecisionPending = false
+                Toast.makeText(
+                    this@ReaderActivity,
+                    if (keep) "已加入书架" else "未加入书架",
+                    Toast.LENGTH_SHORT
+                ).show()
+                finish()
+            }.onFailure { error ->
+                if (!keep) externalDiscardInProgress = false
+                Toast.makeText(
+                    this@ReaderActivity,
+                    error.message ?: if (keep) "加入书架失败" else "清理临时书籍失败",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {

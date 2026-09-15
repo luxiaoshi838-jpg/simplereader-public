@@ -33,7 +33,15 @@ object ReaderDocumentLoader {
 
     fun resolveDocument(context: Context, book: Book): DocumentFile? {
         val directUri = runCatching { Uri.parse(book.filePath) }.getOrNull()
-        directUri?.let { uri ->
+        val directFile = when {
+            directUri?.scheme.equals("file", ignoreCase = true) -> directUri?.path?.let(::File)
+            directUri?.scheme.isNullOrBlank() -> File(book.filePath)
+            else -> null
+        }
+        if (directFile != null && directFile.isFile) {
+            return DocumentFile.fromFile(directFile)
+        }
+        directUri?.takeIf { it.scheme.equals("content", ignoreCase = true) }?.let { uri ->
             val direct = runCatching { DocumentFile.fromSingleUri(context, uri) }.getOrNull()
             if (direct != null && runCatching { direct.exists() && direct.isFile }.getOrDefault(false)) {
                 return direct
