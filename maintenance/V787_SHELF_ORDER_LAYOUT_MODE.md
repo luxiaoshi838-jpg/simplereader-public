@@ -22,3 +22,20 @@
 - 更新 CrashLogAndCoverContractTest：历史日志仍保留，但不再要求书架管理菜单存在重复入口。
 - 正式构建仍必须满足 SIGNING_POLICY.md：包名 com.simplereader.app、固定 Public V1 证书指纹、R8/资源压缩及版本号校验。
 - 2026-09-15：补丁已自动应用到 `source-v787`；由用户身份提交本记录更新，以触发完整 Android PR validation 对实际 v787 源码进行验证。
+
+## 2026-09-15 最终验收
+
+- v787 专项 Debug/Release 契约测试：通过。
+- 完整单测：与仓库既有 V758/V759 的 10 条已知失败基线完全一致，无新增失败；基线门通过。
+- Debug 构建：通过。
+- Release 构建：通过。
+- GitHub 发布构建 run：`34961091573`，用于生成 unsigned Release APK，并校验包名、版本号、APK 大小及提供公开 Android `apksigner/aapt2` 工具。
+- 正式密钥未上传 GitHub；从 Google Drive `签名文件/简阅签名文件.zip` 读取固定 Public V1 keystore，在本地完成签名。
+- 正式签名方案：APK Signature Scheme V2、V3 均验证通过。
+- 正式证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
+- 包名：`com.simplereader.app`。
+- versionCode：`2098000787`。
+- versionName：`787`。
+- 正式 APK 大小：`5961606` bytes。
+- 正式 APK SHA-256：`855384224749d1becc88433ccc7da3152a9e1c57f9bac2d32c3a07e5647a152d`。
+- 正式 APK 对应功能源码构建提交：`afc92f4d19241f051e2d731e0dcb2ae793c8bf82`；本提交仅补写验收日志，不改变 APK 功能源码。
