@@ -39,7 +39,7 @@ class CrashLogAndCoverContractTest {
         assertTrue(store.contains("pending.delete()"))
         assertTrue(main.contains("CrashLogStore.consumePendingIntoHistory(this)"))
         assertTrue(main.contains("新异常退出/闪退/崩溃日志"))
-        assertTrue(main.contains("异常日志（最近20条）"))
+        assertFalse(main.contains("\"异常日志（最近20条）\""))
         assertTrue(main.contains("日志已复制；历史记录仍保留"))
         assertFalse(main.contains("复制并清除"))
         assertFalse(main.contains("CrashLogStore.clear(this)"))

@@ -33,6 +33,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.simplereader.app.R
 import com.simplereader.app.crash.CrashLogStore
@@ -85,6 +86,7 @@ class MainActivity : AppCompatActivity() {
     private var books = emptyList<ShelfBookItem>()
     private var groups = emptyList<BookGroup>()
     private var showingHistory = false
+    private var shelfListMode = false
     private var shelfSearchQuery = ""
     private var selectedGroupId: Long? = null
     private var shelfSelectionMode = false
@@ -188,14 +190,12 @@ class MainActivity : AppCompatActivity() {
             mainRoot.paddingBottom
         )
         shelfGrid = findViewById(R.id.shelfGrid)
-        val shelfLayoutManager = GridLayoutManager(this, 3)
-        shelfLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
-            override fun getSpanSize(position: Int): Int = if (shelfAdapter.isFullSpan(position)) 3 else 1
-        }
-        shelfGrid.layoutManager = shelfLayoutManager
         shelfGrid.adapter = shelfAdapter
         shelfGrid.itemAnimator = null
         shelfGrid.setItemViewCacheSize(12)
+        shelfListMode = getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(SHELF_LIST_MODE_KEY, false)
+        applyShelfLayoutMode(updateButton = false)
         ShelfFastScroller.attach(shelfGrid)
         readingStatsTextView = findViewById(R.id.readingStatsTextView)
         ShelfCacheUiController.attach(this, readingStatsTextView) { updateUI() }
@@ -227,15 +227,15 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showImportOptions() }
         }
         editButton = findViewById<TextView>(R.id.editButton).apply {
-            text = "编辑"
             setOnClickListener {
                 if (shelfSelectionMode) {
                     handleShelfSelectionPrimaryAction()
                 } else {
-                    Toast.makeText(this@MainActivity, "长按书籍或分组可批量选择", Toast.LENGTH_SHORT).show()
+                    toggleShelfLayoutMode()
                 }
             }
         }
+        updateShelfModeButton()
         findViewById<ImageView>(R.id.shelfNightButton).apply {
             ShelfDayNightModeIcon.apply(
                 this,
@@ -316,6 +316,35 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton("最近20条") { _, _ -> showCrashHistoryDialog() }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    private fun applyShelfLayoutMode(updateButton: Boolean = true) {
+        shelfGrid.layoutManager = if (shelfListMode) {
+            LinearLayoutManager(this)
+        } else {
+            GridLayoutManager(this, 3).apply {
+                spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                    override fun getSpanSize(position: Int): Int = if (shelfAdapter.isFullSpan(position)) 3 else 1
+                }
+            }
+        }
+        if (updateButton && ::editButton.isInitialized && !shelfSelectionMode) updateShelfModeButton()
+        if (::shelfGrid.isInitialized) shelfAdapter.notifyDataSetChanged()
+    }
+
+    private fun updateShelfModeButton() {
+        if (!::editButton.isInitialized || shelfSelectionMode) return
+        editButton.text = if (shelfListMode) "宫格" else "列表"
+        editButton.contentDescription = if (shelfListMode) "切换为宫格模式" else "切换为列表模式"
+    }
+
+    private fun toggleShelfLayoutMode() {
+        shelfListMode = !shelfListMode
+        getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SHELF_LIST_MODE_KEY, shelfListMode)
+            .apply()
+        applyShelfLayoutMode()
     }
 
     private fun statusBarHeight(): Int {
@@ -408,14 +437,15 @@ class MainActivity : AppCompatActivity() {
             val boundItem = items[position]
             if (boundItem is ShelfRenderItem.EmptyItem) {
                 holder.container.setPadding(0, 0, 0, 0)
+            } else if (shelfListMode) {
+                holder.container.setPadding(0, 0, 0, dp(10))
             } else {
-                // The historical createShelfCard margins were lost when its LayoutParams were replaced.
-                // Put the intended normal-shelf spacing on the stable ViewHolder container instead.
+                // Keep the same three-column spacing as the books shown inside a group.
                 holder.container.setPadding(dp(3), 0, dp(3), dp(18))
             }
             val child = when (val item = boundItem) {
-                is ShelfRenderItem.GroupItem -> buildGroupCard(item.group, item.books)
-                is ShelfRenderItem.BookItem -> buildBookCard(item.book)
+                is ShelfRenderItem.GroupItem -> if (shelfListMode) buildGroupListCard(item.group, item.books) else buildGroupCard(item.group, item.books)
+                is ShelfRenderItem.BookItem -> if (shelfListMode) buildBookListCard(item.book) else buildBookCard(item.book)
                 is ShelfRenderItem.EmptyItem -> buildEmptyText(item.message)
             }
             child.layoutParams = FrameLayout.LayoutParams(
@@ -478,15 +508,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         val booksByGroup = visibleBooks.groupBy { it.groupId }
+        val topLevelItems = mutableListOf<Pair<Long, ShelfRenderItem>>()
         groups.mapNotNull { group ->
             val groupBooks = booksByGroup[group.id].orEmpty().sortedByDescending(::activityTime)
             if (groupBooks.isEmpty()) null else group to groupBooks
-        }.sortedByDescending { (_, groupBooks) -> groupBooks.maxOf(::activityTime) }
-            .forEach { (group, groupBooks) -> renderItems += ShelfRenderItem.GroupItem(group, groupBooks) }
-
-        renderItems += booksByGroup[null].orEmpty()
-            .sortedByDescending(::activityTime)
-            .map(ShelfRenderItem::BookItem)
+        }.forEach { (group, groupBooks) ->
+            topLevelItems += groupBooks.maxOf(::activityTime) to ShelfRenderItem.GroupItem(group, groupBooks)
+        }
+        booksByGroup[null].orEmpty().forEach { book ->
+            topLevelItems += activityTime(book) to ShelfRenderItem.BookItem(book)
+        }
+        renderItems += topLevelItems
+            .sortedWith(
+                compareByDescending<Pair<Long, ShelfRenderItem>> { it.first }
+                    .thenBy { (_, item) ->
+                        when (item) {
+                            is ShelfRenderItem.GroupItem -> item.group.displayName.ifBlank { item.group.name }
+                            is ShelfRenderItem.BookItem -> item.book.title
+                            is ShelfRenderItem.EmptyItem -> item.message
+                        }
+                    }
+            )
+            .map { it.second }
 
         if (visibleBooks.isEmpty()) {
             renderItems += ShelfRenderItem.EmptyItem(
@@ -513,6 +556,98 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.editButton).setTextColor(primaryText)
     }
 
+    private fun buildGroupListCard(group: BookGroup, groupBooks: List<ShelfBookItem>): View {
+        val sortedBooks = groupBooks.sortedByDescending(::activityTime)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(104)
+        }
+        val preview = GridLayout(this).apply {
+            columnCount = 2
+            rowCount = 2
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setBackgroundColor(Color.rgb(232, 229, 220))
+            val previewBooks = sortedBooks.take(4)
+            repeat(4) { index ->
+                val book = previewBooks.getOrNull(index)
+                val child = if (book != null) {
+                    createBookCover(book, compact = true).apply { layoutParams = groupPreviewLayoutParams(index) }
+                } else {
+                    TextView(this@MainActivity).apply {
+                        setBackgroundColor(Color.rgb(205, 202, 194))
+                        layoutParams = groupPreviewLayoutParams(index)
+                    }
+                }
+                addView(child)
+            }
+        }
+        card.addView(preview, LinearLayout.LayoutParams(dp(72), dp(104)))
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(8), 0)
+            addView(TextView(this@MainActivity).apply {
+                text = group.displayName.ifBlank { group.name }
+                textSize = 17f
+                maxLines = 2
+                setTextColor(ReaderAppearance.shelfTextColor(this@MainActivity))
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "共 ${sortedBooks.size} 本"
+                textSize = 13f
+                setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
+            })
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        card.setOnClickListener {
+            if (shelfSelectionMode) toggleShelfGroupSelection(group.id) else showGroupBooksV2(group, sortedBooks)
+        }
+        card.setOnLongClickListener {
+            enterShelfSelectionMode()
+            toggleShelfGroupSelection(group.id)
+            true
+        }
+        return wrapSelectableShelfCard(card, selectedShelfGroupIds.contains(group.id))
+    }
+
+    private fun buildBookListCard(book: ShelfBookItem): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(104)
+        }
+        val cover = createBookCover(book, compact = false).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(72), dp(104))
+        }
+        card.addView(cover)
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(8), 0)
+            addView(TextView(this@MainActivity).apply {
+                text = book.title
+                textSize = 17f
+                maxLines = 2
+                setTextColor(ReaderAppearance.shelfTextColor(this@MainActivity))
+            })
+            addView(TextView(this@MainActivity).apply {
+                val status = if (book.fileStatus == "AVAILABLE") "" else " · ${book.fileStatus}"
+                text = "已读 ${book.progressPercent()}%$status"
+                textSize = 13f
+                setTextColor(ReaderAppearance.shelfSecondaryTextColor(this@MainActivity))
+            })
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        card.setOnClickListener {
+            if (shelfSelectionMode) toggleShelfBookSelection(book.id) else openBook(book.id)
+        }
+        card.setOnLongClickListener {
+            enterShelfSelectionMode()
+            toggleShelfBookSelection(book.id)
+            true
+        }
+        return wrapSelectableShelfCard(card, selectedShelfBookIds.contains(book.id))
+    }
+
     private fun buildGroupCard(group: BookGroup, groupBooks: List<ShelfBookItem>): View {
         val sortedBooks = groupBooks.sortedByDescending(::activityTime)
         val card = createShelfCard()
@@ -537,7 +672,7 @@ class MainActivity : AppCompatActivity() {
                 addView(child)
             }
         }
-        card.addView(cover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112)))
+        card.addView(cover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(148)))
         card.addView(TextView(this).apply {
             text = group.displayName.ifBlank { group.name }
             textSize = 18f
@@ -645,7 +780,7 @@ class MainActivity : AppCompatActivity() {
                 setMargins(dp(2), dp(2), dp(2), dp(2))
             }
         } else {
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(112))
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(148))
         }
 
         fun showBitmap(bitmap: Bitmap) {
@@ -721,7 +856,7 @@ class MainActivity : AppCompatActivity() {
                 addView(
                     selectionMark(selected),
                     FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
-                        topMargin = dp(84)
+                        topMargin = if (shelfListMode) dp(38) else dp(120)
                         rightMargin = dp(4)
                     }
                 )
@@ -1158,12 +1293,11 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreShelfActions() {
         AlertDialog.Builder(this)
             .setTitle("书架管理")
-            .setItems(arrayOf("书架目录缓存", "批量管理分组", "同步书架", "异常日志（最近20条）")) { _, which ->
+            .setItems(arrayOf("书架目录缓存", "批量管理分组", "同步书架")) { _, which ->
                 when (which) {
                     0 -> showShelfCacheOptions()
                     1 -> showBatchGroupManagement()
                     2 -> confirmSyncBookshelf()
-                    3 -> showCrashHistoryDialog()
                 }
             }
             .show()
@@ -1441,7 +1575,7 @@ class MainActivity : AppCompatActivity() {
         shelfSelectionMode = false
         selectedShelfBookIds.clear()
         selectedShelfGroupIds.clear()
-        editButton.text = "\u7f16\u8f91"
+        updateShelfModeButton()
         moreButton.text = "\u22ee"
         updateUI()
     }
@@ -2739,6 +2873,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val SHELF_UI_PREFS = "shelf_ui"
+        private const val SHELF_LIST_MODE_KEY = "list_mode"
         private const val BACKUP_SCHEMA_VERSION = 1
         private const val BACKUP_PREFS = "simple_reader_backup"
         private const val BACKUP_URI_KEY = "backup_uri"
