@@ -1,4 +1,4 @@
-name: Sign 简阅 v787
+name: Build 简阅 v787 for local signing
 
 on:
   push:
@@ -9,15 +9,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-v787-local-signing
+  cancel-in-progress: true
+
 env:
   SIMPLE_READER_VERSION_CODE: "2098000787"
   SIMPLE_READER_VERSION_NAME: "787"
-  EXPECTED_SIGNING_SHA256: "315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648"
-  SIGNING_ALIAS: "simplereader-public-v1"
   MAX_APK_BYTES: "52428800"
 
 jobs:
-  signed-apk:
+  unsigned-release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -34,22 +36,6 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Restore and verify protected signing key
-        shell: bash
-        env:
-          SIGNING_KEY_BASE64: ${{ secrets.SIMPLEREADER_SIGNING_KEY_BASE64 }}
-          SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$SIGNING_KEY_BASE64"
-          test -n "$SIGNING_PASSWORD"
-          key="$RUNNER_TEMP/simplereader-public-v1.keystore"
-          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$key"
-          test -s "$key"
-          actual="$(keytool -list -v -keystore "$key" -storepass "$SIGNING_PASSWORD" -alias "$SIGNING_ALIAS" 2>/dev/null | sed -n 's/.*SHA256: //p' | head -n1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')"
-          test "$actual" = "$EXPECTED_SIGNING_SHA256"
-          echo "SIGNING_KEYSTORE=$key" >> "$GITHUB_ENV"
 
       - name: Enforce source and UI policy
         shell: bash
@@ -80,47 +66,40 @@ jobs:
           set -euo pipefail
           ./gradlew assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee gradle-build.log
 
-      - name: Sign and verify v787
+      - name: Verify unsigned package and bundle local signing tools
         shell: bash
-        env:
-          SIGNING_PASSWORD: ${{ secrets.SIMPLEREADER_SIGNING_PASSWORD }}
         run: |
           set -euo pipefail
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
           test -s "$unsigned"
-          out="app/build/outputs/apk/release/SimpleReader_v787_signed.apk"
+          mkdir -p release signing-tools/lib
+          cp "$unsigned" release/SimpleReader_v787_unsigned.apk
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
-          "${build_tools}/apksigner" sign \
-            --ks "$SIGNING_KEYSTORE" \
-            --ks-key-alias "$SIGNING_ALIAS" \
-            --ks-pass env:SIGNING_PASSWORD \
-            --key-pass env:SIGNING_PASSWORD \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --out "$out" "$unsigned"
-          "${build_tools}/apksigner" verify --verbose --print-certs "$out" | tee apk-certificate.txt
-          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' apk-certificate.txt
-          grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' apk-certificate.txt
-          actual="$(sed -n 's/.*certificate SHA-256 digest: //p' apk-certificate.txt | head -n1 | tr -d ':\r\n ' | tr 'A-F' 'a-f')"
-          test "$actual" = "$EXPECTED_SIGNING_SHA256"
-          "${build_tools}/aapt2" dump badging "$out" | tee apk-package-info.txt
+          "${build_tools}/aapt2" dump badging "$unsigned" | tee apk-package-info.txt
           grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
           grep -Fq "versionCode='2098000787'" apk-package-info.txt
           grep -Fq "versionName='787'" apk-package-info.txt
-          test "$(stat -c %s "$out")" -le "$MAX_APK_BYTES"
-          sha256sum "$out" | tee apk-sha256.txt
+          test "$(stat -c %s "$unsigned")" -le "$MAX_APK_BYTES"
+          sha256sum "$unsigned" | tee apk-unsigned-sha256.txt
+          cp "${build_tools}/apksigner" signing-tools/apksigner
+          cp "${build_tools}/lib/apksigner.jar" signing-tools/lib/apksigner.jar
+          cp "${build_tools}/aapt2" signing-tools/aapt2
+          chmod +x signing-tools/apksigner signing-tools/aapt2
+          signing-tools/apksigner version | tee apksigner-version.txt
 
-      - name: Upload signed v787
+      - name: Upload unsigned v787 and public Android signing tools
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v787-signed-${{ github.run_number }}
+          name: SimpleReader-v787-unsigned-tools-${{ github.run_number }}
           path: |
-            app/build/outputs/apk/release/SimpleReader_v787_signed.apk
-            apk-certificate.txt
+            release/SimpleReader_v787_unsigned.apk
+            signing-tools/apksigner
+            signing-tools/lib/apksigner.jar
+            signing-tools/aapt2
             apk-package-info.txt
-            apk-sha256.txt
+            apk-unsigned-sha256.txt
+            apksigner-version.txt
             gradle-build.log
             v787-full-unit-tests.log
           if-no-files-found: error
