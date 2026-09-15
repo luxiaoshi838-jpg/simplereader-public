@@ -1,0 +1,73 @@
+name: Apply and validate 简阅 v789 fixes
+
+on:
+  push:
+    branches:
+      - source-v789
+    paths:
+      - scripts/v789_apply_user_fixes.py
+      - .github/workflows/apply-v789.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-v789-fixes
+  cancel-in-progress: true
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source-v789
+        uses: actions/checkout@v4
+        with:
+          ref: source-v789
+          fetch-depth: 0
+
+      - name: Apply v789 patch
+        run: |
+          set -euo pipefail
+          python3 scripts/v789_apply_user_fixes.py
+          git diff --check
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run v789 targeted regression tests
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.ui.ShelfV787ContractTest' \
+            --tests 'com.simplereader.app.ui.ShelfV788LayoutSwitchContractTest' \
+            --tests 'com.simplereader.app.ui.V789ExternalOpenAndLogContractTest' \
+            --stacktrace --console=plain
+
+      - name: Compile debug and release
+        env:
+          SIMPLE_READER_VERSION_CODE: "2098000789"
+          SIMPLE_READER_VERSION_NAME: "789"
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Commit validated v789 source
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app maintenance
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+            exit 0
+          fi
+          git commit -m "v789: fix shelf switch, file logs and external book opening"
+          git push origin HEAD:source-v789
