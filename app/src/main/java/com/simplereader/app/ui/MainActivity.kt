@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
     private var groups = emptyList<BookGroup>()
     private var showingHistory = false
     private var shelfListMode = false
+    private var shelfLayoutSwitchInFlight = false
     private var shelfSearchQuery = ""
     private var selectedGroupId: Long? = null
     private var shelfSelectionMode = false
@@ -318,33 +319,54 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun applyShelfLayoutMode(updateButton: Boolean = true) {
-        shelfGrid.layoutManager = if (shelfListMode) {
-            LinearLayoutManager(this)
-        } else {
-            GridLayoutManager(this, 3).apply {
-                spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
-                    override fun getSpanSize(position: Int): Int = if (shelfAdapter.isFullSpan(position)) 3 else 1
-                }
+    private fun createShelfLayoutManager(): GridLayoutManager {
+        return GridLayoutManager(this, 3).apply {
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int =
+                    if (shelfListMode || shelfAdapter.isFullSpan(position)) 3 else 1
             }
         }
+    }
+
+    private fun applyShelfLayoutMode(updateButton: Boolean = true) {
+        if (!::shelfGrid.isInitialized) return
+        val layoutManager = (shelfGrid.layoutManager as? GridLayoutManager)
+            ?: createShelfLayoutManager().also { shelfGrid.layoutManager = it }
+        layoutManager.spanSizeLookup.invalidateSpanIndexCache()
+        layoutManager.spanSizeLookup.invalidateSpanGroupIndexCache()
+        shelfGrid.recycledViewPool.clear()
         if (updateButton && ::editButton.isInitialized && !shelfSelectionMode) updateShelfModeButton()
-        if (::shelfGrid.isInitialized) shelfAdapter.notifyDataSetChanged()
+        shelfAdapter.notifyDataSetChanged()
+        shelfGrid.requestLayout()
     }
 
     private fun updateShelfModeButton() {
         if (!::editButton.isInitialized || shelfSelectionMode) return
-        editButton.text = if (shelfListMode) "宫格" else "列表"
-        editButton.contentDescription = if (shelfListMode) "切换为宫格模式" else "切换为列表模式"
+        editButton.text = if (shelfListMode) "列表" else "宫格"
+        editButton.contentDescription = if (shelfListMode) {
+            "当前列表模式，点击切换为宫格"
+        } else {
+            "当前宫格模式，点击切换为列表"
+        }
     }
 
     private fun toggleShelfLayoutMode() {
-        shelfListMode = !shelfListMode
-        getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(SHELF_LIST_MODE_KEY, shelfListMode)
-            .apply()
-        applyShelfLayoutMode()
+        if (!::shelfGrid.isInitialized || shelfLayoutSwitchInFlight) return
+        shelfLayoutSwitchInFlight = true
+        shelfGrid.stopScroll()
+        shelfGrid.post {
+            try {
+                if (isFinishing || isDestroyed) return@post
+                shelfListMode = !shelfListMode
+                getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(SHELF_LIST_MODE_KEY, shelfListMode)
+                    .apply()
+                applyShelfLayoutMode()
+            } finally {
+                shelfLayoutSwitchInFlight = false
+            }
+        }
     }
 
     private fun statusBarHeight(): Int {

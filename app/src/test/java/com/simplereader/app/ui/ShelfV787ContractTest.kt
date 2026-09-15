@@ -21,11 +21,11 @@ class ShelfV787ContractTest {
 
     @Test
     fun `edit control is now persistent grid-list toggle while selection still uses operation`() {
-        assertTrue(layout.contains("android:text=\"列表\""))
+        assertTrue(layout.contains("android:text=\"宫格\""))
         assertTrue(main.contains("private var shelfListMode = false"))
-        assertTrue(main.contains("LinearLayoutManager(this)"))
+        assertTrue(main.contains("GridLayoutManager(this, 3)"))
         assertTrue(main.contains("toggleShelfLayoutMode()"))
-        assertTrue(main.contains("editButton.text = if (shelfListMode) \"宫格\" else \"列表\""))
+        assertTrue(main.contains("editButton.text = if (shelfListMode) \"列表\" else \"宫格\""))
         assertTrue(main.contains("bookCount > 0 -> \"操作\""))
         assertTrue(main.contains("groupCount == 1 && bookCount == 0 -> \"操作\""))
     }
