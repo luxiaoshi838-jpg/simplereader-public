@@ -1,0 +1,152 @@
+name: Build 简阅 v789 for local signing
+
+on:
+  push:
+    branches:
+      - source-v789
+    paths:
+      - app/**
+      - tools/**
+      - .github/workflows/build-v789.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-v789-local-signing
+  cancel-in-progress: true
+
+env:
+  SIMPLE_READER_VERSION_CODE: "2098000789"
+  SIMPLE_READER_VERSION_NAME: "789"
+  MAX_APK_BYTES: "52428800"
+
+jobs:
+  unsigned-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout v789
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enforce source and UI policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/verify-no-apk.sh
+          bash tools/verify-ui-policy.sh
+          grep -Fq '2098000789' app/build.gradle.kts
+          grep -Fq 'generatedVersionName = System.getenv("SIMPLE_READER_VERSION_NAME") ?: "789"' app/build.gradle.kts
+
+      - name: Run v787-v789 targeted regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.ui.ShelfV787ContractTest' \
+            --tests 'com.simplereader.app.ui.ShelfV788LayoutSwitchContractTest' \
+            --tests 'com.simplereader.app.ui.V789ExternalOpenAndLogContractTest' \
+            --stacktrace --console=plain
+          ./gradlew testReleaseUnitTest \
+            --tests 'com.simplereader.app.ui.ShelfV787ContractTest' \
+            --tests 'com.simplereader.app.ui.ShelfV788LayoutSwitchContractTest' \
+            --tests 'com.simplereader.app.ui.V789ExternalOpenAndLogContractTest' \
+            --stacktrace --console=plain
+
+      - name: Check full unit suite against inherited known-failure baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/v759-full-unit-baseline-gate.sh
+          bash tools/v759-full-unit-baseline-gate.sh v789-full-unit-tests.log
+
+      - name: Build debug and release v789
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee gradle-build.log
+
+      - name: Verify unsigned package and bundle local signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
+          test -s "$unsigned"
+          mkdir -p release signing-tools/lib
+          cp "$unsigned" release/SimpleReader_v789_unsigned.apk
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          "${build_tools}/aapt2" dump badging "$unsigned" | tee apk-package-info.txt
+          grep -Fq "package: name='com.simplereader.app'" apk-package-info.txt
+          grep -Fq "versionCode='2098000789'" apk-package-info.txt
+          grep -Fq "versionName='789'" apk-package-info.txt
+          test "$(stat -c %s "$unsigned")" -le "$MAX_APK_BYTES"
+          sha256sum "$unsigned" | tee apk-unsigned-sha256.txt
+          cp "${build_tools}/apksigner" signing-tools/apksigner
+          cp "${build_tools}/lib/apksigner.jar" signing-tools/lib/apksigner.jar
+          cp "${build_tools}/aapt2" signing-tools/aapt2
+          chmod +x signing-tools/apksigner signing-tools/aapt2
+          signing-tools/apksigner version | tee apksigner-version.txt
+
+      - name: Upload unsigned v789 and public Android signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v789-unsigned-tools-${{ github.run_number }}
+          path: |
+            release/SimpleReader_v789_unsigned.apk
+            signing-tools/apksigner
+            signing-tools/lib/apksigner.jar
+            signing-tools/aapt2
+            apk-package-info.txt
+            apk-unsigned-sha256.txt
+            apksigner-version.txt
+            gradle-build.log
+            v789-full-unit-tests.log
+          if-no-files-found: error
+          retention-days: 7
+
+  android35-shelf-toggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout v789
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run real Android 35 shelf toggle regression
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.simplereader.app.ui.V789ShelfToggleInstrumentedTest --stacktrace --console=plain
