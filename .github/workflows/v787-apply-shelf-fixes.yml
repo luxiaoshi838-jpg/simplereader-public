@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   apply:
-    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'v787: apply shelf fixes') }}
+    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'apply shelf fixes') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,5 +50,5 @@ jobs:
                   app/src/test/java/com/simplereader/app/ui/CrashLogAndCoverContractTest.kt \
                   app/src/test/java/com/simplereader/app/ui/ShelfV787ContractTest.kt \
                   maintenance/V787_SHELF_ORDER_LAYOUT_MODE.md
-          git commit -m 'v787: apply shelf fixes and grid-list toggle'
+          git commit -m 'v787 apply shelf fixes and grid-list toggle'
           git push origin HEAD:source-v787
