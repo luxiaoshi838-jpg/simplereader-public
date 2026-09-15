@@ -21,3 +21,4 @@
 - 新增 ShelfV787ContractTest。
 - 更新 CrashLogAndCoverContractTest：历史日志仍保留，但不再要求书架管理菜单存在重复入口。
 - 正式构建仍必须满足 SIGNING_POLICY.md：包名 com.simplereader.app、固定 Public V1 证书指纹、R8/资源压缩及版本号校验。
+- 2026-09-15：补丁已自动应用到 `source-v787`；由用户身份提交本记录更新，以触发完整 Android PR validation 对实际 v787 源码进行验证。
