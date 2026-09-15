@@ -1,0 +1,54 @@
+name: v787 apply shelf fixes
+
+on:
+  push:
+    branches:
+      - source-v787
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v787-apply-shelf-fixes
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'v787: apply shelf fixes') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source-v787
+        uses: actions/checkout@v4
+        with:
+          ref: source-v787
+          fetch-depth: 0
+
+      - name: Apply strict v787 source patch
+        shell: bash
+        run: python3 scripts/v787_apply_shelf_ui_fix.py
+
+      - name: Verify patch shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -n '2098000787\|generatedVersionName.*787' app/build.gradle.kts
+          grep -n 'topLevelItems\|LinearLayoutManager\|toggleShelfLayoutMode' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+          ! grep -q '"异常日志（最近20条）"' app/src/main/java/com/simplereader/app/ui/MainActivity.kt
+
+      - name: Commit patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/build.gradle.kts \
+                  app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+                  app/src/main/res/layout/activity_main.xml \
+                  app/src/test/java/com/simplereader/app/ui/CrashLogAndCoverContractTest.kt \
+                  app/src/test/java/com/simplereader/app/ui/ShelfV787ContractTest.kt \
+                  maintenance/V787_SHELF_ORDER_LAYOUT_MODE.md
+          git commit -m 'v787: apply shelf fixes and grid-list toggle'
+          git push origin HEAD:source-v787
