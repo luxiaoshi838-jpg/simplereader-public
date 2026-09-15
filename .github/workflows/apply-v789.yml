@@ -6,6 +6,7 @@ on:
       - source-v789
     paths:
       - scripts/v789_apply_user_fixes.py
+      - scripts/v789_apply_user_fixes_post.py
       - .github/workflows/apply-v789.yml
   workflow_dispatch:
 
@@ -31,6 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/v789_apply_user_fixes.py
+          python3 scripts/v789_apply_user_fixes_post.py
           git diff --check
 
       - name: Set up JDK 17
