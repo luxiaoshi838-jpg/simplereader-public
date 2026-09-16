@@ -1,0 +1,80 @@
+name: Finalize 简阅 v789 corrections
+
+on:
+  push:
+    branches:
+      - source-v789
+    paths:
+      - scripts/v789_finalize_after_validation.py
+      - .github/workflows/finalize-v789.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-v789
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source-v789
+        uses: actions/checkout@v4
+        with:
+          ref: source-v789
+          fetch-depth: 0
+
+      - name: Apply final corrections
+        run: |
+          set -euo pipefail
+          python3 scripts/v789_finalize_after_validation.py
+          git diff --check
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run corrected contracts
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.ui.ShelfV788LayoutSwitchContractTest' \
+            --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
+            --tests 'com.simplereader.app.ui.CrashLogAndCoverContractTest' \
+            --tests 'com.simplereader.app.ui.V789ExternalOpenAndLogContractTest' \
+            --stacktrace --console=plain
+
+      - name: Check inherited full-suite baseline
+        run: |
+          set -euo pipefail
+          chmod +x tools/v759-full-unit-baseline-gate.sh
+          bash tools/v759-full-unit-baseline-gate.sh v789-final-full-unit-tests.log
+
+      - name: Compile debug and release
+        env:
+          SIMPLE_READER_VERSION_CODE: "2098000789"
+          SIMPLE_READER_VERSION_NAME: "789"
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain
+
+      - name: Commit validated corrections
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app
+          if git diff --cached --quiet; then
+            echo "No final corrections to commit"
+            exit 0
+          fi
+          git commit -m "v789: lock current-mode labels and updated log contracts"
+          git push origin HEAD:source-v789
