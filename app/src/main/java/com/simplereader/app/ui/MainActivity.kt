@@ -371,7 +371,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateShelfModeButton() {
         if (!::editButton.isInitialized || shelfSelectionMode) return
-        editButton.text = if (shelfListMode) "宫格" else "列表"
+        editButton.text = if (shelfListMode) "列表" else "宫格"
         editButton.contentDescription = if (shelfListMode) {
             "当前列表模式，点击切换为宫格"
         } else {

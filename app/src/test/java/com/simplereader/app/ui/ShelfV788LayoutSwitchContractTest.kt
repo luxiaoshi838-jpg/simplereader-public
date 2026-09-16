@@ -8,9 +8,9 @@ class ShelfV788LayoutSwitchContractTest {
     private val main = File("src/main/java/com/simplereader/app/ui/MainActivity.kt").readText()
     private val layout = File("src/main/res/layout/activity_main.xml").readText()
 
-    @Test fun `mode button names the destination layout`() {
-        assertTrue(layout.contains("android:text=\"列表\""))
-        assertTrue(main.contains("editButton.text = if (shelfListMode) \"宫格\" else \"列表\""))
+    @Test fun `mode button names the current layout`() {
+        assertTrue(layout.contains("android:text=\"宫格\""))
+        assertTrue(main.contains("editButton.text = if (shelfListMode) \"列表\" else \"宫格\""))
         assertTrue(main.contains("当前列表模式，点击切换为宫格"))
         assertTrue(main.contains("当前宫格模式，点击切换为列表"))
     }

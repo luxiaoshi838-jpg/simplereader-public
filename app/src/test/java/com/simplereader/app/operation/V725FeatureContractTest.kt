@@ -39,8 +39,10 @@ class V725FeatureContractTest {
         val exportStart = main.indexOf("private fun showDataExportOptions")
         val exportEnd = main.indexOf("private fun", exportStart + 10)
         val exportBlock = main.substring(exportStart, exportEnd)
-        assertTrue(exportBlock.contains("arrayOf(\"导出\", \"同步\", \"日志\")"))
-        assertTrue(exportBlock.contains("OperationLogDialogs.showLogHub(this)"))
+        assertTrue(exportBlock.contains("arrayOf(\"导出\", \"同步\", \"崩溃日志\", \"操作日志\", \"日志位置设置\")"))
+        assertTrue(exportBlock.contains("showCrashHistoryDialog()"))
+        assertTrue(exportBlock.contains("OperationLogDialogs.showOperationList(this)"))
+        assertTrue(exportBlock.contains("showLogLocationSettings()"))
     }
 
     @Test
@@ -136,7 +138,7 @@ class V725FeatureContractTest {
     }
 
     @Test
-    fun logListHasNoCopyButtonButDetailHasCopyAndDraggableSeekBar() {
+    fun logListHasNoCopyButtonAndDetailSavesCompleteFileWithDraggableSeekBar() {
         val dialogs = File("src/main/java/com/simplereader/app/operation/OperationLogDialogs.kt").readText()
         val listStart = dialogs.indexOf("fun showOperationList")
         val listEnd = dialogs.indexOf("private fun showOperationDetail", listStart)
@@ -152,7 +154,9 @@ class V725FeatureContractTest {
         assertTrue(detailBlock.contains("max = 1000"))
         assertTrue(detailBlock.contains("setOnSeekBarChangeListener"))
         assertTrue(detailBlock.contains("scrollView.scrollTo(0, target)"))
-        assertTrue(detailBlock.contains("setPositiveButton(\"复制\")"))
+        assertTrue(detailBlock.contains("setPositiveButton(\"保存日志文件\")"))
+        assertTrue(detailBlock.contains("DiagnosticLogFiles.exportOperationSnapshotNow(activity)"))
+        assertFalse(detailBlock.contains("setPositiveButton(\"复制\")"))
     }
 
     @Test

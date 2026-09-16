@@ -125,7 +125,7 @@
             android:layout_width="52dp"
             android:layout_height="match_parent"
             android:gravity="center"
-            android:text="列表"
+            android:text="宫格"
             android:textColor="#36322B"
             android:textSize="15sp" />
     </LinearLayout>
