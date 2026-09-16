@@ -152,3 +152,9 @@ V759 的位置保护可以阻止一类 RecyclerView 瞬时 row-0 污染，但当
 - 不允许新触摸继续继承旧 settling/fling。
 - 不允许音量键长按堆积多个平滑滚动动画。
 - 不修改 V757-V759 的稳定阅读进度、页0保护、checkpoint 与异常恢复优先级。
+
+## v792 — 回撤阈值降敏
+- 用户反馈 v791 的回撤提示过于敏感。
+- 统一将手势大移动和显式跳转的回撤阈值改为：**跨越超过 20 页才触发**；20 页及以内不触发。
+- 3 秒自动消失、下栏上方 Snackbar、sourceOffset/viewportOffset 恢复、触摸刹车和 settling 保险保持不变。
+- 新增 `ReaderV792RollbackThresholdContractTest`，并迁移被新版本行为取代的 v791 阈值契约。

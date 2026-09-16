@@ -1299,7 +1299,7 @@ class ReaderActivity : AppCompatActivity() {
         val start = verticalGestureStartLocation ?: return
         verticalGestureStartLocation = null
         if (visibleIndex !in readerBook?.pages.orEmpty().indices) return
-        if (kotlin.math.abs(visibleIndex - start.pageIndex) <= 1) return
+        if (kotlin.math.abs(visibleIndex - start.pageIndex) <= VERTICAL_ROLLBACK_MIN_PAGE_DELTA) return
         showVerticalRollback(start, "gesture")
     }
 
@@ -1563,7 +1563,7 @@ class ReaderActivity : AppCompatActivity() {
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         val targetPage = pages[currentPageIndex]
         val offerRollback = rollbackOrigin != null &&
-            kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > 1
+            kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA
         lastStableSourceOffset = targetPage.startOffset
         // v755: explicit navigation while a dialog owns focus replaces the pre-dialog restore anchor.
         if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended) {
@@ -2629,6 +2629,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val AUTO_READ_STEP_CPM = 50
         private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
         private const val VERTICAL_STATE_UNLOCK_GUARD_MS = 900L
+        private const val VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20
         private const val VERTICAL_ROLLBACK_VISIBLE_MS = 3_000L
         private const val VERTICAL_SETTLING_GUARD_MS = 5_000L
         private const val PROGRESS_CHECKPOINT_DELAY_MS = 600L
