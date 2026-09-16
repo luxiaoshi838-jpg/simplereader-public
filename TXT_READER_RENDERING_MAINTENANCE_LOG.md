@@ -124,3 +124,31 @@ V759 的位置保护可以阻止一类 RecyclerView 瞬时 row-0 污染，但当
 - 唯一新增失败来自旧 `CrashLogAndCoverContractTest` 硬编码查找“闪退/崩溃日志”，而 V759 初稿把对话框标题改成“异常退出/闪退日志”；复制、清除与持久日志逻辑均未丢失。
 - V759 将标题改为“异常退出/闪退/崩溃日志”，兼容旧契约文字并保留系统异常退出含义。
 - 正式构建不得简单跳过全量测试：允许的失败只能是 V758 已确认存在的历史失败集合，任何 V759 新增失败都必须阻断发布。
+
+
+## 2026-09-16 — V791
+
+### 用户问题
+- 竖向阅读页偶发出现一次甩动后长时间持续滑动，重新触摸时不应继续沿用旧 fling。
+- 短时间一次操作造成大位置移动后，需要在阅读下栏上方临时出现“↩︎ 回撤”，3 秒未点击自动消失，可回到移动前阅读位置。
+
+### 成熟公开实现依据
+- KOReader `ReaderLink` 使用 location stack 保存跳转前位置并提供 previous-location 返回。
+- KOReader 的 `kojump.koplugin` 只把 `abs(newPage-currentPage) > 1` 记录为 jump，普通相邻页阅读不进入历史；V791沿用这一“大跳转而非连续阅读”的判定。
+- Android Material `Snackbar` 提供成熟 transient bottom bar 和 anchor view 机制；V791 使用现有 Material 依赖，把回撤浮层 anchor 到 `readerControls` 上方，不自造悬浮窗口生命周期。
+
+### V791 修法
+- 任何竖向阅读页真实 `ACTION_DOWN` 在事件继续分发给 RecyclerView/可选 TextView 前先 `stopScroll()`，保证手指重新落下必定刹住旧 ViewFlinger。
+- `SCROLL_STATE_SETTLING` 增加 5 秒极端兜底；只有异常长时间仍处于 settling 才强制 stop，并写 `vertical_settling_forced_stop` 诊断事件。
+- 音量键长按重复 keyDown 不再叠加多次 `smoothScrollBy()`。
+- 一次真实触摸手势开始时记录 `sourceOffset + pageIndex + 当前 item top`；结束进入 IDLE 后若跨越超过 1 页，显示回撤。
+- 目录、搜索、章节、进度条等显式 `jumpToPage()` 在跳转前同样保存位置；跨越超过 1 页时显示回撤。
+- 回撤 UI 使用 Material Snackbar，锚定 `readerControls`，文案为“位置已移动 / ↩︎ 回撤”；显示后由主线程 3000 ms 定时主动 dismiss，避免 Snackbar 无障碍时长策略改变用户要求的 3 秒。
+- 点击回撤按保存的 `sourceOffset` 重新解析目标页，并用保存的 `viewportOffsetPx` 恢复该页在视口中的垂直位置；回撤本身不再次创建回撤提示。
+
+### 禁止回归
+- 不允许普通相邻页连续阅读频繁弹出回撤。
+- 不允许回撤只保存 RecyclerView adapter position 而丢失 sourceOffset。
+- 不允许新触摸继续继承旧 settling/fling。
+- 不允许音量键长按堆积多个平滑滚动动画。
+- 不修改 V757-V759 的稳定阅读进度、页0保护、checkpoint 与异常恢复优先级。

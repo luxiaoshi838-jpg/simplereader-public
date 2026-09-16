@@ -61,6 +61,7 @@ import com.simplereader.app.reader.page.ReaderLayoutSettings
 import com.simplereader.app.reader.page.ReaderPage
 import com.simplereader.app.runtime.ReaderRuntimeState
 import com.simplereader.app.runtime.ShelfCacheHandoff
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -141,6 +142,16 @@ class ReaderActivity : AppCompatActivity() {
     private var progressCheckpointRunnable: Runnable? = null
     private var lastDisplayedChapterTitle: String? = null
     private var pendingVerticalDiagnosticEvent: String? = null
+    private data class VerticalLocation(
+        val sourceOffset: Int,
+        val pageIndex: Int,
+        val viewportOffsetPx: Int
+    )
+    private var verticalGestureStartLocation: VerticalLocation? = null
+    private var verticalRollbackLocation: VerticalLocation? = null
+    private var verticalRollbackSnackbar: Snackbar? = null
+    private var verticalRollbackDismissRunnable: Runnable? = null
+    private var verticalSettlingGuardRunnable: Runnable? = null
     private var readerGeneration: Long = 0L
     private var shelfCacheClaimBookId: Long = 0L
     private var zeroProgressOpeningPreviewVisible = false
@@ -265,6 +276,8 @@ class ReaderActivity : AppCompatActivity() {
         progressCheckpointRunnable?.let(mainHandler::removeCallbacks)
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
+        cancelVerticalSettlingGuard()
+        dismissVerticalRollback(clearLocation = true)
         stopAutoReading(false)
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
         releaseShelfCacheReaderClaim(markCompleted = false)
@@ -414,9 +427,11 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (volumeKeyTurnEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
+            if ((event?.repeatCount ?: 0) > 0) return true
             val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1
             if (pageTurnMode == TURN_MODE_VERTICAL) {
                 val rv = verticalRecyclerView
+                rv?.stopScroll()
                 if (rv != null) rv.smoothScrollBy(0, direction * rv.height.coerceAtLeast(1))
             } else {
                 pagedReaderView.turn(direction)
@@ -983,6 +998,9 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun showHorizontalBook() {
+        dismissVerticalRollback(clearLocation = true)
+        verticalGestureStartLocation = null
+        cancelVerticalSettlingGuard()
         verticalRecyclerView?.apply { stopScroll(); visibility = View.GONE }
         readerTopHaze.visibility = View.GONE
         readerBottomHaze.visibility = View.GONE
@@ -1219,6 +1237,7 @@ class ReaderActivity : AppCompatActivity() {
 
     internal fun verticalOnScrollIdle() {
         if (pageTurnMode != TURN_MODE_VERTICAL || verticalShouldIgnoreScroll()) return
+        cancelVerticalSettlingGuard()
         val visibleIndex = verticalLayoutManager?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
         if (visibleIndex == 0 && currentPageIndex >= 4) {
             val restoreIndex = currentPageIndex
@@ -1234,7 +1253,121 @@ class ReaderActivity : AppCompatActivity() {
             }
             return
         }
+        maybeOfferVerticalRollback(visibleIndex)
         persistVerticalDiagnosticState("vertical_idle", force = false)
+    }
+
+    internal fun verticalOnScrollStateChanged(newState: Int) {
+        when (newState) {
+            RecyclerView.SCROLL_STATE_SETTLING -> scheduleVerticalSettlingGuard()
+            RecyclerView.SCROLL_STATE_DRAGGING,
+            RecyclerView.SCROLL_STATE_IDLE -> cancelVerticalSettlingGuard()
+        }
+    }
+
+    private fun scheduleVerticalSettlingGuard() {
+        cancelVerticalSettlingGuard()
+        val startedAt = android.os.SystemClock.uptimeMillis()
+        verticalSettlingGuardRunnable = Runnable {
+            verticalSettlingGuardRunnable = null
+            val rv = verticalRecyclerView ?: return@Runnable
+            if (pageTurnMode != TURN_MODE_VERTICAL || rv.scrollState != RecyclerView.SCROLL_STATE_SETTLING) return@Runnable
+            rv.stopScroll()
+            CrashLogStore.recordEvent(
+                this,
+                "vertical_settling_forced_stop book=$bookId elapsed=${android.os.SystemClock.uptimeMillis() - startedAt} page=$currentPageIndex stable=$lastStableSourceOffset"
+            )
+        }.also { mainHandler.postDelayed(it, VERTICAL_SETTLING_GUARD_MS) }
+    }
+
+    private fun cancelVerticalSettlingGuard() {
+        verticalSettlingGuardRunnable?.let(mainHandler::removeCallbacks)
+        verticalSettlingGuardRunnable = null
+    }
+
+    private fun captureVerticalLocation(): VerticalLocation? {
+        val pages = readerBook?.pages.orEmpty()
+        if (pages.isEmpty()) return null
+        val index = (verticalLayoutManager?.findFirstVisibleItemPosition() ?: currentPageIndex)
+            .coerceIn(0, pages.lastIndex)
+        val page = pages[index]
+        val top = verticalLayoutManager?.findViewByPosition(index)?.top ?: 0
+        return VerticalLocation(page.startOffset, index, top)
+    }
+
+    private fun maybeOfferVerticalRollback(visibleIndex: Int) {
+        val start = verticalGestureStartLocation ?: return
+        verticalGestureStartLocation = null
+        if (visibleIndex !in readerBook?.pages.orEmpty().indices) return
+        if (kotlin.math.abs(visibleIndex - start.pageIndex) <= 1) return
+        showVerticalRollback(start, "gesture")
+    }
+
+    private fun showVerticalRollback(location: VerticalLocation, reason: String) {
+        if (pageTurnMode != TURN_MODE_VERTICAL || readerBook == null || isFinishing || isDestroyed) return
+        dismissVerticalRollback(clearLocation = false)
+        verticalRollbackLocation = location
+        val snackbar = Snackbar.make(readerRoot, "位置已移动", Snackbar.LENGTH_INDEFINITE)
+        snackbar.setAnchorView(readerControls)
+        snackbar.setAction("↩︎ 回撤") {
+            val target = verticalRollbackLocation ?: return@setAction
+            dismissVerticalRollback(clearLocation = true)
+            verticalGestureStartLocation = null
+            verticalRecyclerView?.stopScroll()
+            cancelVerticalSettlingGuard()
+            CrashLogStore.recordEvent(
+                this,
+                "vertical_rollback_apply book=$bookId from=$currentPageIndex to=${target.pageIndex} source=${target.sourceOffset}"
+            )
+            restoreVerticalLocation(target)
+        }
+        snackbar.addCallback(object : Snackbar.Callback() {
+            override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {
+                if (verticalRollbackSnackbar === transientBottomBar) {
+                    verticalRollbackSnackbar = null
+                    verticalRollbackDismissRunnable?.let(mainHandler::removeCallbacks)
+                    verticalRollbackDismissRunnable = null
+                    verticalRollbackLocation = null
+                }
+            }
+        })
+        verticalRollbackSnackbar = snackbar
+        snackbar.show()
+        verticalRollbackDismissRunnable = Runnable {
+            if (verticalRollbackSnackbar === snackbar) snackbar.dismiss()
+        }.also { mainHandler.postDelayed(it, VERTICAL_ROLLBACK_VISIBLE_MS) }
+        CrashLogStore.recordEvent(
+            this,
+            "vertical_rollback_offer book=$bookId reason=$reason from=${location.pageIndex} to=$currentPageIndex source=${location.sourceOffset}"
+        )
+    }
+
+    private fun dismissVerticalRollback(clearLocation: Boolean) {
+        verticalRollbackDismissRunnable?.let(mainHandler::removeCallbacks)
+        verticalRollbackDismissRunnable = null
+        val active = verticalRollbackSnackbar
+        verticalRollbackSnackbar = null
+        active?.dismiss()
+        if (clearLocation) verticalRollbackLocation = null
+    }
+
+    private fun restoreVerticalLocation(location: VerticalLocation) {
+        val paged = readerBook ?: return
+        val index = paged.pageForOffset(location.sourceOffset.coerceIn(0, paged.text.length)).globalPageIndex
+        currentPageIndex = index
+        lastStableSourceOffset = paged.pages[index].startOffset
+        continuousWindowStartOffset = paged.pages[index].startOffset
+        continuousWindowEndOffset = paged.pages[index].endOffset
+        verticalProgrammaticScroll = true
+        verticalLayoutManager?.scrollToPositionWithOffset(index, location.viewportOffsetPx)
+        scheduleVerticalStateUnlockGuard()
+        verticalRecyclerView?.postOnAnimation {
+            verticalProgrammaticScroll = false
+            if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
+            verticalOnPageVisible(index)
+            updateProgressUi()
+            saveProgress()
+        }
     }
 
     internal fun verticalOnUserDrag(): Int? {
@@ -1242,12 +1375,30 @@ class ReaderActivity : AppCompatActivity() {
         clearSearchHighlight()
         return hitPage
     }
+
     internal fun verticalHandleTouch(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            if (autoReading) stopAutoReading(false)
-            // A stale focus/programmatic lock must never make the live RecyclerView untouchable.
-            if (hasWindowFocus() && (verticalWindowSuspended || verticalProgrammaticScroll)) {
-                releaseVerticalStateLock(clearAnchor = true)
+        val rv = verticalRecyclerView
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (autoReading) stopAutoReading(false)
+                // A new real touch must always brake the previous ViewFlinger before RecyclerView or
+                // a selectable child TextView gets the event. Capture this gesture's origin only
+                // after stopScroll(): stopScroll may synchronously emit IDLE and must not consume
+                // the origin belonging to the new gesture.
+                rv?.stopScroll()
+                cancelVerticalSettlingGuard()
+                if (pageTurnMode == TURN_MODE_VERTICAL && verticalGestureStartLocation == null) {
+                    verticalGestureStartLocation = captureVerticalLocation()
+                }
+                if (hasWindowFocus() && (verticalWindowSuspended || verticalProgrammaticScroll)) {
+                    releaseVerticalStateLock(clearAnchor = true)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (rv?.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+                    val visible = verticalLayoutManager?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+                    maybeOfferVerticalRollback(visible)
+                }
             }
         }
         continuousGesture.onTouchEvent(event)
@@ -1407,9 +1558,12 @@ class ReaderActivity : AppCompatActivity() {
     private fun jumpToPage(index: Int, animated: Boolean, hit: SearchPageHit? = null) {
         val pages = readerBook?.pages ?: return
         if (pages.isEmpty()) return
+        val rollbackOrigin = if (pageTurnMode == TURN_MODE_VERTICAL) captureVerticalLocation() else null
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         val targetPage = pages[currentPageIndex]
+        val offerRollback = rollbackOrigin != null &&
+            kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > 1
         lastStableSourceOffset = targetPage.startOffset
         // v755: explicit navigation while a dialog owns focus replaces the pre-dialog restore anchor.
         if (pageTurnMode == TURN_MODE_VERTICAL && verticalWindowSuspended) {
@@ -1418,6 +1572,9 @@ class ReaderActivity : AppCompatActivity() {
         }
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             ensureVerticalReader()
+            verticalRecyclerView?.stopScroll()
+            cancelVerticalSettlingGuard()
+            verticalGestureStartLocation = null
             verticalProgrammaticScroll = true
             verticalAdapter?.refresh()
             verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
@@ -1425,6 +1582,9 @@ class ReaderActivity : AppCompatActivity() {
             verticalRecyclerView?.post {
                 verticalProgrammaticScroll = false
                 if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
+                if (offerRollback && rollbackOrigin != null) {
+                    showVerticalRollback(rollbackOrigin, "explicit_jump")
+                }
             }
         } else {
             pagedReaderView.cancelNavigation()
@@ -2469,6 +2629,8 @@ class ReaderActivity : AppCompatActivity() {
         private const val AUTO_READ_STEP_CPM = 50
         private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
         private const val VERTICAL_STATE_UNLOCK_GUARD_MS = 900L
+        private const val VERTICAL_ROLLBACK_VISIBLE_MS = 3_000L
+        private const val VERTICAL_SETTLING_GUARD_MS = 5_000L
         private const val PROGRESS_CHECKPOINT_DELAY_MS = 600L
         private val EXPLICIT_CHAPTER_REGEX = Regex(
             "第\\s*[0-9０-９零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+\\s*(?:单元|章|节|篇|部|卷|回|集)"

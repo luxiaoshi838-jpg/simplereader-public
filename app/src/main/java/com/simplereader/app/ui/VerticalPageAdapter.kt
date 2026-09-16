@@ -136,6 +136,7 @@ class VerticalScrollListener(
     }
 
     override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+        activity.verticalOnScrollStateChanged(newState)
         if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
             val hitPage = activity.verticalOnUserDrag()
             if (hitPage != null) {
