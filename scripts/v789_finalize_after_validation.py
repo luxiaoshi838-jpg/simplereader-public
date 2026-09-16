@@ -41,7 +41,7 @@ replace_once(
         }'''
 )
 
-# Update the v788 contract so it locks current-mode labels rather than destination labels.
+# Update both shelf contracts so they lock current-mode labels rather than destination labels.
 replace_once(
     "app/src/test/java/com/simplereader/app/ui/ShelfV788LayoutSwitchContractTest.kt",
     '''    @Test fun `mode button names the destination layout`() {
@@ -56,6 +56,18 @@ replace_once(
         assertTrue(main.contains("当前列表模式，点击切换为宫格"))
         assertTrue(main.contains("当前宫格模式，点击切换为列表"))
     }'''
+)
+
+replace_once(
+    "app/src/test/java/com/simplereader/app/ui/ShelfV787ContractTest.kt",
+    '''        assertTrue(layout.contains("android:text=\\\"列表\\\""))
+        assertTrue(main.contains("private var shelfListMode = false"))
+        assertTrue(main.contains("toggleShelfLayoutMode()"))
+        assertTrue(main.contains("editButton.text = if (shelfListMode) \\\"宫格\\\" else \\\"列表\\\""))''',
+    '''        assertTrue(layout.contains("android:text=\\\"宫格\\\""))
+        assertTrue(main.contains("private var shelfListMode = false"))
+        assertTrue(main.contains("toggleShelfLayoutMode()"))
+        assertTrue(main.contains("editButton.text = if (shelfListMode) \\\"列表\\\" else \\\"宫格\\\""))'''
 )
 
 # Old v725 contracts assumed clipboard-copy log UX and an older three-item export menu.
