@@ -9,8 +9,8 @@ class ReaderV792RollbackThresholdContractTest {
 
     @Test fun `rollback is offered only after more than twenty pages`() {
         assertTrue(reader.contains("VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20"))
-        assertTrue(reader.contains("pageDelta > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
-        assertTrue(reader.contains("kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
+        assertTrue(reader.contains("kotlin.math.abs(location.pageIndex - sample.location.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
+        assertTrue(reader.contains("recordVerticalRollbackSample("))
     }
 
     @Test fun `rollback placement and lifetime stay unchanged`() {

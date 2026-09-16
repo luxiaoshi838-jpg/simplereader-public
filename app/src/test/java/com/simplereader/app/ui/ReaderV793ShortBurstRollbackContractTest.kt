@@ -9,18 +9,18 @@ class ReaderV793ShortBurstRollbackContractTest {
 
     @Test fun `short burst accumulates from one origin and requires over twenty pages`() {
         assertTrue(reader.contains("VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20"))
-        assertTrue(reader.contains("VERTICAL_ROLLBACK_BURST_IDLE_MS = 1_000L"))
-        assertTrue(reader.contains("val pageDelta = kotlin.math.abs(visibleIndex - start.pageIndex)"))
-        assertTrue(reader.contains("pageDelta > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
-        assertTrue(reader.contains("scheduleVerticalRollbackBurstReset()"))
-        assertTrue(reader.contains("cancelVerticalRollbackBurstReset()"))
-        assertTrue(reader.contains("showVerticalRollback(start, \"short_burst\")"))
+        assertTrue(reader.contains("VERTICAL_ROLLBACK_WINDOW_MS = 1_000L"))
+        assertTrue(reader.contains("now - verticalRollbackSamples.peekFirst().uptimeMs > VERTICAL_ROLLBACK_WINDOW_MS"))
+        assertTrue(reader.contains("kotlin.math.abs(location.pageIndex - sample.location.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
+        assertTrue(reader.contains("verticalRollbackSamples"))
+        assertTrue(reader.contains("clearVerticalRollbackSamples()"))
+        assertTrue(reader.contains("showVerticalRollback(origin.location, reason)"))
     }
 
     @Test fun `chapter search catalog jumps share the same burst origin`() {
-        assertTrue(reader.contains("verticalGestureStartLocation ?: captureVerticalLocation()?.also"))
-        assertTrue(reader.contains("kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
-        assertTrue(reader.contains("showVerticalRollback(rollbackOrigin, \"explicit_jump_burst\")"))
+        assertTrue(reader.contains("recordVerticalRollbackSample(rollbackOrigin, \"explicit_jump_origin\", allowOffer = false)"))
+        assertTrue(reader.contains("recordVerticalRollbackSample("))
+        assertTrue(reader.contains("\"explicit_jump_window\""))
         assertTrue(reader.contains("private fun jumpChapter(direction: Int)"))
         assertTrue(reader.contains("jumpToPage(targetPage, false)"))
     }
