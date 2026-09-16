@@ -1,5 +1,6 @@
 name: Finalize 简阅 v789 corrections
 
+# Re-run final app correction validation after the Android 35 validator shell fix.
 on:
   push:
     branches:
