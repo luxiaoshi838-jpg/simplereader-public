@@ -1,0 +1,138 @@
+name: Validate and build 简阅 v792 rollback threshold
+
+on:
+  push:
+    branches:
+      - source-v792
+    paths:
+      - tools/apply-v792-rollback-threshold.py
+      - .github/workflows/build-v792-rollback-threshold.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SIMPLE_READER_VERSION_CODE: "2098000792"
+  SIMPLE_READER_VERSION_NAME: "792"
+
+jobs:
+  repair-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout source-v792
+        uses: actions/checkout@v4
+        with:
+          ref: source-v792
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Apply deterministic v792 threshold patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply-v792-rollback-threshold.py
+          git diff --check
+          grep -Fq 'private const val VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'abs(visibleIndex - start.pageIndex) <= VERTICAL_ROLLBACK_MIN_PAGE_DELTA' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'abs(currentPageIndex - rollbackOrigin.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+          grep -Fq 'private const val VERTICAL_ROLLBACK_VISIBLE_MS = 3_000L' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
+
+      - name: Warm or refresh runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./gradlew :app:checkDebugAarMetadata --offline --stacktrace --console=plain; then
+            echo 'Dependency graph available from restored Gradle cache.'
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            echo "Online dependency resolution attempt ${attempt}/3"
+            if ./gradlew :app:checkDebugAarMetadata --refresh-dependencies --stacktrace --console=plain; then
+              exit 0
+            fi
+          done
+          echo 'Dependency resolution failed after cache attempt and three online attempts.' >&2
+          exit 1
+
+      - name: Run v792 targeted tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.ui.ReaderV792RollbackThresholdContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV791VerticalRollbackContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderCacheAndRestoreContractTest' \
+            --stacktrace --console=plain
+          ./gradlew testReleaseUnitTest \
+            --tests 'com.simplereader.app.ui.ReaderV792RollbackThresholdContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV791VerticalRollbackContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderCacheAndRestoreContractTest' \
+            --stacktrace --console=plain
+
+      - name: Check full suite against inherited baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/v759-full-unit-baseline-gate.sh
+          bash tools/v759-full-unit-baseline-gate.sh v792-full-unit-tests.log
+
+      - name: Build Debug and Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee v792-build.log
+
+      - name: Verify v792 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
+          test -s "$unsigned"
+          mkdir -p release
+          cp "$unsigned" release/SimpleReader_v792_unsigned.apk
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          "${build_tools}/aapt2" dump badging "$unsigned" | tee v792-package.txt
+          grep -Fq "package: name='com.simplereader.app'" v792-package.txt
+          grep -Fq "versionCode='2098000792'" v792-package.txt
+          grep -Fq "versionName='792'" v792-package.txt
+          sha256sum "$unsigned" | tee v792-unsigned-sha256.txt
+
+      - name: Commit only after validation passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/test/java/com/simplereader/app/ui/ReaderV791VerticalRollbackContractTest.kt \
+            app/src/test/java/com/simplereader/app/ui/ReaderV792RollbackThresholdContractTest.kt \
+            TXT_READER_RENDERING_MAINTENANCE_LOG.md \
+            maintenance/V792_ROLLBACK_THRESHOLD.md
+          git diff --cached --exit-code && { echo 'Expected v792 diff is empty'; exit 1; } || true
+          git commit -m "v792: require more than 20 pages for rollback"
+          git push origin HEAD:source-v792
+
+      - name: Upload validated unsigned v792
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v792-validated-unsigned
+          path: |
+            release/SimpleReader_v792_unsigned.apk
+            v792-package.txt
+            v792-unsigned-sha256.txt
+            v792-build.log
+            v792-full-unit-tests.log
+          if-no-files-found: error
+          retention-days: 7
