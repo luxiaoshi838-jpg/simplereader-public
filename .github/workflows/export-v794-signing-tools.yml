@@ -1,0 +1,40 @@
+name: Export official Android signing tools for v794
+
+on:
+  push:
+    branches:
+      - tool-export-v794-signing
+    paths:
+      - .github/workflows/export-v794-signing-tools.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export official SDK build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          test -x "$build_tools/apksigner"
+          test -x "$build_tools/zipalign"
+          test -x "$build_tools/aapt2"
+          test -s "$build_tools/lib/apksigner.jar"
+          mkdir -p export/lib
+          cp "$build_tools/apksigner" export/apksigner
+          cp "$build_tools/zipalign" export/zipalign
+          cp "$build_tools/aapt2" export/aapt2
+          cp "$build_tools/lib/apksigner.jar" export/lib/apksigner.jar
+          printf '%s\n' "$build_tools" > export/source-path.txt
+          sha256sum export/apksigner export/zipalign export/aapt2 export/lib/apksigner.jar > export/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v794-official-signing-tools
+          path: export
+          if-no-files-found: error
+          retention-days: 1
