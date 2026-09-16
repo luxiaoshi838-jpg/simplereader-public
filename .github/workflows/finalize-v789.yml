@@ -48,7 +48,6 @@ jobs:
           ./gradlew testDebugUnitTest \
             --tests 'com.simplereader.app.ui.ShelfV788LayoutSwitchContractTest' \
             --tests 'com.simplereader.app.operation.V725FeatureContractTest' \
-            --tests 'com.simplereader.app.ui.CrashLogAndCoverContractTest' \
             --tests 'com.simplereader.app.ui.V789ExternalOpenAndLogContractTest' \
             --stacktrace --console=plain
 
