@@ -87,6 +87,6 @@ main_log = Path('TXT_READER_RENDERING_MAINTENANCE_LOG.md')
 log = main_log.read_text(encoding='utf-8')
 entry = '''\n\n## v792 — 回撤阈值降敏\n- 用户反馈 v791 的回撤提示过于敏感。\n- 统一将手势大移动和显式跳转的回撤阈值改为：**跨越超过 20 页才触发**；20 页及以内不触发。\n- 3 秒自动消失、下栏上方 Snackbar、sourceOffset/viewportOffset 恢复、触摸刹车和 settling 保险保持不变。\n- 新增 `ReaderV792RollbackThresholdContractTest`，并迁移被新版本行为取代的 v791 阈值契约。\n'''
 if '## v792 — 回撤阈值降敏' not in log:
-    main_log.write_text(log.rstrip() + entry + '\n', encoding='utf-8')
+    main_log.write_text(log.rstrip() + entry, encoding='utf-8')
 
 print('v792 rollback threshold patch applied')
