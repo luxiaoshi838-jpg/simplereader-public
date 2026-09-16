@@ -137,13 +137,10 @@ if old_post not in reader:
     raise SystemExit('missing v792 explicit jump post block')
 reader = reader.replace(old_post, new_post, 1)
 
-# Rollback application must terminate any pending burst timer/origin.
 reader = reader.replace(
     '            dismissVerticalRollback(clearLocation = true)\n            verticalGestureStartLocation = null\n            verticalRecyclerView?.stopScroll()',
     '            dismissVerticalRollback(clearLocation = true)\n            cancelVerticalRollbackBurstReset()\n            verticalGestureStartLocation = null\n            verticalRecyclerView?.stopScroll()'
 )
-
-# Lifecycle/mode cleanup.
 reader = reader.replace(
     '        cancelVerticalSettlingGuard()\n        dismissVerticalRollback(clearLocation = true)\n        stopAutoReading(false)',
     '        cancelVerticalSettlingGuard()\n        cancelVerticalRollbackBurstReset()\n        dismissVerticalRollback(clearLocation = true)\n        stopAutoReading(false)',
@@ -163,19 +160,16 @@ if 'private const val VERTICAL_ROLLBACK_BURST_IDLE_MS' not in reader:
         constant_anchor,
         constant_anchor + '\n        private const val VERTICAL_ROLLBACK_BURST_IDLE_MS = 1_000L'
     )
-
 reader_path.write_text(reader, encoding='utf-8')
 
-# Version bump.
+# Keep source defaults aligned with the generated version. CI env values remain authoritative.
 build_path = Path('app/build.gradle.kts')
 build = build_path.read_text(encoding='utf-8')
-if 'versionCode = 2098000792' not in build or 'versionName = "792"' not in build:
-    raise SystemExit('missing v792 version anchors')
-build = build.replace('versionCode = 2098000792', 'versionCode = 2098000793')
-build = build.replace('versionName = "792"', 'versionName = "793"')
+build = build.replace('?: "2098000791")', '?: "2098000793")')
+build = build.replace('?: 2098000791', '?: 2098000793')
+build = build.replace('?: "791"', '?: "793"')
 build_path.write_text(build, encoding='utf-8')
 
-# Migrate superseded threshold assertions in prior source-contract tests.
 v791_path = Path('app/src/test/java/com/simplereader/app/ui/ReaderV791VerticalRollbackContractTest.kt')
 v791 = v791_path.read_text(encoding='utf-8')
 v791 = v791.replace(
