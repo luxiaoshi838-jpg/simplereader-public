@@ -1,0 +1,38 @@
+name: Export official Android signing runtime libs for v794
+
+on:
+  push:
+    branches:
+      - tool-export-v794-signing
+    paths:
+      - .github/workflows/export-v794-signing-libs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export SDK runtime libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          mkdir -p export
+          mapfile -t libs < <(find "$build_tools" -type f \( -name 'libc++.so*' -o -name 'libc++abi.so*' \) | sort)
+          test "${#libs[@]}" -gt 0
+          for src in "${libs[@]}"; do
+            rel="${src#$build_tools/}"
+            mkdir -p "export/$(dirname "$rel")"
+            cp "$src" "export/$rel"
+          done
+          find export -type f -print0 | sort -z | xargs -0 sha256sum > export/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v794-official-signing-libs
+          path: export
+          if-no-files-found: error
+          retention-days: 1
