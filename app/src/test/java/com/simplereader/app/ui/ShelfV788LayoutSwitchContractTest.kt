@@ -23,15 +23,17 @@ class ShelfV788LayoutSwitchContractTest {
         assertTrue(main.contains("shelfGrid.layoutManager = createShelfLayoutManager()"))
     }
 
-    @Test fun `mode switch is serialized off the click callback`() {
+    @Test fun `mode switch is serialized and rebuilds the shelf hierarchy`() {
         val start = main.indexOf("private fun toggleShelfLayoutMode")
         val end = main.indexOf("private fun statusBarHeight", start)
         val block = main.substring(start, end)
         assertTrue(block.contains("shelfLayoutSwitchInFlight"))
         assertTrue(block.contains("shelfGrid.stopScroll()"))
-        assertTrue(block.contains("shelfGrid.post"))
+        assertTrue(block.contains("shelfGrid.recycledViewPool.clear()"))
         assertTrue(block.contains("shelfListMode = !shelfListMode"))
-        assertTrue(block.contains("applyShelfLayoutMode()"))
+        assertTrue(block.contains("recreate()"))
+        assertTrue(!block.contains("shelfGrid.post"))
+        assertTrue(!block.contains("applyShelfLayoutMode()"))
     }
 
     @Test fun `selection operation mode remains separate from layout mode`() {

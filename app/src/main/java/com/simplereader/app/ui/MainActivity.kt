@@ -383,19 +383,17 @@ class MainActivity : AppCompatActivity() {
         if (!::shelfGrid.isInitialized || shelfLayoutSwitchInFlight) return
         shelfLayoutSwitchInFlight = true
         shelfGrid.stopScroll()
-        shelfGrid.post {
-            try {
-                if (isFinishing || isDestroyed) return@post
-                shelfListMode = !shelfListMode
-                getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(SHELF_LIST_MODE_KEY, shelfListMode)
-                    .apply()
-                applyShelfLayoutMode()
-            } finally {
-                shelfLayoutSwitchInFlight = false
-            }
-        }
+        shelfGrid.recycledViewPool.clear()
+        shelfListMode = !shelfListMode
+        getSharedPreferences(SHELF_UI_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SHELF_LIST_MODE_KEY, shelfListMode)
+            .commit()
+
+        // Follow the mature bookshelf pattern used by projects such as Legado:
+        // a layout-mode change recreates the shelf so the new Activity constructs exactly one
+        // matching LayoutManager/view hierarchy. Do not hot-swap list/grid cards in-place.
+        recreate()
     }
 
     private fun statusBarHeight(): Int {
@@ -895,13 +893,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun wrapSelectableShelfCard(card: LinearLayout, selected: Boolean): FrameLayout {
-        val originalParams = card.layoutParams
+        // A freshly constructed card is not attached to a parent yet, so card.layoutParams may be null.
+        // The outer wrapper receives its RecyclerView child params in ShelfAdapter.onBindViewHolder().
+        // Never copy an unattached child's layoutParams onto the wrapper (Android 16 rejects null params).
         card.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
         )
         return FrameLayout(this).apply {
-            layoutParams = originalParams
             addView(card)
             if (shelfSelectionMode) {
                 addView(
