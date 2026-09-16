@@ -1410,6 +1410,9 @@ class ReaderActivity : AppCompatActivity() {
                 // v793 only groups nearby user actions into one rollback burst.
                 cancelVerticalRollbackBurstReset()
                 rv?.stopScroll()
+                // stopScroll() may synchronously emit IDLE and schedule a burst reset.
+                // Cancel again so the new real gesture keeps the same short-burst origin.
+                cancelVerticalRollbackBurstReset()
                 cancelVerticalSettlingGuard()
                 if (pageTurnMode == TURN_MODE_VERTICAL && verticalGestureStartLocation == null) {
                     verticalGestureStartLocation = captureVerticalLocation()
@@ -1602,6 +1605,8 @@ class ReaderActivity : AppCompatActivity() {
         if (pageTurnMode == TURN_MODE_VERTICAL) {
             ensureVerticalReader()
             verticalRecyclerView?.stopScroll()
+            // Same synchronous-IDLE protection for rapid chapter/catalog/search jumps.
+            cancelVerticalRollbackBurstReset()
             cancelVerticalSettlingGuard()
             verticalProgrammaticScroll = true
             verticalAdapter?.refresh()

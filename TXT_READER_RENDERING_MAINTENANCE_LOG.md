@@ -164,3 +164,8 @@ V759 的位置保护可以阻止一类 RecyclerView 瞬时 row-0 污染，但当
 - 正文快速滑动以及章节/目录/搜索/书签跳转共用 burst 起点；前后差距超过 20 页才触发。
 - IDLE/跳转结束后 1 秒内继续操作仍属于同一 burst，停顿超过 1 秒后重新计数。
 - v791 正文滑动保险完全保持：触摸即 stopScroll、5 秒 settling 兜底、音量键 repeat 过滤未改变。
+
+### v793 final race guard
+- `RecyclerView.stopScroll()` 可能同步触发 IDLE，并重新安排短时间 burst 的清空计时器。
+- 因此在真实触摸与显式跳转的 `stopScroll()` 之后再次取消 burst reset，保证新操作不会在 1 秒中途丢失累计起点。
+- 该修正不改变 v791 的 stopScroll/settling 保险，也不改变“短时间前后差距超过 20 页”规则。
