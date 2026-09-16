@@ -41,6 +41,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/apply-v793-short-burst-rollback.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('TXT_READER_RENDERING_MAINTENANCE_LOG.md')
+          p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
           git diff --check
           grep -Fq 'private const val VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
           grep -Fq 'private const val VERTICAL_ROLLBACK_BURST_IDLE_MS = 1_000L' app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt
