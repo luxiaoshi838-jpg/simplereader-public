@@ -195,9 +195,9 @@ jobs:
             assert_alive
 
             for i in $(seq 1 12); do
-              read -r x y <<EOF
-$(center_for_text "$current")
-EOF
+              coords="$(center_for_text "$current")"
+              x="${coords%% *}"
+              y="${coords##* }"
               adb shell input tap "$x" "$y"
               sleep 1
               dump_ui
