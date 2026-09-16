@@ -26,3 +26,18 @@ V790 的 `verticalHandleTouch()` 能停止自动阅读、解除陈旧程序化�
 - V759 全量单测基线门：只允许既有 10 项历史失败，不允许 V791 新增失败。
 - Debug + Release 构建。
 - APK 包名、versionCode=2098000791、versionName=791 校验。
+
+## 2026-09-16 最终执行记录
+- 功能源码提交：`8375b49adc4c7e290b5a7fc7b1cb3a1d3d56558e`（`v791: brake vertical fling and add jump rollback`）。
+- 最终验证流水线：GitHub Actions run `35054247167`，结论 `success`。
+- 定向 Debug/Release 测试：PASS。
+- 全量旧单测基线：PASS；继续只允许既有 10 项历史失败，没有 V791 新增失败。
+- Debug + Release 构建：PASS。
+- APK 校验：`com.simplereader.app`，`versionCode=2098000791`，`versionName=791`。
+- 正式本地签名继续使用 SimpleReader Public V1；V1=false、V2=true、V3=true；证书 SHA-256 `315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
+- 正式签名 APK SHA-256：`c1e2e7bff5308bc0cf777d97be65d204793cb6e2c829a1540544b31895e607b6`。
+
+### 验证过程中的非应用故障
+1. 第一轮生成脚本自检条件把“常量被引用”误当成“常量已定义”，静态门立即阻断；修正为检查 `private const val` 真正定义后重跑，没有降低验证要求。
+2. 第二轮 runner 在进入 Kotlin 编译前解析 `kotlinx-coroutines-android:1.7.3` 时出现临时 Maven 依赖解析失败；该依赖与 V790 相同，不属于 V791 源码变化。第三轮先复用/预热 Gradle 缓存并保留在线刷新重试后依赖解析成功。
+3. 第三轮同时修正触摸顺序：必须先 `stopScroll()` 再记录新手势起点，避免 `stopScroll()` 可能产生的 IDLE 回调提前消费属于新手势的回撤起点。
