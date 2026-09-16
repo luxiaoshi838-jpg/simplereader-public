@@ -1,5 +1,6 @@
 name: Build 简阅 v789 for local signing
 
+# Final build trigger after validated app corrections were committed.
 on:
   push:
     branches:
