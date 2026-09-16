@@ -1,0 +1,130 @@
+name: Validate and build 简阅 v793 final race guard
+
+on:
+  push:
+    branches:
+      - source-v793
+    paths:
+      - tools/apply-v793-burst-race-fix.py
+      - .github/workflows/build-v793-final-race.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SIMPLE_READER_VERSION_CODE: "2098000793"
+  SIMPLE_READER_VERSION_NAME: "793"
+
+jobs:
+  repair-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout source-v793
+        uses: actions/checkout@v4
+        with:
+          ref: source-v793
+          fetch-depth: 0
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Apply final v793 burst race guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply-v793-burst-race-fix.py
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt').read_text()
+          a = s.index('MotionEvent.ACTION_DOWN -> {', s.index('internal fun verticalHandleTouch'))
+          b = s.index('if (pageTurnMode == TURN_MODE_VERTICAL', a)
+          block = s[a:b]
+          stop = block.index('rv?.stopScroll()')
+          assert block.index('cancelVerticalRollbackBurstReset()', stop) > stop
+          j = s.index('private fun jumpToPage')
+          k = s.index('private fun jumpChapter', j)
+          jump = s[j:k]
+          stop2 = jump.index('verticalRecyclerView?.stopScroll()')
+          assert jump.index('cancelVerticalRollbackBurstReset()', stop2) > stop2
+          assert 'VERTICAL_SETTLING_GUARD_MS = 5_000L' in s
+          assert 'VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20' in s
+          assert 'VERTICAL_ROLLBACK_BURST_IDLE_MS = 1_000L' in s
+          print('PASS: v793 race guard and inherited safety constants present')
+          PY
+      - name: Warm dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./gradlew :app:checkDebugAarMetadata --offline --stacktrace --console=plain; then exit 0; fi
+          ./gradlew :app:checkDebugAarMetadata --refresh-dependencies --stacktrace --console=plain
+      - name: Run v793 final targeted tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.ui.ReaderV793BurstRaceContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV793ShortBurstRollbackContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV791VerticalRollbackContractTest' \
+            --stacktrace --console=plain
+          ./gradlew testReleaseUnitTest \
+            --tests 'com.simplereader.app.ui.ReaderV793BurstRaceContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV793ShortBurstRollbackContractTest' \
+            --tests 'com.simplereader.app.ui.ReaderV791VerticalRollbackContractTest' \
+            --stacktrace --console=plain
+      - name: Check full suite against inherited baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/v759-full-unit-baseline-gate.sh
+          bash tools/v759-full-unit-baseline-gate.sh v793-final-full-unit-tests.log
+      - name: Build Debug and Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee v793-final-build.log
+      - name: Verify v793 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
+          test -s "$unsigned"
+          mkdir -p release
+          cp "$unsigned" release/SimpleReader_v793_unsigned.apk
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          "${build_tools}/aapt2" dump badging "$unsigned" | tee v793-final-package.txt
+          grep -Fq "package: name='com.simplereader.app'" v793-final-package.txt
+          grep -Fq "versionCode='2098000793'" v793-final-package.txt
+          grep -Fq "versionName='793'" v793-final-package.txt
+          sha256sum "$unsigned" | tee v793-final-unsigned-sha256.txt
+      - name: Commit only after final validation passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            app/src/main/java/com/simplereader/app/ui/ReaderActivity.kt \
+            app/src/test/java/com/simplereader/app/ui/ReaderV793BurstRaceContractTest.kt \
+            TXT_READER_RENDERING_MAINTENANCE_LOG.md
+          git diff --cached --exit-code && { echo 'Expected v793 race diff is empty'; exit 1; } || true
+          git commit -m "v793: preserve rapid rollback burst across stopScroll"
+          git push origin HEAD:source-v793
+      - name: Upload final validated unsigned v793
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v793-final-validated-unsigned
+          path: |
+            release/SimpleReader_v793_unsigned.apk
+            v793-final-package.txt
+            v793-final-unsigned-sha256.txt
+            v793-final-build.log
+            v793-final-full-unit-tests.log
+          if-no-files-found: error
+          retention-days: 7
