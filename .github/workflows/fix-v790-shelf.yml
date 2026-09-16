@@ -81,13 +81,13 @@ jobs:
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
           test -s "$unsigned"
+          mkdir -p release
+          cp "$unsigned" release/SimpleReader_v790_unsigned.apk
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
           "${build_tools}/aapt2" dump badging "$unsigned" | tee v790-package.txt
           grep -Fq "package: name='com.simplereader.app'" v790-package.txt
           grep -Fq "versionCode='2098000790'" v790-package.txt
           grep -Fq "versionName='790'" v790-package.txt
-          mkdir -p release
-          cp "$unsigned" release/SimpleReader_v790_unsigned.apk
           sha256sum "$unsigned" | tee v790-unsigned-sha256.txt
 
       - name: Commit only after validation passes
@@ -99,6 +99,7 @@ jobs:
           git add \
             app/build.gradle.kts \
             app/src/main/java/com/simplereader/app/ui/MainActivity.kt \
+            app/src/test/java/com/simplereader/app/ui/ShelfV788LayoutSwitchContractTest.kt \
             app/src/test/java/com/simplereader/app/ui/ShelfV790LayoutSafetyContractTest.kt \
             maintenance/V790_SHELF_LAYOUT_ARCH_FIX.md
           git diff --cached --exit-code && { echo 'Expected repair diff is empty'; exit 1; } || true
