@@ -151,6 +151,7 @@ class ReaderActivity : AppCompatActivity() {
     private var verticalRollbackLocation: VerticalLocation? = null
     private var verticalRollbackSnackbar: Snackbar? = null
     private var verticalRollbackDismissRunnable: Runnable? = null
+    private var verticalRollbackBurstResetRunnable: Runnable? = null
     private var verticalSettlingGuardRunnable: Runnable? = null
     private var readerGeneration: Long = 0L
     private var shelfCacheClaimBookId: Long = 0L
@@ -277,6 +278,7 @@ class ReaderActivity : AppCompatActivity() {
         progressCheckpointRunnable = null
         cancelVerticalStateUnlockGuard()
         cancelVerticalSettlingGuard()
+        cancelVerticalRollbackBurstReset()
         dismissVerticalRollback(clearLocation = true)
         stopAutoReading(false)
         CrashLogStore.recordEvent(this, "ReaderActivity.onDestroy book=$bookId finishing=$isFinishing changingConfig=$isChangingConfigurations page=$currentPageIndex stable=$lastStableSourceOffset")
@@ -999,6 +1001,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showHorizontalBook() {
         dismissVerticalRollback(clearLocation = true)
+        cancelVerticalRollbackBurstReset()
         verticalGestureStartLocation = null
         cancelVerticalSettlingGuard()
         verticalRecyclerView?.apply { stopScroll(); visibility = View.GONE }
@@ -1297,10 +1300,31 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun maybeOfferVerticalRollback(visibleIndex: Int) {
         val start = verticalGestureStartLocation ?: return
-        verticalGestureStartLocation = null
-        if (visibleIndex !in readerBook?.pages.orEmpty().indices) return
-        if (kotlin.math.abs(visibleIndex - start.pageIndex) <= VERTICAL_ROLLBACK_MIN_PAGE_DELTA) return
-        showVerticalRollback(start, "gesture")
+        if (visibleIndex !in readerBook?.pages.orEmpty().indices) {
+            scheduleVerticalRollbackBurstReset()
+            return
+        }
+        val pageDelta = kotlin.math.abs(visibleIndex - start.pageIndex)
+        if (pageDelta > VERTICAL_ROLLBACK_MIN_PAGE_DELTA) {
+            cancelVerticalRollbackBurstReset()
+            verticalGestureStartLocation = null
+            showVerticalRollback(start, "short_burst")
+            return
+        }
+        scheduleVerticalRollbackBurstReset()
+    }
+
+    private fun scheduleVerticalRollbackBurstReset() {
+        verticalRollbackBurstResetRunnable?.let(mainHandler::removeCallbacks)
+        verticalRollbackBurstResetRunnable = Runnable {
+            verticalRollbackBurstResetRunnable = null
+            verticalGestureStartLocation = null
+        }.also { mainHandler.postDelayed(it, VERTICAL_ROLLBACK_BURST_IDLE_MS) }
+    }
+
+    private fun cancelVerticalRollbackBurstReset() {
+        verticalRollbackBurstResetRunnable?.let(mainHandler::removeCallbacks)
+        verticalRollbackBurstResetRunnable = null
     }
 
     private fun showVerticalRollback(location: VerticalLocation, reason: String) {
@@ -1312,6 +1336,7 @@ class ReaderActivity : AppCompatActivity() {
         snackbar.setAction("↩︎ 回撤") {
             val target = verticalRollbackLocation ?: return@setAction
             dismissVerticalRollback(clearLocation = true)
+            cancelVerticalRollbackBurstReset()
             verticalGestureStartLocation = null
             verticalRecyclerView?.stopScroll()
             cancelVerticalSettlingGuard()
@@ -1381,10 +1406,9 @@ class ReaderActivity : AppCompatActivity() {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (autoReading) stopAutoReading(false)
-                // A new real touch must always brake the previous ViewFlinger before RecyclerView or
-                // a selectable child TextView gets the event. Capture this gesture's origin only
-                // after stopScroll(): stopScroll may synchronously emit IDLE and must not consume
-                // the origin belonging to the new gesture.
+                // v791 fling safety is unchanged: a real touch always brakes ViewFlinger first.
+                // v793 only groups nearby user actions into one rollback burst.
+                cancelVerticalRollbackBurstReset()
                 rv?.stopScroll()
                 cancelVerticalSettlingGuard()
                 if (pageTurnMode == TURN_MODE_VERTICAL && verticalGestureStartLocation == null) {
@@ -1558,7 +1582,12 @@ class ReaderActivity : AppCompatActivity() {
     private fun jumpToPage(index: Int, animated: Boolean, hit: SearchPageHit? = null) {
         val pages = readerBook?.pages ?: return
         if (pages.isEmpty()) return
-        val rollbackOrigin = if (pageTurnMode == TURN_MODE_VERTICAL) captureVerticalLocation() else null
+        val rollbackOrigin = if (pageTurnMode == TURN_MODE_VERTICAL) {
+            cancelVerticalRollbackBurstReset()
+            verticalGestureStartLocation ?: captureVerticalLocation()?.also {
+                verticalGestureStartLocation = it
+            }
+        } else null
         activeSearchHit = hit
         currentPageIndex = index.coerceIn(0, pages.lastIndex)
         val targetPage = pages[currentPageIndex]
@@ -1574,7 +1603,6 @@ class ReaderActivity : AppCompatActivity() {
             ensureVerticalReader()
             verticalRecyclerView?.stopScroll()
             cancelVerticalSettlingGuard()
-            verticalGestureStartLocation = null
             verticalProgrammaticScroll = true
             verticalAdapter?.refresh()
             verticalLayoutManager?.scrollToPositionWithOffset(currentPageIndex, 0)
@@ -1583,7 +1611,11 @@ class ReaderActivity : AppCompatActivity() {
                 verticalProgrammaticScroll = false
                 if (!verticalWindowSuspended) cancelVerticalStateUnlockGuard()
                 if (offerRollback && rollbackOrigin != null) {
-                    showVerticalRollback(rollbackOrigin, "explicit_jump")
+                    cancelVerticalRollbackBurstReset()
+                    verticalGestureStartLocation = null
+                    showVerticalRollback(rollbackOrigin, "explicit_jump_burst")
+                } else if (rollbackOrigin != null) {
+                    scheduleVerticalRollbackBurstReset()
                 }
             }
         } else {
@@ -2630,6 +2662,7 @@ class ReaderActivity : AppCompatActivity() {
         private const val AUTO_READ_MIN_PAGE_DELAY_MS = 700L
         private const val VERTICAL_STATE_UNLOCK_GUARD_MS = 900L
         private const val VERTICAL_ROLLBACK_MIN_PAGE_DELTA = 20
+        private const val VERTICAL_ROLLBACK_BURST_IDLE_MS = 1_000L
         private const val VERTICAL_ROLLBACK_VISIBLE_MS = 3_000L
         private const val VERTICAL_SETTLING_GUARD_MS = 5_000L
         private const val PROGRESS_CHECKPOINT_DELAY_MS = 600L

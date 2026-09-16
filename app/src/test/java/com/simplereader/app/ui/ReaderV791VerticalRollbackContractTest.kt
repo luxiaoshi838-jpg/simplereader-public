@@ -28,7 +28,7 @@ class ReaderV791VerticalRollbackContractTest {
 
     @Test fun `large jump rollback follows mature previous location pattern`() {
         assertTrue(reader.contains("private data class VerticalLocation"))
-        assertTrue(reader.contains("kotlin.math.abs(visibleIndex - start.pageIndex) <= VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
+        assertTrue(reader.contains("pageDelta > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
         assertTrue(reader.contains("kotlin.math.abs(currentPageIndex - rollbackOrigin.pageIndex) > VERTICAL_ROLLBACK_MIN_PAGE_DELTA"))
         assertTrue(reader.contains("Snackbar.make(readerRoot, \"位置已移动\", Snackbar.LENGTH_INDEFINITE)"))
         assertTrue(reader.contains("snackbar.setAnchorView(readerControls)"))

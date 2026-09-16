@@ -158,3 +158,9 @@ V759 的位置保护可以阻止一类 RecyclerView 瞬时 row-0 污染，但当
 - 统一将手势大移动和显式跳转的回撤阈值改为：**跨越超过 20 页才触发**；20 页及以内不触发。
 - 3 秒自动消失、下栏上方 Snackbar、sourceOffset/viewportOffset 恢复、触摸刹车和 settling 保险保持不变。
 - 新增 `ReaderV792RollbackThresholdContractTest`，并迁移被新版本行为取代的 v791 阈值契约。
+
+## v793 — 短时间累计移动/跳转回撤
+- 纠正 v792：回撤不再只看单次手势；按短时间连续操作 burst 统一累计。
+- 正文快速滑动以及章节/目录/搜索/书签跳转共用 burst 起点；前后差距超过 20 页才触发。
+- IDLE/跳转结束后 1 秒内继续操作仍属于同一 burst，停顿超过 1 秒后重新计数。
+- v791 正文滑动保险完全保持：触摸即 stopScroll、5 秒 settling 兜底、音量键 repeat 过滤未改变。
