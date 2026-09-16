@@ -150,7 +150,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             ./gradlew assembleDebug --stacktrace --console=plain
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell pm clear com.simplereader.app >/dev/null
@@ -194,9 +194,11 @@ jobs:
             assert_alive
 
             for i in $(seq 1 12); do
-              read -r x y <<<"$(center_for_text "$current")"
+              read -r x y <<EOF
+$(center_for_text "$current")
+EOF
               adb shell input tap "$x" "$y"
-              sleep 0.6
+              sleep 1
               dump_ui
               if [ "$current" = "宫格" ]; then
                 current="列表"
