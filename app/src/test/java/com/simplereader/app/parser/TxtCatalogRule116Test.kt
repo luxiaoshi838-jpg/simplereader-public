@@ -62,10 +62,20 @@ class TxtCatalogRule116Test {
         assertTrue(TxtParser.CATALOG_RULE_VERSION >= 117)
     }
     @Test
-    fun pureArabicNumbersAndPercentagesNeverBecomeCatalogEntries() {
-        val rejected = listOf(
+    fun pureArabicNumbersAreAllowedButNumericPercentOrPunctuationNoiseIsRejected() {
+        val accepted = listOf(
             "123",
             "１２３",
+            "001",
+            "００１"
+        )
+        accepted.forEach { line ->
+            assertEquals("pure digits may be a chapter: $line", line, TxtParser.extractStructuredChapterTitle(line))
+        }
+
+        val rejected = listOf(
+            "123%",
+            "123％",
             "123。",
             "123！",
             "123？？",
@@ -77,13 +87,18 @@ class TxtCatalogRule116Test {
             "123——"
         )
         rejected.forEach { line ->
-            assertNull("pure numeric noise must not be a chapter: $line", TxtParser.extractChapterTitle(line))
+            assertNull("numeric punctuation/percent noise must not be a chapter: $line", TxtParser.extractChapterTitle(line))
         }
 
+        assertEquals("1、标题", TxtParser.extractStructuredChapterTitle("1、标题"))
+        assertEquals("12.标题", TxtParser.extractStructuredChapterTitle("12.标题"))
+
         val source = listOf(
+            "123",
+            "正文一。",
             "123.456%！",
             "第1章 正常章节",
-            "正文。",
+            "正文二。",
             "１２３。",
             "第2章 第二章"
         ).joinToString("\n")
@@ -91,7 +106,7 @@ class TxtCatalogRule116Test {
             ByteArrayInputStream(source.toByteArray(Charsets.UTF_8)),
             Charsets.UTF_8.name()
         ).map { it.title }
-        assertEquals(listOf("第1章 正常章节", "第2章 第二章"), hits)
+        assertEquals(listOf("123", "第1章 正常章节", "第2章 第二章"), hits)
     }
 
     @Test
