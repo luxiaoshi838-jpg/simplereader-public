@@ -71,7 +71,7 @@ class TxtCatalogRule112Test {
         assertNull(TxtParser.extractStructuredChapterTitle("Road（1）"))
         assertNull(TxtParser.extractStructuredChapterTitle("大道 之上（一）"))
         assertNull(TxtParser.extractStructuredChapterTitle("这是正文（2026）吗"))
-        assertNull(TxtParser.extractStructuredChapterTitle("2026"))
+        assertEquals("2026", TxtParser.extractStructuredChapterTitle("2026"))
         assertNull(TxtParser.extractStructuredChapterTitle("这是正文。第12回 继续说"))
         assertEquals("第12章。这是正文", TxtParser.extractStructuredChapterTitle("第12章。这是正文"))
     }
