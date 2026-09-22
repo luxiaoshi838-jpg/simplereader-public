@@ -141,7 +141,7 @@ object TxtParser {
                 if (bodySeenSinceLastAcceptedChapter) {
                     val target = if (structured != null) structuredChapters else fallbackChapters
                     val last = target.lastOrNull()
-                    if (last == null || start - last.byteOffset > 80L) {
+                    if (last == null || last.title != title) {
                         target += TxtChapterHit(title, start)
                     }
                 }
@@ -372,7 +372,7 @@ object TxtParser {
                     val target = if (structuredTitle != null) structured else fallback
                     if (target.size < maxChapters) {
                         val last = target.lastOrNull()
-                        if (last == null || lineStartOffset - last.byteOffset > 80L) {
+                        if (last == null || last.title != title) {
                             target += TxtChapterHit(title, lineStartOffset)
                         }
                     }
