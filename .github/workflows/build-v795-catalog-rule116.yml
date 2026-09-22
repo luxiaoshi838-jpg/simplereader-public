@@ -1,0 +1,130 @@
+name: Validate and build 简阅 v795 catalog Rule 116
+
+on:
+  push:
+    branches:
+      - source-v795
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SIMPLE_READER_VERSION_CODE: "2098000795"
+  SIMPLE_READER_VERSION_NAME: "795"
+
+jobs:
+  validate-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout source-v795
+        uses: actions/checkout@v4
+        with:
+          ref: source-v795
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Static Rule 116 checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'const val RULE_VERSION = 116' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'const val CATALOG_RULE_VERSION = 116' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -Fq 'if (containsWideChapterMarker(s)) return s' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'next.isWhitespace() || isUnicodePunctuation(next) || isUnicodeSymbol(next)' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq '"第12章鱼"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+          grep -Fq '"第3章程"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+
+      - name: Warm or refresh dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./gradlew :app:checkDebugAarMetadata --offline --stacktrace --console=plain; then
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if ./gradlew :app:checkDebugAarMetadata --refresh-dependencies --stacktrace --console=plain; then
+              exit 0
+            fi
+          done
+          exit 1
+
+      - name: Run v795 catalog tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule116Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule115Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule112Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRuleVersionRegressionTest' \
+            --tests 'com.simplereader.app.reader.DirectTxtCatalogV114ContractTest' \
+            --tests 'com.simplereader.app.parser.TxtChapterAndEncodingRegressionTest' \
+            --stacktrace --console=plain
+          ./gradlew testReleaseUnitTest \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule116Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule115Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRule112Test' \
+            --tests 'com.simplereader.app.parser.TxtCatalogRuleVersionRegressionTest' \
+            --tests 'com.simplereader.app.reader.DirectTxtCatalogV114ContractTest' \
+            --tests 'com.simplereader.app.parser.TxtChapterAndEncodingRegressionTest' \
+            --stacktrace --console=plain
+
+      - name: Check full unit suite against inherited baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/v759-full-unit-baseline-gate.sh
+          bash tools/v759-full-unit-baseline-gate.sh v795-full-unit-tests.log
+
+      - name: Build Debug and Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace --console=plain 2>&1 | tee v795-build.log
+
+      - name: Verify v795 package and export signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ -s "$unsigned" ] || unsigned="app/build/outputs/apk/release/app-release.apk"
+          test -s "$unsigned"
+          mkdir -p release signing-tools/lib
+          cp "$unsigned" release/SimpleReader_v795_unsigned.apk
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          "$build_tools/aapt2" dump badging "$unsigned" | tee v795-package.txt
+          grep -Fq "package: name='com.simplereader.app'" v795-package.txt
+          grep -Fq "versionCode='2098000795'" v795-package.txt
+          grep -Fq "versionName='795'" v795-package.txt
+          sha256sum "$unsigned" | tee v795-unsigned-sha256.txt
+          cp "$build_tools/apksigner" signing-tools/apksigner
+          cp "$build_tools/lib/apksigner.jar" signing-tools/lib/apksigner.jar
+          if [ -f "$build_tools/zipalign" ]; then cp "$build_tools/zipalign" signing-tools/zipalign; fi
+          if [ -f "$build_tools/lib64/libc++.so" ]; then mkdir -p signing-tools/lib64; cp "$build_tools/lib64/libc++.so" signing-tools/lib64/libc++.so; fi
+          chmod +x signing-tools/apksigner
+          [ ! -f signing-tools/zipalign ] || chmod +x signing-tools/zipalign
+
+      - name: Upload validated unsigned v795
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleReader-v795-catalog-rule116
+          path: |
+            release/SimpleReader_v795_unsigned.apk
+            v795-package.txt
+            v795-unsigned-sha256.txt
+            v795-build.log
+            v795-full-unit-tests.log
+            signing-tools
+          if-no-files-found: error
+          retention-days: 7
