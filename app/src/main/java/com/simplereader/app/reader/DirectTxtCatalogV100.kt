@@ -74,8 +74,8 @@ object DirectTxtCatalogV100 {
     fun recognize(raw: String?): String? {
         if (raw == null) return null
         val s = CatalogTitleNormalizerV103.normalize(raw) ?: return null
-        if (isPureArabicDigits(s)) return s
-        if (isArabicNumericWithOnlyPunctuationOrSymbols(s)) return null
+        if (isPureNumerals(s)) return s
+        if (isNumericWithOnlyPunctuationOrSymbols(s)) return null
 
         // Rule 116: an independent 第N章 marker is authoritative anywhere on the line.
         // This intentionally bypasses the old 25-visible-character and sentence-punctuation
@@ -110,8 +110,9 @@ object DirectTxtCatalogV100 {
         // Historical "大道之上（一）" style has no structural unit and remains explicitly valid.
         if (wrappedChineseSuffix.matches(s) && !hasTerminator(s)) return s
 
-        // Bare Arabic/Chinese numerals require an explicit catalog separator.
-        // Therefore 1天、2人、一条、三朵、十年等 cannot become chapters by number alone.
+        // Pure Arabic/full-width/Chinese numerals are accepted by Rule 117 above.
+        // Numeral + real title text still follows the existing explicit-separator rule below,
+        // while numeral + ordinary classifier/noun prose remains rejected by fallback guards.
         if ('…' !in s && explicitNumberedTitle.matches(s)) {
             val firstSeparator = s.indexOfFirst { it in separators }
             if (firstSeparator >= 0 && !hasTerminatorIgnoringSeparatorAt(s, firstSeparator)) return s
@@ -121,11 +122,11 @@ object DirectTxtCatalogV100 {
         return null
     }
 
-    private fun isPureArabicDigits(s: String): Boolean {
+    private fun isPureNumerals(s: String): Boolean {
         var sawDigit = false
         for (c in s) {
             when {
-                c in '0'..'9' || c in '０'..'９' -> sawDigit = true
+                c in '0'..'9' || c in '０'..'９' || c in CN -> sawDigit = true
                 c.isWhitespace() -> Unit
                 else -> return false
             }
@@ -133,12 +134,12 @@ object DirectTxtCatalogV100 {
         return sawDigit
     }
 
-    private fun isArabicNumericWithOnlyPunctuationOrSymbols(s: String): Boolean {
+    private fun isNumericWithOnlyPunctuationOrSymbols(s: String): Boolean {
         var sawDigit = false
         var sawNonDigitNoise = false
         for (c in s) {
             when {
-                c in '0'..'9' || c in '０'..'９' -> sawDigit = true
+                c in '0'..'9' || c in '０'..'９' || c in CN -> sawDigit = true
                 c.isWhitespace() -> Unit
                 c == '%' || c == '％' -> sawNonDigitNoise = true
                 isUnicodePunctuation(c) || isUnicodeSymbol(c) -> sawNonDigitNoise = true
