@@ -50,7 +50,7 @@ data class TxtTranscodeResult(
 
 object TxtParser {
     /** Bump this whenever TXT catalog recognition rules change. */
-    const val CATALOG_RULE_VERSION = 116
+    const val CATALOG_RULE_VERSION = 117
 
     private const val CHARSET_SAMPLE_BYTES = 256 * 1024
     private const val MAX_LINE_BYTES = 1024 * 1024
@@ -131,14 +131,23 @@ object TxtParser {
         val counting = CountingOutputStream(outputStream)
         val structuredChapters = mutableListOf<TxtChapterHit>()
         val fallbackChapters = mutableListOf<TxtChapterHit>()
+        var bodySeenSinceLastAcceptedChapter = true
 
         fun collectChapter(line: String, start: Long) {
             val structured = extractStructuredChapterTitle(line)
-            val target = if (structured != null) structuredChapters else fallbackChapters
-            val title = structured ?: extractFallbackChapterTitle(line) ?: return
-            val last = target.lastOrNull()
-            if (last == null || start - last.byteOffset > 80L) {
-                target += TxtChapterHit(title, start)
+            val fallback = if (structured == null) extractFallbackChapterTitle(line) else null
+            val title = structured ?: fallback
+            if (title != null) {
+                if (bodySeenSinceLastAcceptedChapter) {
+                    val target = if (structured != null) structuredChapters else fallbackChapters
+                    val last = target.lastOrNull()
+                    if (last == null || start - last.byteOffset > 80L) {
+                        target += TxtChapterHit(title, start)
+                    }
+                }
+                bodySeenSinceLastAcceptedChapter = false
+            } else if (line.isNotBlank()) {
+                bodySeenSinceLastAcceptedChapter = true
             }
         }
 
@@ -353,13 +362,25 @@ object TxtParser {
         val charset = Charset.forName(normalizeCharsetName(charsetName))
         val structured = mutableListOf<TxtChapterHit>()
         val fallback = mutableListOf<TxtChapterHit>()
+        var bodySeenSinceLastAcceptedChapter = true
         fun collect(line: String, lineStartOffset: Long) {
             val structuredTitle = extractStructuredChapterTitle(line)
-            val target = if (structuredTitle != null) structured else fallback
-            val title = structuredTitle ?: extractFallbackChapterTitle(line) ?: return
-            if (target.size >= maxChapters) return
-            val last = target.lastOrNull()
-            if (last == null || lineStartOffset - last.byteOffset > 80L) target += TxtChapterHit(title, lineStartOffset)
+            val fallbackTitle = if (structuredTitle == null) extractFallbackChapterTitle(line) else null
+            val title = structuredTitle ?: fallbackTitle
+            if (title != null) {
+                if (bodySeenSinceLastAcceptedChapter) {
+                    val target = if (structuredTitle != null) structured else fallback
+                    if (target.size < maxChapters) {
+                        val last = target.lastOrNull()
+                        if (last == null || lineStartOffset - last.byteOffset > 80L) {
+                            target += TxtChapterHit(title, lineStartOffset)
+                        }
+                    }
+                }
+                bodySeenSinceLastAcceptedChapter = false
+            } else if (line.isNotBlank()) {
+                bodySeenSinceLastAcceptedChapter = true
+            }
         }
         inputStream.use { stream ->
             val lineBytes = ByteArrayOutputStream()
