@@ -3,13 +3,14 @@ package com.simplereader.app.reader
 import com.simplereader.app.reader.page.BookChapter
 
 /**
- * Direct TXT catalog detector. Rule 116 restores the historical wide 第N章 marker:
- * an independent 第N章 token may occur anywhere in a line with unrestricted title length/punctuation,
- * while glued ordinary words such as 第12章鱼 / 第3章程 remain rejected. Other rule families keep
- * the Rule 115 safeguards.
+ * Direct TXT catalog detector. Rule 117 keeps Rule 116 wide 第N章 matching and suppresses
+ * consecutive recognized chapter headings when no nonblank body text occurs between them: only the
+ * first heading in such a run is kept. Rule 116's independent 第N章 token may occur anywhere in a line
+ * with unrestricted title length/punctuation, while glued ordinary words such as 第12章鱼 / 第3章程
+ * remain rejected. Other rule families keep the Rule 115 safeguards.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 116
+    const val RULE_VERSION = 117
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
@@ -38,12 +39,20 @@ object DirectTxtCatalogV100 {
     fun detect(text: String?): List<BookChapter> {
         if (text.isNullOrEmpty()) return listOf(BookChapter("正文", 0, text?.length ?: 0))
         val hits = ArrayList<Hit>()
+        var bodySeenSinceLastAcceptedChapter = true
         var start = 0
         while (start <= text.length) {
             val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
             val line = text.substring(start, end)
             val title = CatalogTitleNormalizerV103.recognizeNormalized(line)
-            if (title != null && (hits.isEmpty() || hits.last().title != title)) hits += Hit(title, start)
+            if (title != null) {
+                if (bodySeenSinceLastAcceptedChapter && (hits.isEmpty() || hits.last().title != title)) {
+                    hits += Hit(title, start)
+                }
+                bodySeenSinceLastAcceptedChapter = false
+            } else if (line.isNotBlank()) {
+                bodySeenSinceLastAcceptedChapter = true
+            }
             if (end >= text.length) break
             start = end + 1
         }
