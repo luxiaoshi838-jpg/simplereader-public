@@ -71,7 +71,16 @@ class TxtCatalogRule116Test {
             "一",
             "十二",
             "一百零二",
-            "壹佰贰拾叁"
+            "壹佰贰拾叁",
+            "（十二）",
+            "【十二】",
+            "「十二」",
+            "《十二》",
+            "（12）",
+            "【12】",
+            "「12」",
+            "《12》",
+            "(12)"
         )
         accepted.forEach { line ->
             assertEquals("pure digits may be a chapter: $line", line, TxtParser.extractStructuredChapterTitle(line))
@@ -93,8 +102,6 @@ class TxtCatalogRule116Test {
             "十二％",
             "十二。",
             "十二！",
-            "（十二）",
-            "【十二】",
             "十二——"
         )
         rejected.forEach { line ->
