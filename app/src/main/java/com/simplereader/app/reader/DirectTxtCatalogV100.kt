@@ -74,7 +74,8 @@ object DirectTxtCatalogV100 {
     fun recognize(raw: String?): String? {
         if (raw == null) return null
         val s = CatalogTitleNormalizerV103.normalize(raw) ?: return null
-        if (isPureArabicNumericNoise(s)) return null
+        if (isPureArabicDigits(s)) return s
+        if (isArabicNumericWithOnlyPunctuationOrSymbols(s)) return null
 
         // Rule 116: an independent 第N章 marker is authoritative anywhere on the line.
         // This intentionally bypasses the old 25-visible-character and sentence-punctuation
@@ -120,18 +121,31 @@ object DirectTxtCatalogV100 {
         return null
     }
 
-    private fun isPureArabicNumericNoise(s: String): Boolean {
+    private fun isPureArabicDigits(s: String): Boolean {
         var sawDigit = false
         for (c in s) {
             when {
                 c in '0'..'9' || c in '０'..'９' -> sawDigit = true
                 c.isWhitespace() -> Unit
-                c == '%' || c == '％' -> Unit
-                isUnicodePunctuation(c) || isUnicodeSymbol(c) -> Unit
                 else -> return false
             }
         }
         return sawDigit
+    }
+
+    private fun isArabicNumericWithOnlyPunctuationOrSymbols(s: String): Boolean {
+        var sawDigit = false
+        var sawNonDigitNoise = false
+        for (c in s) {
+            when {
+                c in '0'..'9' || c in '０'..'９' -> sawDigit = true
+                c.isWhitespace() -> Unit
+                c == '%' || c == '％' -> sawNonDigitNoise = true
+                isUnicodePunctuation(c) || isUnicodeSymbol(c) -> sawNonDigitNoise = true
+                else -> return false
+            }
+        }
+        return sawDigit && sawNonDigitNoise
     }
 
     private fun containsWideChapterMarker(s: String): Boolean {
