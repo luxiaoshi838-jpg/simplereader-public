@@ -62,12 +62,16 @@ class TxtCatalogRule116Test {
         assertTrue(TxtParser.CATALOG_RULE_VERSION >= 117)
     }
     @Test
-    fun pureArabicNumbersAreAllowedButNumericPercentOrPunctuationNoiseIsRejected() {
+    fun pureArabicAndChineseNumeralsAreAllowedButNumericPercentOrPunctuationNoiseIsRejected() {
         val accepted = listOf(
             "123",
             "１２３",
             "001",
-            "００１"
+            "００１",
+            "一",
+            "十二",
+            "一百零二",
+            "壹佰贰拾叁"
         )
         accepted.forEach { line ->
             assertEquals("pure digits may be a chapter: $line", line, TxtParser.extractStructuredChapterTitle(line))
@@ -84,7 +88,14 @@ class TxtCatalogRule116Test {
             "１２３．４５６％。",
             "(123)",
             "【123】",
-            "123——"
+            "123——",
+            "十二%",
+            "十二％",
+            "十二。",
+            "十二！",
+            "（十二）",
+            "【十二】",
+            "十二——"
         )
         rejected.forEach { line ->
             assertNull("numeric punctuation/percent noise must not be a chapter: $line", TxtParser.extractChapterTitle(line))
@@ -92,6 +103,8 @@ class TxtCatalogRule116Test {
 
         assertEquals("1、标题", TxtParser.extractStructuredChapterTitle("1、标题"))
         assertEquals("12.标题", TxtParser.extractStructuredChapterTitle("12.标题"))
+        assertEquals("一、归来", TxtParser.extractStructuredChapterTitle("一、归来"))
+        assertEquals("十二.标题", TxtParser.extractStructuredChapterTitle("十二.标题"))
 
         val source = listOf(
             "123",
