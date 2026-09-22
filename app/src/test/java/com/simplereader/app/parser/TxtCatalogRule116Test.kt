@@ -59,6 +59,46 @@ class TxtCatalogRule116Test {
         )
 
         assertEquals(listOf(CatalogTitleNormalizerV103.normalize(chapter)), hits.map { it.title })
-        assertTrue(TxtParser.CATALOG_RULE_VERSION >= 116)
+        assertTrue(TxtParser.CATALOG_RULE_VERSION >= 117)
+    }
+    @Test
+    fun consecutiveChapterHeadingsWithoutBodyKeepOnlyTheFirst() {
+        val source = listOf(
+            "第1章 第一标题",
+            "",
+            "第2章 第二标题",
+            "   ",
+            "前缀——第3章：第三标题！",
+            "这里开始是真正正文。",
+            "第4章 第四标题",
+            "正文四。",
+            "第5章 第五标题"
+        ).joinToString("\n")
+
+        val direct = com.simplereader.app.reader.DirectTxtCatalogV100.detect(source)
+            .filter { it.catalogVisible }
+            .map { it.title }
+        assertEquals(
+            listOf("第1章 第一标题", "第4章 第四标题", "第5章 第五标题"),
+            direct
+        )
+
+        val scanned = TxtParser.scanChapters(
+            ByteArrayInputStream(source.toByteArray(Charsets.UTF_8)),
+            Charsets.UTF_8.name()
+        ).map { it.title }
+        assertEquals(
+            listOf("第1章 第一标题", "第4章 第四标题", "第5章 第五标题"),
+            scanned
+        )
+    }
+
+    @Test
+    fun nonblankBodyResetsConsecutiveHeadingSuppression() {
+        val source = "第1章 A\n正文。\n第2章 B\n正文。\n第3章 C"
+        val direct = com.simplereader.app.reader.DirectTxtCatalogV100.detect(source)
+            .filter { it.catalogVisible }
+            .map { it.title }
+        assertEquals(listOf("第1章 A", "第2章 B", "第3章 C"), direct)
     }
 }
