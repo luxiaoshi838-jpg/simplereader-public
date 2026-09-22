@@ -36,17 +36,24 @@ class DirectTxtCatalogV114ContractTest {
     }
 
     @Test
-    fun ordinaryWordsAndMiddleSentencePunctuationRemainRejected() {
+    fun rule116WidensOnlyIndependentChapterMarker() {
+        listOf(
+            "第1章 标题。还有正文",
+            "前言！！！第十二章：标题？副标题！"
+        ).forEach { line ->
+            assertNotNull("规则116的独立第N章应识别：$line", DirectTxtCatalogV100.recognize(line))
+        }
+
         listOf(
             "第1章鱼很好吃。",
+            "第3章程必须遵守。",
             "第3节课。",
             "第2回家！",
-            "第1章 标题。还有正文",
             "第3节。还有正文",
             "第四回！继续说",
             "第五卷？后记"
         ).forEach { line ->
-            assertNull("不应因规则115尾标点特例被识别：$line", DirectTxtCatalogV100.recognize(line))
+            assertNull("普通词或未放宽结构不得识别：$line", DirectTxtCatalogV100.recognize(line))
         }
     }
 }
