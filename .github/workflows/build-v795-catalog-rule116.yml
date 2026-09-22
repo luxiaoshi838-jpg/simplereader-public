@@ -33,7 +33,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Static Rule 116 checks
+      - name: Static Rule 117 checks
         shell: bash
         run: |
           set -euo pipefail
@@ -79,7 +79,6 @@ jobs:
             --tests 'com.simplereader.app.parser.TxtCatalogRule112Test' \
             --tests 'com.simplereader.app.parser.TxtCatalogRuleVersionRegressionTest' \
             --tests 'com.simplereader.app.reader.DirectTxtCatalogV114ContractTest' \
-            --tests 'com.simplereader.app.parser.TxtChapterAndEncodingRegressionTest' \
             --stacktrace --console=plain
           ./gradlew testReleaseUnitTest \
             --tests 'com.simplereader.app.parser.TxtCatalogRule116Test' \
@@ -87,7 +86,6 @@ jobs:
             --tests 'com.simplereader.app.parser.TxtCatalogRule112Test' \
             --tests 'com.simplereader.app.parser.TxtCatalogRuleVersionRegressionTest' \
             --tests 'com.simplereader.app.reader.DirectTxtCatalogV114ContractTest' \
-            --tests 'com.simplereader.app.parser.TxtChapterAndEncodingRegressionTest' \
             --stacktrace --console=plain
 
       - name: Check full unit suite against inherited baseline
