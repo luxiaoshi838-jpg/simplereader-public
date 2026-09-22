@@ -49,6 +49,9 @@ jobs:
           grep -Fq '"123.456%！"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
           grep -Fq '"十二。"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
           grep -Fq '"一百零二"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+          grep -Fq '"《十二》"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+          grep -Fq '"《12》"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+          grep -Fq 'if (wrappedPureNumeral.matches(s)) return s' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
 
