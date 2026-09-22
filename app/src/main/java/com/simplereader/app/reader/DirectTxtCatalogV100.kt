@@ -25,6 +25,9 @@ object DirectTxtCatalogV100 {
     private val numberLeadingUnit = Regex("^\\s*$NUM\\s*$STRUCTURE")
     private val reverseUnit = Regex("^\\s*$STRUCTURE\\s*$NUM")
     private val wrappedLeadingUnit = Regex("^\\s*[（(]\\s*$NUM\\s*[）)]\\s*$STRUCTURE")
+    private val wrappedPureNumeral = Regex(
+        "^\\s*(?:[（(]\\s*$NUM\\s*[）)]|【\\s*$NUM\\s*】|「\\s*$NUM\\s*」|《\\s*$NUM\\s*》)\\s*$"
+    )
     private val wrappedChineseSuffix = Regex("^[\\u4E00-\\u9FFF]{1,20}[（(]\\s*$NUM\\s*[）)]$")
     private val numericOnly = Regex("^\\s*$NUM\\s*$")
     private val explicitNumberedTitle = Regex("^\\s*$NUM\\s*[、.．:：—-]\\s*\\S.*$")
@@ -75,6 +78,7 @@ object DirectTxtCatalogV100 {
         if (raw == null) return null
         val s = CatalogTitleNormalizerV103.normalize(raw) ?: return null
         if (isPureNumerals(s)) return s
+        if (wrappedPureNumeral.matches(s)) return s
         if (isNumericWithOnlyPunctuationOrSymbols(s)) return null
 
         // Rule 116: an independent 第N章 marker is authoritative anywhere on the line.
