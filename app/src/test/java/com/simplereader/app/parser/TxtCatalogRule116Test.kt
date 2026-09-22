@@ -62,6 +62,39 @@ class TxtCatalogRule116Test {
         assertTrue(TxtParser.CATALOG_RULE_VERSION >= 117)
     }
     @Test
+    fun pureArabicNumbersAndPercentagesNeverBecomeCatalogEntries() {
+        val rejected = listOf(
+            "123",
+            "１２３",
+            "123。",
+            "123！",
+            "123？？",
+            "123.456%",
+            "123.456%！",
+            "１２３．４５６％。",
+            "(123)",
+            "【123】",
+            "123——"
+        )
+        rejected.forEach { line ->
+            assertNull("pure numeric noise must not be a chapter: $line", TxtParser.extractChapterTitle(line))
+        }
+
+        val source = listOf(
+            "123.456%！",
+            "第1章 正常章节",
+            "正文。",
+            "１２３。",
+            "第2章 第二章"
+        ).joinToString("\n")
+        val hits = TxtParser.scanChapters(
+            ByteArrayInputStream(source.toByteArray(Charsets.UTF_8)),
+            Charsets.UTF_8.name()
+        ).map { it.title }
+        assertEquals(listOf("第1章 正常章节", "第2章 第二章"), hits)
+    }
+
+    @Test
     fun consecutiveChapterHeadingsWithoutBodyKeepOnlyTheFirst() {
         val source = listOf(
             "第1章 第一标题",
