@@ -251,3 +251,18 @@ TXT 目录规则后续不要再分散修改旧的 `priority / secondFamily / Rea
 - 该允许规则优先于“数字+标点/符号噪声拒绝”。
 - 非成对包裹的数字+标点/符号仍禁止，例如 `十二。`、`12！`、`12%`、`十二%`。
 
+### V795 / Rule 117 最终验证
+
+- 版本：`versionName=795`，`versionCode=2098000795`。
+- 最终功能提交：`69295a20037996b8e2146224733bdafe26131e94`。
+- GitHub Actions：run `35705055700` / job `106671861953` 全部成功。
+- Rule 117 专项目录测试：PASS。
+- 完整单元测试按 V758 已登记历史失败基线核对：PASS，无新增失败。
+- Debug/Release 构建：PASS。
+- APK 校验：`package=com.simplereader.app`、`compileSdk=35`、`targetSdk=35`、`minSdk=26`。
+- unsigned artifact：`SimpleReader-v795-catalog-rule117`，artifact id `10684236528`。
+- 正式签名继续使用 `SimpleReader Public V1`；证书 SHA-256：`315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648`。
+- APK 签名：V1=false、V2=true、V3=true。
+- 最终 signed APK SHA-256：`ffeff82e1d6d949d29e7fb4fef5ee20dc253398370c8112f58c126b4201e1794`。
+- 本轮只完成源码、自动化测试、构建和签名验证；尚未宣称真实手机上的目录重新生成/目录面板交互已实机验证。
+
