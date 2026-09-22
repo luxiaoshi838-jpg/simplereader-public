@@ -3,11 +3,13 @@ package com.simplereader.app.reader
 import com.simplereader.app.reader.page.BookChapter
 
 /**
- * Direct TXT catalog detector. Rule 115 keeps the Rule 113 numeral safeguards and lets 第N章/节/回/卷/篇 headings ignore punctuation only at the end of the whole title line. numeral-based headings so ordinary
- * numeral + classifier/noun phrases are not promoted to catalog entries.
+ * Direct TXT catalog detector. Rule 116 restores the historical wide 第N章 marker:
+ * an independent 第N章 token may occur anywhere in a line with unrestricted title length/punctuation,
+ * while glued ordinary words such as 第12章鱼 / 第3章程 remain rejected. Other rule families keep
+ * the Rule 115 safeguards.
  */
 object DirectTxtCatalogV100 {
-    const val RULE_VERSION = 115
+    const val RULE_VERSION = 116
     private const val MAX_VISIBLE_TITLE_CHARS = 25
     private const val CN = "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟"
     private const val NUM = "[0-9０-９$CN]+"
@@ -16,6 +18,7 @@ object DirectTxtCatalogV100 {
     // Rule113 intentionally keeps structural regexes short. Whether the structural unit is
     // independent is checked in code by [hasValidStructuralTail], so "3节课" and "3节 课"
     // cannot accidentally collapse into the same regex case.
+    private val wideChapterMarker = Regex("第\\s*$NUM\\s*章")
     private val prefixedStructural = Regex("第\\s*$NUM\\s*$STRUCTURE")
     private val prefixedTrailingPunctuationUnit = Regex("第\\s*$NUM\\s*(?:章|节|回|卷|篇)")
     private val numberLeadingUnit = Regex("^\\s*$NUM\\s*$STRUCTURE")
@@ -62,6 +65,12 @@ object DirectTxtCatalogV100 {
     fun recognize(raw: String?): String? {
         if (raw == null) return null
         val s = CatalogTitleNormalizerV103.normalize(raw) ?: return null
+
+        // Rule 116: an independent 第N章 marker is authoritative anywhere on the line.
+        // This intentionally bypasses the old 25-visible-character and sentence-punctuation
+        // filters, but still requires a boundary after 章 so 第12章鱼 / 第3章程 stay prose.
+        if (containsWideChapterMarker(s)) return s
+
         val visible = s.count { !it.isWhitespace() }
         if (visible !in 1..MAX_VISIBLE_TITLE_CHARS) return null
         if ('“' in s || '”' in s || s.contains("http", ignoreCase = true)) return null
@@ -99,6 +108,24 @@ object DirectTxtCatalogV100 {
         if (englishChapter.matches(s)) return s
         if (special.matches(s)) return s
         return null
+    }
+
+    private fun containsWideChapterMarker(s: String): Boolean {
+        for (match in wideChapterMarker.findAll(s)) {
+            val end = match.range.last + 1
+            if (end >= s.length) return true
+            val next = s[end]
+            if (next.isWhitespace() || isUnicodePunctuation(next) || isUnicodeSymbol(next)) return true
+        }
+        return false
+    }
+
+    private fun isUnicodeSymbol(c: Char): Boolean = when (Character.getType(c)) {
+        Character.MATH_SYMBOL.toInt(),
+        Character.CURRENCY_SYMBOL.toInt(),
+        Character.MODIFIER_SYMBOL.toInt(),
+        Character.OTHER_SYMBOL.toInt() -> true
+        else -> false
     }
 
     private fun recognizePrefixedStructuralIgnoringTrailingPunctuation(s: String): Boolean {
