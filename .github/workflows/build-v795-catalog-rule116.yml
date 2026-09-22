@@ -1,4 +1,4 @@
-name: Validate and build 简阅 v795 catalog Rule 116
+name: Validate and build 简阅 v795 catalog Rule 117
 
 on:
   push:
@@ -38,12 +38,14 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
-          grep -Fq 'const val RULE_VERSION = 116' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
-          grep -Fq 'const val CATALOG_RULE_VERSION = 116' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
+          grep -Fq 'const val RULE_VERSION = 117' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'const val CATALOG_RULE_VERSION = 117' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
           grep -Fq 'if (containsWideChapterMarker(s)) return s' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq 'next.isWhitespace() || isUnicodePunctuation(next) || isUnicodeSymbol(next)' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq '"第12章鱼"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
           grep -Fq '"第3章程"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
+          grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
 
       - name: Warm or refresh dependencies
         shell: bash
@@ -118,7 +120,7 @@ jobs:
       - name: Upload validated unsigned v795
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleReader-v795-catalog-rule116
+          name: SimpleReader-v795-catalog-rule117
           path: |
             release/SimpleReader_v795_unsigned.apk
             v795-package.txt
