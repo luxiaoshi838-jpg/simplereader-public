@@ -44,7 +44,8 @@ jobs:
           grep -Fq 'next.isWhitespace() || isUnicodePunctuation(next) || isUnicodeSymbol(next)' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq '"第12章鱼"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
           grep -Fq '"第3章程"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
-          grep -Fq 'if (isPureArabicNumericNoise(s)) return null' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'if (isPureArabicDigits(s)) return s' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
+          grep -Fq 'if (isArabicNumericWithOnlyPunctuationOrSymbols(s)) return null' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq '"123.456%！"' app/src/test/java/com/simplereader/app/parser/TxtCatalogRule116Test.kt
           grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/reader/DirectTxtCatalogV100.kt
           grep -Fq 'bodySeenSinceLastAcceptedChapter' app/src/main/java/com/simplereader/app/parser/TxtParser.kt
