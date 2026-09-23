@@ -11,6 +11,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
+import androidx.work.WorkInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -35,6 +36,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
+import java.util.UUID
 
 /**
  * User-triggered shelf catalog + full pagination cache task.
@@ -673,6 +675,8 @@ class ShelfCacheWorker(
     }
 
     companion object {
+        @Volatile private var recoveryInFlight = false
+
         const val UNIQUE_WORK_NAME = "simple_reader_cache_all_shelf_books"
         const val TAG = "shelf_cache"
         const val KEY_CURRENT = "current"
@@ -691,19 +695,85 @@ class ShelfCacheWorker(
         fun enqueue(context: Context, mode: String) {
             require(mode == MODE_ALL_BOOKS || mode == MODE_BOOKS_WITHOUT_CATALOG)
             val app = context.applicationContext
-            val request = OneTimeWorkRequestBuilder<ShelfCacheWorker>()
+            Thread({
+                val manager = WorkManager.getInstance(app)
+                val stale = runCatching {
+                    manager.getWorkInfosForUniqueWork(UNIQUE_WORK_NAME).get()
+                        .firstOrNull(::isStalledLegacyWork)
+                }.getOrNull()
+
+                if (stale != null && resumeStalledLegacyWorkInternal(app, stale.id)) {
+                    return@Thread
+                }
+
+                val request = newRequest(mode)
+                manager.enqueueUniqueWork(
+                    UNIQUE_WORK_NAME,
+                    ExistingWorkPolicy.KEEP,
+                    request
+                )
+                runCatching { ShelfCacheKeepAliveService.start(app) }
+            }, "SimpleReaderShelfCacheEnqueue").apply {
+                isDaemon = true
+                start()
+            }
+        }
+
+        fun resumeStalledLegacyWork(context: Context, workId: UUID) {
+            val app = context.applicationContext
+            Thread({
+                resumeStalledLegacyWorkInternal(app, workId)
+            }, "SimpleReaderShelfCacheResume").apply {
+                isDaemon = true
+                start()
+            }
+        }
+
+        private fun resumeStalledLegacyWorkInternal(context: Context, workId: UUID): Boolean {
+            synchronized(ShelfCacheWorker::class.java) {
+                if (recoveryInFlight) return false
+                recoveryInFlight = true
+            }
+            return try {
+                val manager = WorkManager.getInstance(context)
+                val info = runCatching { manager.getWorkInfoById(workId).get() }.getOrNull()
+                    ?: return false
+                if (!isStalledLegacyWork(info)) return false
+
+                val checkpoint = ShelfCacheCheckpointStore.load(context, workId.toString())
+                    ?: return false
+                val request = newRequest(checkpoint.mode)
+                val migrated = ShelfCacheCheckpointStore.migrate(
+                    context = context,
+                    fromWorkId = workId.toString(),
+                    toWorkId = request.id.toString()
+                ) ?: return false
+
+                CrashLogStore.recordEvent(
+                    context,
+                    "shelf_cache_v797_resume oldWork=$workId newWork=${request.id} " +
+                        "index=${migrated.nextIndex}/${migrated.total} attempts=${info.runAttemptCount}"
+                )
+                manager.enqueueUniqueWork(
+                    UNIQUE_WORK_NAME,
+                    ExistingWorkPolicy.REPLACE,
+                    request
+                )
+                runCatching { ShelfCacheKeepAliveService.start(context) }
+                true
+            } finally {
+                recoveryInFlight = false
+            }
+        }
+
+        private fun isStalledLegacyWork(info: WorkInfo): Boolean =
+            (info.state == WorkInfo.State.ENQUEUED || info.state == WorkInfo.State.BLOCKED) &&
+                info.runAttemptCount > 0
+
+        private fun newRequest(mode: String) =
+            OneTimeWorkRequestBuilder<ShelfCacheWorker>()
                 .setInputData(Data.Builder().putString(KEY_MODE, mode).build())
                 .addTag(TAG)
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
-                request
-            )
-            // This service has existed since v728, but the production enqueue path never started it.
-            // WorkManager remains the task owner; the service only keeps the process foreground
-            // and holds the bounded wake lock while unfinished shelf-cache work exists.
-            runCatching { ShelfCacheKeepAliveService.start(app) }
-        }
     }
 }
