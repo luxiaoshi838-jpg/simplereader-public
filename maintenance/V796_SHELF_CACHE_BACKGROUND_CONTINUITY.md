@@ -46,3 +46,27 @@ V785 的 `ShelfCacheWorker` 没有 `Result.retry()`。V786 新增了两条正常
 - versionName: 796
 - versionCode: 2098000796
 - branch: source-v796
+
+
+## 构建与签名验收
+
+GitHub Actions 仅负责构建未签名 APK，不保存、不读取签名密钥。
+
+- workflow run: 35809176451
+- branch head: f61d491e54bb61d0e259d63af107473e76dbb1bb
+- package: com.simplereader.app
+- versionName: 796
+- versionCode: 2098000796
+- 专项测试：通过
+- 完整单测相对既有基线：通过
+- Debug / Release 构建：通过
+- 未签名 APK 上传：通过
+
+正式 APK 在 GitHub 外使用 Google Drive 中既有的 SimpleReader Public V1 密钥签名。
+
+- certificate SHA-256: 315d7bbf06b2a0a16ea7efd7a5c7cd8e6371ab9b0f40ae380cc416e1472c8648
+- APK SHA-256: cdd27c55e641f30471072e608ceef609a13b1e1843fbaf7c742abec251d1bc01
+- v2 signing: true
+- v3 signing: true
+
+公开分支未包含 .keystore、.jks 或密码文件。
