@@ -95,6 +95,16 @@ object ShelfCacheCheckpointStore {
     }
 
     @Synchronized
+    fun migrate(context: Context, fromWorkId: String, toWorkId: String): Checkpoint? {
+        if (fromWorkId.isBlank() || toWorkId.isBlank() || fromWorkId == toWorkId) return null
+        val checkpoint = load(context, fromWorkId) ?: return null
+        // Save the destination first. The replacement WorkRequest may start immediately after
+        // enqueueUniqueWork(REPLACE), so its workId-owned checkpoint must already exist.
+        save(context, toWorkId, checkpoint)
+        return checkpoint
+    }
+
+    @Synchronized
     fun clear(context: Context, workId: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
