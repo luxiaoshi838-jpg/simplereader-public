@@ -125,7 +125,7 @@ jobs:
           "$build_tools/aapt2" dump badging "$unsigned" | tee v797-package.txt
           grep -Fq "package: name='com.simplereader.app'" v797-package.txt
           grep -Fq "versionCode='2098000797'" v797-package.txt
-          grep -Fq "versionName='796'" v797-package.txt
+          grep -Fq "versionName='797'" v797-package.txt
           sha256sum "$unsigned" | tee v797-unsigned-sha256.txt
           cp "$build_tools/apksigner" signing-tools/apksigner
           cp "$build_tools/lib/apksigner.jar" signing-tools/lib/apksigner.jar
