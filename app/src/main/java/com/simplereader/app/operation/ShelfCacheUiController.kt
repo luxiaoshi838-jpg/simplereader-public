@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.LifecycleOwner
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.simplereader.app.worker.ShelfCacheCheckpointStore
 import com.simplereader.app.worker.ShelfCacheWorker
 import java.util.Locale
 import java.util.WeakHashMap
@@ -45,14 +46,36 @@ object ShelfCacheUiController {
                     state.locked = true
                     state.lastWorkId = running.id.toString()
                     val progress = running.progress
-                    statusBox.text = ShelfCacheStatusText.active(
-                        current = progress.getInt(ShelfCacheWorker.KEY_CURRENT, 0),
-                        total = progress.getInt(ShelfCacheWorker.KEY_TOTAL, 0),
-                        title = progress.getString(ShelfCacheWorker.KEY_TITLE).orEmpty(),
-                        completed = progress.getInt(ShelfCacheWorker.KEY_COMPLETED, 0),
-                        failed = progress.getInt(ShelfCacheWorker.KEY_FAILED, 0),
-                        skipped = progress.getInt(ShelfCacheWorker.KEY_SKIPPED, 0)
-                    )
+                    val progressTotal = progress.getInt(ShelfCacheWorker.KEY_TOTAL, 0)
+                    statusBox.text = if (progressTotal > 0) {
+                        ShelfCacheStatusText.active(
+                            current = progress.getInt(ShelfCacheWorker.KEY_CURRENT, 0),
+                            total = progressTotal,
+                            title = progress.getString(ShelfCacheWorker.KEY_TITLE).orEmpty(),
+                            completed = progress.getInt(ShelfCacheWorker.KEY_COMPLETED, 0),
+                            failed = progress.getInt(ShelfCacheWorker.KEY_FAILED, 0),
+                            skipped = progress.getInt(ShelfCacheWorker.KEY_SKIPPED, 0)
+                        )
+                    } else {
+                        // ENQUEUED/BLOCKED work can temporarily expose empty WorkManager progress
+                        // after process recreation. Never turn a real durable checkpoint into 0/0.
+                        val checkpoint = ShelfCacheCheckpointStore.load(
+                            activity.applicationContext,
+                            running.id.toString()
+                        )
+                        if (checkpoint != null && checkpoint.total > 0) {
+                            ShelfCacheStatusText.active(
+                                current = checkpoint.nextIndex,
+                                total = checkpoint.total,
+                                title = if (running.state == WorkInfo.State.RUNNING) "后台恢复中" else "等待继续",
+                                completed = checkpoint.completed,
+                                failed = checkpoint.failed,
+                                skipped = checkpoint.skipped
+                            )
+                        } else {
+                            ShelfCacheStatusText.preparing()
+                        }
+                    }
                     return@observe
                 }
 
