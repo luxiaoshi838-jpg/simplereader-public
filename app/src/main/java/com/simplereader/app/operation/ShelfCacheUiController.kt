@@ -17,7 +17,8 @@ object ShelfCacheUiController {
     private data class State(
         var locked: Boolean = false,
         var lastWorkId: String? = null,
-        var attached: Boolean = false
+        var attached: Boolean = false,
+        var recoveryRequestedWorkId: String? = null
     )
 
     private val states = WeakHashMap<AppCompatActivity, State>()
@@ -45,6 +46,18 @@ object ShelfCacheUiController {
                 if (running != null) {
                     state.locked = true
                     state.lastWorkId = running.id.toString()
+                    val stalledLegacy =
+                        (running.state == WorkInfo.State.ENQUEUED || running.state == WorkInfo.State.BLOCKED) &&
+                            running.runAttemptCount > 0
+                    if (stalledLegacy && state.recoveryRequestedWorkId != running.id.toString()) {
+                        state.recoveryRequestedWorkId = running.id.toString()
+                        ShelfCacheWorker.resumeStalledLegacyWork(
+                            activity.applicationContext,
+                            running.id
+                        )
+                    } else if (running.state == WorkInfo.State.RUNNING) {
+                        state.recoveryRequestedWorkId = null
+                    }
                     val progress = running.progress
                     val progressTotal = progress.getInt(ShelfCacheWorker.KEY_TOTAL, 0)
                     statusBox.text = if (progressTotal > 0) {
@@ -67,7 +80,11 @@ object ShelfCacheUiController {
                             ShelfCacheStatusText.active(
                                 current = checkpoint.nextIndex,
                                 total = checkpoint.total,
-                                title = if (running.state == WorkInfo.State.RUNNING) "后台恢复中" else "等待继续",
+                                title = when {
+                                    running.state == WorkInfo.State.RUNNING -> "后台运行中"
+                                    stalledLegacy -> "正在自动恢复"
+                                    else -> "等待调度"
+                                },
                                 completed = checkpoint.completed,
                                 failed = checkpoint.failed,
                                 skipped = checkpoint.skipped
@@ -93,6 +110,7 @@ object ShelfCacheUiController {
                     if (activity.isFinishing || activity.isDestroyed) return@postDelayed
                     state.locked = false
                     state.lastWorkId = null
+                    state.recoveryRequestedWorkId = null
                     restoreIdle()
                 }, 3000L)
             }
