@@ -116,7 +116,7 @@ class ShelfCacheKeepAliveService : Service() {
 
     companion object {
         private const val CHANNEL_ID = "simple_reader_shelf_cache"
-        private const val NOTIFICATION_ID = 61313
+        private const val NOTIFICATION_ID = 61314
         private const val WAKE_TAG = "SimpleReader:ShelfCache"
 
         fun start(context: Context) {
