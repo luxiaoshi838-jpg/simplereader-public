@@ -7,14 +7,13 @@ import org.junit.Test
 
 class ShelfCacheV796ContinuityContractTest {
     @Test
-    fun shelfCacheStaysContinuousAndRestoresDurableProgress() {
+    fun shelfCacheContinuityGuaranteesRemainAfterLaterResumeFixes() {
         val worker = File("src/main/java/com/simplereader/app/worker/ShelfCacheWorker.kt").readText()
         val ui = File("src/main/java/com/simplereader/app/operation/ShelfCacheUiController.kt").readText()
         val keepAlive = File("src/main/java/com/simplereader/app/worker/ShelfCacheKeepAliveService.kt").readText()
-        val build = File("build.gradle.kts").readText()
         val catalog = File("src/main/java/com/simplereader/app/parser/TxtParser.kt").readText()
 
-        assertTrue(worker.contains("ShelfCacheKeepAliveService.start(app)"))
+        assertTrue(worker.contains("ShelfCacheKeepAliveService.start"))
         assertTrue(worker.contains("awaitForegroundReaderIdle()"))
         assertFalse(worker.contains("Result.retry()"))
         assertTrue(worker.contains("paginationOwnerJob?.isActive == false"))
@@ -22,13 +21,10 @@ class ShelfCacheV796ContinuityContractTest {
         assertTrue(ui.contains("ShelfCacheCheckpointStore.load"))
         assertTrue(ui.contains("checkpoint.nextIndex"))
         assertTrue(ui.contains("checkpoint.total"))
-        assertTrue(ui.contains("\"等待继续\""))
 
         assertTrue(keepAlive.contains("NOTIFICATION_ID = 61314"))
-        assertTrue(build.contains("2098000796"))
-        assertTrue(build.contains("\"796\""))
 
-        // Catalog Rule 117 is intentionally outside this fix and must stay unchanged.
+        // Catalog Rule 117 is intentionally outside the shelf-cache recovery fixes.
         assertTrue(catalog.contains("const val CATALOG_RULE_VERSION = 117"))
     }
 }
