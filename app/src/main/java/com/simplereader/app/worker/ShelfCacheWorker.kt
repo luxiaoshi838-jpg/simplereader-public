@@ -35,7 +35,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * User-triggered shelf catalog + full pagination cache task.
@@ -377,13 +376,10 @@ class ShelfCacheWorker(
                 continue
             }
 
-            if (ReaderRuntimeState.isReaderForeground()) {
-                ShelfCacheHandoff.releaseWorker(book.id)
-                CrashLogStore.recordEvent(applicationContext, "shelf_cache_yield_before_book book=${book.id} title=${book.title}")
-                return Result.retry()
-            }
-
-            val pausedForReader = AtomicBoolean(false)
+            // v796: once this worker owns the current book, finish that book in the same
+            // WorkManager run. Reader priority is enforced between books by
+            // awaitForegroundReaderIdle(); expected reader activity must never convert the
+            // unique work into WorkManager retry/backoff because retry clears live progress.
             val paginationOwnerJob = coroutineContext[Job]
             val result = runCatching {
                 withContext(Dispatchers.IO) {
@@ -399,10 +395,6 @@ class ShelfCacheWorker(
                     )
                 }
                 coroutineContext.ensureActive()
-                if (ReaderRuntimeState.isReaderForeground()) {
-                    pausedForReader.set(true)
-                    throw java.util.concurrent.CancellationException("Reader foreground during shelf cache document load")
-                }
 
                 val settings = ReaderCacheProfile.createSettings(applicationContext)
                 val identity = cacheIdentity(
@@ -423,9 +415,9 @@ class ShelfCacheWorker(
                             settings = settings,
                             typeface = Typeface.DEFAULT,
                             shouldCancel = {
-                                val readerForeground = ReaderRuntimeState.isReaderForeground()
-                                if (readerForeground) pausedForReader.set(true)
-                                readerForeground || paginationOwnerJob?.isActive == false
+                                // Cancel only when WorkManager actually cancels/stops this worker.
+                                // Foreground reading is handled between books, not through retry().
+                                paginationOwnerJob?.isActive == false
                             },
                             imageSpanProvider = images?.let { repository ->
                                 { href: String, width: Int, height: Int -> repository.span(href, width, height) }
@@ -465,25 +457,6 @@ class ShelfCacheWorker(
             val failure = result.exceptionOrNull()
             if (failure is java.util.concurrent.CancellationException) {
                 ShelfCacheHandoff.releaseWorker(book.id)
-                if (pausedForReader.get() && paginationOwnerJob?.isActive != false) {
-                    CrashLogStore.recordEvent(
-                        applicationContext,
-                        "shelf_cache_yield_during_pagination book=${book.id} title=${book.title} index=$displayedIndex/$total"
-                    )
-                    OperationLogStore.updateShelfCache(
-                        context = applicationContext,
-                        workId = workId,
-                        modeTitle = operationTitle,
-                        state = "阅读中暂停",
-                        currentIndex = index,
-                        total = total,
-                        currentTitle = book.title,
-                        completed = completed,
-                        failed = failed,
-                        skipped = skipped
-                    )
-                    return Result.retry()
-                }
                 throw failure
             }
             if (failure is VirtualMachineError || failure is LinkageError || failure is ThreadDeath) {
@@ -717,15 +690,20 @@ class ShelfCacheWorker(
 
         fun enqueue(context: Context, mode: String) {
             require(mode == MODE_ALL_BOOKS || mode == MODE_BOOKS_WITHOUT_CATALOG)
+            val app = context.applicationContext
             val request = OneTimeWorkRequestBuilder<ShelfCacheWorker>()
                 .setInputData(Data.Builder().putString(KEY_MODE, mode).build())
                 .addTag(TAG)
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            WorkManager.getInstance(app).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
                 request
             )
+            // This service has existed since v728, but the production enqueue path never started it.
+            // WorkManager remains the task owner; the service only keeps the process foreground
+            // and holds the bounded wake lock while unfinished shelf-cache work exists.
+            runCatching { ShelfCacheKeepAliveService.start(app) }
         }
     }
 }
