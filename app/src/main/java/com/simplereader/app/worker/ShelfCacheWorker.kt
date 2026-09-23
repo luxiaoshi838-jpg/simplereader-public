@@ -695,7 +695,7 @@ class ShelfCacheWorker(
                 .setInputData(Data.Builder().putString(KEY_MODE, mode).build())
                 .addTag(TAG)
                 .build()
-            WorkManager.getInstance(app).enqueueUniqueWork(
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
                 request
