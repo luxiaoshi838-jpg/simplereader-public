@@ -707,7 +707,7 @@ class ShelfCacheWorker(
                 }
 
                 val request = newRequest(mode)
-                manager.enqueueUniqueWork(
+                WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                     UNIQUE_WORK_NAME,
                     ExistingWorkPolicy.KEEP,
                     request
